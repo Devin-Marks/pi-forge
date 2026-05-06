@@ -237,11 +237,22 @@ export const useFileStore = create<FileState>((set, get) => ({
   },
 
   restoreTabs: async (projectId) => {
+    // Two cases:
+    // 1. Same project as the current in-memory state — preserve
+    //    whatever the user has open (cold-boot already ran, or this
+    //    is a redundant call). Early-return.
+    // 2. Different project (project switch) — clear in-memory state
+    //    in place so the editor pane stops showing the OLD project's
+    //    tabs while we load the new project's persisted list.
+    //    Crucially, we DON'T persist the empty state to the old
+    //    project's storage key; the old tabs were already persisted
+    //    by every prior edit, so the data is intact for when the
+    //    user switches back. We just clear what's in the store.
+    if (currentProjectId === projectId && get().openFiles.length > 0) return;
+    if (currentProjectId !== projectId) {
+      set({ openFiles: [], activePath: undefined, externallyChanged: {} });
+    }
     currentProjectId = projectId;
-    // Skip if anything is already open for this project — the
-    // restore is meant for the cold-boot path, not to clobber
-    // mid-session state.
-    if (get().openFiles.length > 0) return;
     const persisted = readPersistedTabs(projectId);
     if (persisted.paths.length === 0) return;
     // Open files in order so the tab strip matches the persisted
