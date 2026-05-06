@@ -14,6 +14,37 @@ the README for the support window policy.
 
 ## [Unreleased]
 
+### Changed
+
+- **Editor saves are now explicit.** Removed the 1-second autosave
+  debounce. Saves go through Cmd/Ctrl+S (already wired in the
+  CodeMirror keymap) or a new **Save** button in the editor's status
+  bar. The status bar still shows the dirty / saving / save-error
+  / saved-at indicator next to the button. The button is disabled
+  when there's nothing to save (clean buffer, save in flight, or
+  binary file).
+- **File browser scopes to the active project.** Switching projects
+  now clears the in-memory open editor tabs in place before
+  restoring the new project's persisted tab list. Previously the
+  old project's tabs stayed visible until the user closed them
+  manually, because `restoreTabs` early-returned when any tab was
+  open. The old project's persisted tab paths in sessionStorage are
+  preserved (re-enter the project to restore them); only the
+  in-memory state is cleared.
+
+### Fixed
+
+- **Editor refreshes when the agent edits an open file.** The
+  per-tool-result reload logic existed but silently missed every
+  fire because the agent's tool calls emit project-relative paths
+  (`src/foo.ts`) while open editor tabs are keyed by absolute path
+  (`/Users/.../proj/src/foo.ts`). Path matching now tries both:
+  exact match against the open file's absolute path, then a
+  project-root-prefixed resolution as a fallback. Also: if any
+  write/edit tool result lands in a batch, the file browser tree
+  refreshes immediately (instead of waiting for `agent_end`) so
+  newly-created files appear without a perceptible lag.
+
 ### Added
 
 - **Git init button in the Git pane.** When the active project isn't
