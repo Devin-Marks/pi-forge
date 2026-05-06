@@ -3,7 +3,7 @@ import { FileCode, FolderTree, MessageSquare, Terminal as TerminalIcon } from "l
 import { useAuthStore } from "./store/auth-store";
 import { useActiveProject, useProjectStore } from "./store/project-store";
 import { useSessionStore } from "./store/session-store";
-import { useFileStore } from "./store/file-store";
+import { useFileStore, type OpenFile } from "./store/file-store";
 import { useUiConfigStore } from "./store/ui-config-store";
 import { LoginScreen } from "./components/LoginScreen";
 import { ChangePasswordScreen } from "./components/ChangePasswordScreen";
@@ -248,23 +248,47 @@ export function App() {
       return;
     }
     const fileStore = useFileStore.getState();
+    // Open files are keyed by absolute path (the file browser's
+    // joinPath(project.path, node.path) result). The pi tool result's
+    // `details.path` may be either absolute OR project-relative
+    // depending on how the agent invoked the tool — match against
+    // both so we don't silently miss reloads.
     const openByPath = new Map(fileStore.openFiles.map((f) => [f.path, f]));
+    const projectRoot = active.path.replace(/\/+$/, "");
+    const resolveOpen = (raw: string): { path: string; file: OpenFile } | undefined => {
+      const direct = openByPath.get(raw);
+      if (direct !== undefined) return { path: raw, file: direct };
+      // Treat as project-relative — strip a leading "./" or "/" then
+      // join with the project root. This is the common case (agents
+      // emit cwd-relative paths via the edit/write tools).
+      const trimmed = raw.replace(/^\.\/+/, "").replace(/^\/+/, "");
+      const joined = `${projectRoot}/${trimmed.replaceAll("\\", "/")}`;
+      const found = openByPath.get(joined);
+      return found !== undefined ? { path: joined, file: found } : undefined;
+    };
+    let sawWriteOrEdit = false;
     for (let i = lastSeen; i < sessionMessages.length; i++) {
       const m = sessionMessages[i];
       if (m === undefined) continue;
       if (m.role !== "toolResult") continue;
       const toolName = String(m.toolName ?? "");
       if (toolName !== "write" && toolName !== "edit") continue;
-      const path = extractToolFilePath(m);
-      if (path === undefined) continue;
-      const open = openByPath.get(path);
-      if (open === undefined) continue;
-      if (open.dirty) {
-        fileStore.markExternallyChanged(path);
+      sawWriteOrEdit = true;
+      const raw = extractToolFilePath(m);
+      if (raw === undefined) continue;
+      const match = resolveOpen(raw);
+      if (match === undefined) continue;
+      if (match.file.dirty) {
+        fileStore.markExternallyChanged(match.path);
       } else {
-        void fileStore.reloadFile(active.id, path);
+        void fileStore.reloadFile(active.id, match.path);
       }
     }
+    // If the agent wrote or edited any file in this batch, refresh the
+    // file browser tree so newly-created files / renamed entries
+    // appear without waiting for the next agent_end. Cheap call —
+    // server side just walks the workspace once.
+    if (sawWriteOrEdit) void fileStore.loadTree(active.id);
     lastProcessedRef.current[activeSessionId] = sessionMessages.length;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id, activeSessionId, sessionMessages]);
