@@ -2489,7 +2489,7 @@ function GeneralTab() {
       <header className="space-y-1">
         <h2 className="text-base font-semibold text-neutral-100">pi-forge</h2>
         <p className="text-xs text-neutral-500">
-          Browser workbench for the{" "}
+          Browser interface for the{" "}
           <a
             href="https://github.com/badlogic/pi-mono"
             target="_blank"
