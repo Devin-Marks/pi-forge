@@ -116,6 +116,13 @@ export interface UiConfigResponse {
   workspaceRoot: string;
   /** Server build version (mirrors packages/server's package.json). */
   version: string;
+  /**
+   * True when the server supports the browser password-change flow
+   * (env UI_PASSWORD set OR a persisted password-hash exists).
+   * False on API-key-only deployments — the General settings tab
+   * hides the password section in that case.
+   */
+  passwordAuthEnabled: boolean;
 }
 
 export interface UnifiedSession {

@@ -22,6 +22,13 @@ interface UiConfigState {
   workspaceRoot: string;
   /** Server build version (mirrors packages/server's package.json). */
   version: string;
+  /**
+   * True when the server supports the browser password-change flow.
+   * Defaults to true so the General settings tab still shows the
+   * password section before /ui-config has loaded — better than
+   * flashing the form away on first paint.
+   */
+  passwordAuthEnabled: boolean;
   /** Last load error (sticky until a retry succeeds), for diagnostics. */
   error: string | undefined;
   load: () => Promise<void>;
@@ -32,6 +39,7 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
   minimal: false,
   workspaceRoot: "",
   version: "",
+  passwordAuthEnabled: true,
   error: undefined,
   load: async () => {
     try {
@@ -41,6 +49,7 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
         minimal: cfg.minimal,
         workspaceRoot: cfg.workspaceRoot,
         version: cfg.version,
+        passwordAuthEnabled: cfg.passwordAuthEnabled,
         error: undefined,
       });
     } catch (err) {
