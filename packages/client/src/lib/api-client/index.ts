@@ -957,6 +957,22 @@ export const api = {
       }
       return { messages: v.messages as Record<string, unknown>[] };
     }),
+  getCompactions: (id: string) =>
+    request(`/api/v1/sessions/${encodeURIComponent(id)}/compactions`, (v, s) => {
+      if (!isObject(v) || !Array.isArray(v.compactions)) {
+        fail(s, "expected { compactions: [...] }");
+      }
+      return {
+        compactions: v.compactions as {
+          id: string;
+          timestamp: string;
+          summary: string;
+          tokensBefore: number;
+          insertBeforeIndex: number;
+          archivedMessages: Record<string, unknown>[];
+        }[],
+      };
+    }),
   disposeSession: (id: string, opts?: { hard?: boolean }) => {
     const qs = opts?.hard === true ? "?hard=1" : "";
     return request(`/api/v1/sessions/${encodeURIComponent(id)}${qs}`, vVoid, { method: "DELETE" });
