@@ -14,6 +14,8 @@ the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-05-05
+
 ### Changed
 
 - **Editor saves are now explicit.** Removed the 1-second autosave
