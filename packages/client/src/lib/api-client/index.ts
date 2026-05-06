@@ -1596,6 +1596,21 @@ export const api = {
   },
 
   // ---------------- git ----------------
+  gitInit: (projectId: string) =>
+    request<{ alreadyInitialised: boolean; isGitRepo: boolean }>(
+      `/api/v1/git/init`,
+      (v, status) => {
+        if (
+          !isObject(v) ||
+          typeof v.alreadyInitialised !== "boolean" ||
+          typeof v.isGitRepo !== "boolean"
+        ) {
+          fail(status, "expected { alreadyInitialised, isGitRepo }");
+        }
+        return { alreadyInitialised: v.alreadyInitialised, isGitRepo: v.isGitRepo };
+      },
+      { method: "POST", body: { projectId } },
+    ),
   gitStatus: (projectId: string) =>
     request(`/api/v1/git/status?projectId=${encodeURIComponent(projectId)}`, vGitStatus),
   gitDiff: (projectId: string) =>

@@ -17,6 +17,8 @@ import {
   getLog,
   getStagedDiff,
   getStatus,
+  initRepo,
+  isGitRepo,
   pull,
   push,
   revertPaths,
@@ -210,6 +212,52 @@ async function withProject<T>(
 /* ----------------------------- routes ----------------------------- */
 
 export const gitRoutes: FastifyPluginAsync = async (fastify) => {
+  fastify.post<{ Body: { projectId: string } }>(
+    "/git/init",
+    {
+      schema: {
+        description:
+          "Initialize a fresh git repo at the project's path with `main` as the " +
+          "initial branch. Idempotent: returns 200 with `{ alreadyInitialised: " +
+          "true }` if the project is already a git working tree. Falls back to " +
+          "plain `git init` (no `-b main`) on git versions < 2.28.",
+        tags: ["git"],
+        body: {
+          type: "object",
+          required: ["projectId"],
+          additionalProperties: false,
+          properties: { projectId: { type: "string", minLength: 1 } },
+        },
+        response: {
+          200: {
+            type: "object",
+            required: ["alreadyInitialised", "isGitRepo"],
+            properties: {
+              alreadyInitialised: { type: "boolean" },
+              isGitRepo: { type: "boolean" },
+            },
+          },
+          400: errorSchema,
+          404: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const project = await resolveProject(req.body.projectId, reply);
+      if (project === undefined) return;
+      try {
+        if (await isGitRepo(project.path)) {
+          return { alreadyInitialised: true, isGitRepo: true };
+        }
+        await initRepo(project.path);
+        return { alreadyInitialised: false, isGitRepo: true };
+      } catch (err) {
+        return mapError(reply, err);
+      }
+    },
+  );
+
   fastify.get<{ Querystring: { projectId: string } }>(
     "/git/status",
     {

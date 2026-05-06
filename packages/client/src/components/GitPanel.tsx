@@ -289,13 +289,38 @@ export function GitPanel() {
   }
 
   if (status?.isGitRepo === false) {
+    const handleInit = async (): Promise<void> => {
+      setBusy(true);
+      setOpError(undefined);
+      try {
+        await api.gitInit(project.id);
+        // Re-poll status so the panel flips out of the empty-state
+        // branch into the normal Staged / Unstaged layout. Branch
+        // will read "main" — that's git init -b main behaviour.
+        await refresh();
+      } catch (err) {
+        setOpError(err instanceof ApiError ? err.code : (err as Error).message);
+      } finally {
+        setBusy(false);
+      }
+    };
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-xs italic text-neutral-500">
-        <p>{project.name} isn't a git repository.</p>
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center text-xs text-neutral-500">
+        <p className="italic">{project.name} isn't a git repository.</p>
+        <button
+          onClick={() => void handleInit()}
+          disabled={busy}
+          className="rounded-md bg-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+          title="Run `git init -b main` in the project root"
+        >
+          {busy ? "Initializing…" : "Initialize git repo"}
+        </button>
         <p className="text-[10px] text-neutral-600">
-          Run <code className="font-mono text-neutral-400">git init</code> in the project dir to
-          enable git features.
+          Default branch will be <code className="font-mono text-neutral-400">main</code>.
         </p>
+        {opError !== undefined && (
+          <p className="text-[10px] text-red-400">git init failed: {opError}</p>
+        )}
       </div>
     );
   }
