@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { useFileStore, type OpenFile } from "../store/file-store";
 import { useActiveProject } from "../store/project-store";
-import { WrapText, X, XSquare } from "lucide-react";
+import { Save, WrapText, X, XSquare } from "lucide-react";
 
 const WRAP_KEY_PREFIX = "forge.editor.wrap.";
 
@@ -138,7 +138,14 @@ export function EditorPanel() {
               />
             </Suspense>
           )}
-          <StatusBar file={active} wrap={wrap} onToggleWrap={toggleWrap} />
+          <StatusBar
+            file={active}
+            wrap={wrap}
+            onToggleWrap={toggleWrap}
+            onSave={() => {
+              if (project !== undefined) void saveFile(project.id, active.path);
+            }}
+          />
         </>
       )}
     </div>
@@ -262,10 +269,12 @@ function StatusBar({
   file,
   wrap,
   onToggleWrap,
+  onSave,
 }: {
   file: OpenFile;
   wrap: boolean;
   onToggleWrap: () => void;
+  onSave: () => void;
 }) {
   const dirty = file.dirty;
   const saving = file.saving;
@@ -277,7 +286,7 @@ function StatusBar({
   // because the user needs to see the failure before deciding to keep
   // editing or retry. Cleared on the next successful save.
   if (saveError !== undefined) {
-    label = `Save failed (${saveError}) — Cmd/Ctrl+S to retry`;
+    label = `Save failed (${saveError}) — Cmd/Ctrl+S or Save to retry`;
     className = "text-rose-400";
   } else if (saving) {
     label = "Saving…";
@@ -291,6 +300,10 @@ function StatusBar({
   } else {
     label = "Up to date";
   }
+  // Save button is only meaningful when there's something to save
+  // (dirty buffer) or something to retry (last save errored). Stays
+  // disabled while a save is in flight to avoid double-fire.
+  const canSave = (dirty || saveError !== undefined) && !saving && !file.binary;
   return (
     <div className="flex items-center justify-between gap-3 border-t border-neutral-800 bg-neutral-900/40 px-3 py-1 text-[11px]">
       <div className="flex items-center gap-2">
@@ -310,7 +323,18 @@ function StatusBar({
           {wrap ? "wrap" : "no wrap"}
         </button>
       </div>
-      <span className={className}>{label}</span>
+      <div className="flex items-center gap-2">
+        <span className={className}>{label}</span>
+        <button
+          onClick={onSave}
+          disabled={!canSave}
+          className="flex items-center gap-1 rounded border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-200 hover:border-neutral-500 disabled:cursor-not-allowed disabled:border-neutral-800 disabled:text-neutral-600"
+          title="Save (Cmd/Ctrl+S)"
+        >
+          <Save size={11} />
+          Save
+        </button>
+      </div>
     </div>
   );
 }

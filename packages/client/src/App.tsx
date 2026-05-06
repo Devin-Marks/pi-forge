@@ -49,29 +49,6 @@ function readPersistedWidth(key: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-/**
- * Best-effort extraction of the affected file path from a write/edit
- * tool_result message. The SDK's exact field name varies across
- * versions and tool flavours; we try the common ones (same heuristic
- * the chat renderer uses for the tool-call summary).
- */
-function extractToolFilePath(message: Record<string, unknown>): string | undefined {
-  const details = message.details as
-    | { path?: unknown; filePath?: unknown; file?: unknown; file_path?: unknown }
-    | undefined;
-  const input = message.input as
-    | { path?: unknown; filePath?: unknown; file?: unknown; file_path?: unknown }
-    | undefined;
-  for (const src of [details, input]) {
-    if (src === undefined) continue;
-    if (typeof src.path === "string") return src.path;
-    if (typeof src.filePath === "string") return src.filePath;
-    if (typeof src.file === "string") return src.file;
-    if (typeof src.file_path === "string") return src.file_path;
-  }
-  return undefined;
-}
-
 export function App() {
   const ready = useAuthStore((s) => s.ready);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -205,9 +182,18 @@ export function App() {
   );
   const loadFileTree = useFileStore((s) => s.loadTree);
   const restoreTabs = useFileStore((s) => s.restoreTabs);
+  const refreshOpenFiles = useFileStore((s) => s.refreshOpenFiles);
+  // After every agent turn, reconcile the file browser tree AND the
+  // open editor tabs against on-disk state. Decoupled from
+  // tool-result inspection: this fires once per `agent_end` and
+  // catches every kind of change — built-in edit/write tools, MCP
+  // tools, terminal commands the agent shelled out to, git ops, etc.
+  // Refresh helper handles per-tab reconciliation (silent reload
+  // for clean buffers, externally-changed banner for dirty ones).
   useEffect(() => {
     if (active === undefined || isStreaming) return;
     void loadFileTree(active.id);
+    void refreshOpenFiles(active.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id, isStreaming, agentEndCount]);
 
@@ -220,54 +206,6 @@ export function App() {
     void restoreTabs(active.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id]);
-
-  // Agent file-change awareness for open editor tabs. Walks NEW
-  // tool_result messages since we last looked, finds write/edit
-  // results, and either silently reloads the file (clean tab) or
-  // surfaces an "external change" banner (dirty tab). The
-  // last-processed pointer is keyed by sessionId — switching sessions
-  // restarts the cursor from the end of that session's history so we
-  // don't re-fire reloads for messages already on screen.
-  const lastProcessedRef = useRef<Record<string, number>>({});
-  const sessionMessages = useSessionStore((s) =>
-    activeSessionId !== undefined ? s.messagesBySession[activeSessionId] : undefined,
-  );
-  useEffect(() => {
-    if (active === undefined || activeSessionId === undefined || sessionMessages === undefined) {
-      return;
-    }
-    const lastSeen = lastProcessedRef.current[activeSessionId] ?? sessionMessages.length;
-    // First time we see this session: skip the existing history,
-    // start watching from the next change forward.
-    if (lastProcessedRef.current[activeSessionId] === undefined) {
-      lastProcessedRef.current[activeSessionId] = sessionMessages.length;
-      return;
-    }
-    if (sessionMessages.length <= lastSeen) {
-      lastProcessedRef.current[activeSessionId] = sessionMessages.length;
-      return;
-    }
-    const fileStore = useFileStore.getState();
-    const openByPath = new Map(fileStore.openFiles.map((f) => [f.path, f]));
-    for (let i = lastSeen; i < sessionMessages.length; i++) {
-      const m = sessionMessages[i];
-      if (m === undefined) continue;
-      if (m.role !== "toolResult") continue;
-      const toolName = String(m.toolName ?? "");
-      if (toolName !== "write" && toolName !== "edit") continue;
-      const path = extractToolFilePath(m);
-      if (path === undefined) continue;
-      const open = openByPath.get(path);
-      if (open === undefined) continue;
-      if (open.dirty) {
-        fileStore.markExternallyChanged(path);
-      } else {
-        void fileStore.reloadFile(active.id, path);
-      }
-    }
-    lastProcessedRef.current[activeSessionId] = sessionMessages.length;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active?.id, activeSessionId, sessionMessages]);
 
   useEffect(() => {
     if (!settingsOpen) return;
