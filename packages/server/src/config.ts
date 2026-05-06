@@ -327,3 +327,14 @@ export function authEnabled(): boolean {
     existsSync(config.auth.passwordHashFile)
   );
 }
+
+/**
+ * True iff this deployment supports the browser password-change flow:
+ * either an env-supplied UI_PASSWORD is in use OR a hash has already
+ * been persisted from a prior change. API-key-only deployments don't
+ * have a password to change, so the Settings → General password
+ * section hides on them. Read by /ui-config.
+ */
+export function passwordAuthEnabled(): boolean {
+  return config.auth.uiPassword !== undefined || existsSync(config.auth.passwordHashFile);
+}
