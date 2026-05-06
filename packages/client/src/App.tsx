@@ -3,7 +3,7 @@ import { FileCode, FolderTree, MessageSquare, Terminal as TerminalIcon } from "l
 import { useAuthStore } from "./store/auth-store";
 import { useActiveProject, useProjectStore } from "./store/project-store";
 import { useSessionStore } from "./store/session-store";
-import { useFileStore, type OpenFile } from "./store/file-store";
+import { useFileStore } from "./store/file-store";
 import { useUiConfigStore } from "./store/ui-config-store";
 import { LoginScreen } from "./components/LoginScreen";
 import { ChangePasswordScreen } from "./components/ChangePasswordScreen";
@@ -47,29 +47,6 @@ function readPersistedWidth(key: string, fallback: number): number {
   if (raw === null) return fallback;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : fallback;
-}
-
-/**
- * Best-effort extraction of the affected file path from a write/edit
- * tool_result message. The SDK's exact field name varies across
- * versions and tool flavours; we try the common ones (same heuristic
- * the chat renderer uses for the tool-call summary).
- */
-function extractToolFilePath(message: Record<string, unknown>): string | undefined {
-  const details = message.details as
-    | { path?: unknown; filePath?: unknown; file?: unknown; file_path?: unknown }
-    | undefined;
-  const input = message.input as
-    | { path?: unknown; filePath?: unknown; file?: unknown; file_path?: unknown }
-    | undefined;
-  for (const src of [details, input]) {
-    if (src === undefined) continue;
-    if (typeof src.path === "string") return src.path;
-    if (typeof src.filePath === "string") return src.filePath;
-    if (typeof src.file === "string") return src.file;
-    if (typeof src.file_path === "string") return src.file_path;
-  }
-  return undefined;
 }
 
 export function App() {
@@ -205,9 +182,18 @@ export function App() {
   );
   const loadFileTree = useFileStore((s) => s.loadTree);
   const restoreTabs = useFileStore((s) => s.restoreTabs);
+  const refreshOpenFiles = useFileStore((s) => s.refreshOpenFiles);
+  // After every agent turn, reconcile the file browser tree AND the
+  // open editor tabs against on-disk state. Decoupled from
+  // tool-result inspection: this fires once per `agent_end` and
+  // catches every kind of change — built-in edit/write tools, MCP
+  // tools, terminal commands the agent shelled out to, git ops, etc.
+  // Refresh helper handles per-tab reconciliation (silent reload
+  // for clean buffers, externally-changed banner for dirty ones).
   useEffect(() => {
     if (active === undefined || isStreaming) return;
     void loadFileTree(active.id);
+    void refreshOpenFiles(active.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id, isStreaming, agentEndCount]);
 
@@ -220,78 +206,6 @@ export function App() {
     void restoreTabs(active.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id]);
-
-  // Agent file-change awareness for open editor tabs. Walks NEW
-  // tool_result messages since we last looked, finds write/edit
-  // results, and either silently reloads the file (clean tab) or
-  // surfaces an "external change" banner (dirty tab). The
-  // last-processed pointer is keyed by sessionId — switching sessions
-  // restarts the cursor from the end of that session's history so we
-  // don't re-fire reloads for messages already on screen.
-  const lastProcessedRef = useRef<Record<string, number>>({});
-  const sessionMessages = useSessionStore((s) =>
-    activeSessionId !== undefined ? s.messagesBySession[activeSessionId] : undefined,
-  );
-  useEffect(() => {
-    if (active === undefined || activeSessionId === undefined || sessionMessages === undefined) {
-      return;
-    }
-    const lastSeen = lastProcessedRef.current[activeSessionId] ?? sessionMessages.length;
-    // First time we see this session: skip the existing history,
-    // start watching from the next change forward.
-    if (lastProcessedRef.current[activeSessionId] === undefined) {
-      lastProcessedRef.current[activeSessionId] = sessionMessages.length;
-      return;
-    }
-    if (sessionMessages.length <= lastSeen) {
-      lastProcessedRef.current[activeSessionId] = sessionMessages.length;
-      return;
-    }
-    const fileStore = useFileStore.getState();
-    // Open files are keyed by absolute path (the file browser's
-    // joinPath(project.path, node.path) result). The pi tool result's
-    // `details.path` may be either absolute OR project-relative
-    // depending on how the agent invoked the tool — match against
-    // both so we don't silently miss reloads.
-    const openByPath = new Map(fileStore.openFiles.map((f) => [f.path, f]));
-    const projectRoot = active.path.replace(/\/+$/, "");
-    const resolveOpen = (raw: string): { path: string; file: OpenFile } | undefined => {
-      const direct = openByPath.get(raw);
-      if (direct !== undefined) return { path: raw, file: direct };
-      // Treat as project-relative — strip a leading "./" or "/" then
-      // join with the project root. This is the common case (agents
-      // emit cwd-relative paths via the edit/write tools).
-      const trimmed = raw.replace(/^\.\/+/, "").replace(/^\/+/, "");
-      const joined = `${projectRoot}/${trimmed.replaceAll("\\", "/")}`;
-      const found = openByPath.get(joined);
-      return found !== undefined ? { path: joined, file: found } : undefined;
-    };
-    let sawWriteOrEdit = false;
-    for (let i = lastSeen; i < sessionMessages.length; i++) {
-      const m = sessionMessages[i];
-      if (m === undefined) continue;
-      if (m.role !== "toolResult") continue;
-      const toolName = String(m.toolName ?? "");
-      if (toolName !== "write" && toolName !== "edit") continue;
-      sawWriteOrEdit = true;
-      const raw = extractToolFilePath(m);
-      if (raw === undefined) continue;
-      const match = resolveOpen(raw);
-      if (match === undefined) continue;
-      if (match.file.dirty) {
-        fileStore.markExternallyChanged(match.path);
-      } else {
-        void fileStore.reloadFile(active.id, match.path);
-      }
-    }
-    // If the agent wrote or edited any file in this batch, refresh the
-    // file browser tree so newly-created files / renamed entries
-    // appear without waiting for the next agent_end. Cheap call —
-    // server side just walks the workspace once.
-    if (sawWriteOrEdit) void fileStore.loadTree(active.id);
-    lastProcessedRef.current[activeSessionId] = sessionMessages.length;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active?.id, activeSessionId, sessionMessages]);
 
   useEffect(() => {
     if (!settingsOpen) return;

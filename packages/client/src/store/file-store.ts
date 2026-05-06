@@ -141,6 +141,22 @@ interface FileState {
    */
   reloadFile: (projectId: string, path: string) => Promise<void>;
   /**
+   * Re-read every open editor tab from disk and reconcile with the
+   * in-memory state. Per-file decision:
+   *   - on-disk content matches the current `saved` field → no-op
+   *   - on-disk content differs AND tab is clean → reload (replace
+   *     `saved` + `draft`); CodeMirror's draft-watching effect
+   *     replays the new doc into the editor
+   *   - on-disk content differs AND tab is dirty → markExternallyChanged
+   *     so the user sees the banner instead of losing their work
+   * Used by App.tsx on every `agent_end` (and any other point we know
+   * the workspace may have shifted underneath us). Intentionally
+   * decoupled from tool-result detection — this works for ANY change
+   * the agent's run produced (tool calls, terminal commands the
+   * agent shelled out to, git operations, etc.).
+   */
+  refreshOpenFiles: (projectId: string) => Promise<void>;
+  /**
    * Mark a tab as having received an external change while dirty. The
    * editor renders a banner offering to discard or reload. Cleared by
    * the next successful saveFile or reloadFile, OR by an explicit
@@ -441,6 +457,57 @@ export const useFileStore = create<FileState>((set, get) => ({
     } catch (err) {
       set({ error: err instanceof ApiError ? err.code : (err as Error).message });
     }
+  },
+
+  refreshOpenFiles: async (projectId) => {
+    // Snapshot the open paths so concurrent close/open doesn't reshape
+    // the array while we iterate. Reads are issued in parallel — each
+    // one is independent and the worst case is O(open_tabs) requests
+    // (typically 0–3).
+    const snapshot = get().openFiles.map((f) => ({
+      path: f.path,
+      saved: f.saved,
+      dirty: f.dirty,
+    }));
+    if (snapshot.length === 0) return;
+    const results = await Promise.allSettled(snapshot.map((s) => api.filesRead(projectId, s.path)));
+    set((state) => {
+      let openFilesNext = state.openFiles;
+      let externallyChanged = state.externallyChanged;
+      for (let i = 0; i < snapshot.length; i++) {
+        const res = results[i];
+        const snap = snapshot[i];
+        if (res === undefined || snap === undefined) continue;
+        // Ignore failures here — a 404 on a deleted file should
+        // surface via the user's next interaction, not as a noisy
+        // banner during a refresh sweep.
+        if (res.status !== "fulfilled") continue;
+        const r = res.value;
+        // No-op when content matches — avoids spurious CodeMirror
+        // doc replays + flickers.
+        if (r.content === snap.saved && !snap.dirty) continue;
+        if (r.content === snap.saved) continue;
+        if (snap.dirty) {
+          externallyChanged = { ...externallyChanged, [snap.path]: true };
+        } else {
+          openFilesNext = openFilesNext.map((f) =>
+            f.path === snap.path
+              ? {
+                  ...f,
+                  saved: r.content,
+                  draft: r.content,
+                  dirty: false,
+                  language: r.language,
+                  binary: r.binary,
+                  loadingError: r.binary ? "Binary file — open externally to edit." : undefined,
+                }
+              : f,
+          );
+          externallyChanged = omitKey(externallyChanged, snap.path);
+        }
+      }
+      return { openFiles: openFilesNext, externallyChanged };
+    });
   },
 
   markExternallyChanged: (path) => {
