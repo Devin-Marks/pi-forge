@@ -79,7 +79,7 @@ function isMessageEntry(e: SessionEntry): e is SessionEntry & MessageEntryShape 
  * before the position where this compaction's first-kept entry lands.
  */
 export function buildCompactionHistory(session: AgentSession): CompactionEvent[] {
-  const entries = session.sessionManager.getEntries() as SessionEntry[];
+  const entries = session.sessionManager.getEntries();
   const compactions: (SessionEntry & CompactionEntryShape)[] = [];
   for (const e of entries) if (isCompactionEntry(e)) compactions.push(e);
   if (compactions.length === 0) return [];
