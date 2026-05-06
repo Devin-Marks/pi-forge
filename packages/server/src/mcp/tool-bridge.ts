@@ -100,7 +100,7 @@ interface McpCallResult {
  * first text block so the agent sees something acted-upon rather
  * than a silent dropped result.
  */
-function mcpResultToAgentResult(res: unknown): AgentToolResult<unknown> {
+export function mcpResultToAgentResult(res: unknown): AgentToolResult<unknown> {
   const r = (res ?? {}) as McpCallResult;
   const isError = r.isError === true;
   const content: (
@@ -140,5 +140,77 @@ function mcpResultToAgentResult(res: unknown): AgentToolResult<unknown> {
   if (isError && content[0]?.type === "text") {
     content[0] = { type: "text", text: `[error] ${content[0].text}` };
   }
-  return { content, details: r.structuredContent ?? null };
+  return { content: capTextContent(content), details: r.structuredContent ?? null };
+}
+
+/**
+ * Default cap on the total *text* size (across all text blocks) of an
+ * MCP tool result, in characters. ~100k chars ≈ ~25k tokens via the
+ * standard chars/4 heuristic the SDK uses elsewhere — large enough
+ * that almost no legitimate single tool call hits it, small enough
+ * that one accidental "list everything" doesn't blow a 200k context
+ * window. Image blocks are passed through untouched (truncating
+ * base64 mid-byte breaks the image; image tokens are
+ * provider-specific anyway and not measured here).
+ *
+ * Split: 60% head + 40% tail. Head usually carries summary / total /
+ * schema context that the agent needs to interpret the rest; tail
+ * usually has the most recent / most relevant items in time-ordered
+ * lists.
+ *
+ * Marker text is read by the agent and tells it (a) truncation
+ * happened, (b) by how much, (c) what to do about it. Imperative
+ * phrasing nudges the model to narrow scope rather than re-running
+ * the same call.
+ *
+ * No per-tool override yet — add when a real workload needs a higher
+ * or lower cap. Hardcoded constant is the deliberate first cut.
+ */
+export const MCP_TEXT_CAP_CHARS = 100_000;
+export const MCP_TEXT_HEAD_RATIO = 0.6;
+
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
+export function capTextContent(blocks: ContentBlock[]): ContentBlock[] {
+  let totalText = 0;
+  for (const b of blocks) {
+    if (b.type === "text") totalText += b.text.length;
+  }
+  if (totalText <= MCP_TEXT_CAP_CHARS) return blocks;
+  // Flatten all text blocks into one head+tail string. Preserves
+  // image blocks in their original positions; drops in-between text
+  // separators in exchange for staying under the cap.
+  const flat = blocks
+    .filter((b): b is { type: "text"; text: string } => b.type === "text")
+    .map((b) => b.text)
+    .join("\n\n");
+  const headLen = Math.floor(MCP_TEXT_CAP_CHARS * MCP_TEXT_HEAD_RATIO);
+  const tailLen = MCP_TEXT_CAP_CHARS - headLen;
+  const head = flat.slice(0, headLen);
+  const tail = flat.slice(flat.length - tailLen);
+  const omitted = flat.length - headLen - tailLen;
+  const marker =
+    `\n\n[--- ${omitted.toLocaleString()} characters (~${Math.round(omitted / 4).toLocaleString()} tokens) ` +
+    `truncated to keep the result under the ${MCP_TEXT_CAP_CHARS.toLocaleString()}-char cap. ` +
+    `Refine the query (smaller scope, narrower filter, paginate if available) to see the missing middle. ---]\n\n`;
+  const truncatedText = head + marker + tail;
+  // Keep one text block with the truncated payload + every image
+  // block from the original (in its original relative order). Drop
+  // duplicate text blocks since they were already absorbed into
+  // `flat`.
+  const out: ContentBlock[] = [];
+  let textInjected = false;
+  for (const b of blocks) {
+    if (b.type === "text") {
+      if (!textInjected) {
+        out.push({ type: "text", text: truncatedText });
+        textInjected = true;
+      }
+      continue;
+    }
+    out.push(b);
+  }
+  return out;
 }
