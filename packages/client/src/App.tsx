@@ -446,12 +446,13 @@ export function App() {
               materialises between chat and files only when at least
               one file is open. Both right-side panes are user-resizable
               via their dividers; widths persist in localStorage. */}
-            {/* Chat column is suppressed when chatOpen=false. Empty-
-                state branches (no project, no session) still render so
-                the user gets the picker / "select a session" prompt
-                even when chat is hidden — those messages aren't really
-                "chat", they're load-bearing onboarding. */}
-            {(chatOpen || activeSessionId === undefined) && (
+            {/* Chat column is suppressed when chatOpen=false — fully.
+                Includes the empty-state branches (project picker,
+                "no session" prompt). When chat is closed AND there's
+                no project, the main area is empty and the user can
+                re-open chat from the header to reach the picker, or
+                use the sidebar's "+ New project" button. */}
+            {chatOpen && (
               <div className="flex flex-1 flex-col overflow-hidden">
                 {projectsLoaded && projects.length === 0 ? (
                   setupPickerDismissed ? (
@@ -528,11 +529,10 @@ export function App() {
                 their persisted widths + dividers as before.
 
                 `chatColumnVisible` mirrors the rendering condition for
-                the chat column above (it stays mounted on empty-state
-                branches so onboarding messaging always renders). */}
+                the chat column above — strictly chatOpen now. */}
             {editorVisible &&
               (() => {
-                const chatColumnVisible = chatOpen || activeSessionId === undefined;
+                const chatColumnVisible = chatOpen;
                 const editorIsLeftmost = !chatColumnVisible;
                 if (editorIsLeftmost) {
                   return (
@@ -567,7 +567,7 @@ export function App() {
 
             {filesOpen &&
               (() => {
-                const chatColumnVisible = chatOpen || activeSessionId === undefined;
+                const chatColumnVisible = chatOpen;
                 const filesIsLeftmost = !chatColumnVisible && !editorVisible;
                 // Inner content (tabs + selected panel) — identical in
                 // both layout branches. Extracted so we can wrap it in
