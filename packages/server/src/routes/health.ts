@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { FastifyPluginAsync } from "fastify";
 import { sessionCount } from "../session-registry.js";
 import { ptyCount } from "../pty-manager.js";
-import { config } from "../config.js";
+import { config, passwordAuthEnabled } from "../config.js";
 
 /**
  * Read the server's own package.json once at module load. Used by the
@@ -72,7 +72,7 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
         response: {
           200: {
             type: "object",
-            required: ["minimal", "workspaceRoot", "version"],
+            required: ["minimal", "workspaceRoot", "version", "passwordAuthEnabled"],
             properties: {
               // True when MINIMAL_UI is set: hides terminal, git pane,
               // last-turn pane, and providers/agent settings sections;
@@ -83,10 +83,16 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
               // project creation builds `<workspaceRoot>/<name>`.
               workspaceRoot: { type: "string" },
               // Server build version (mirrors packages/server's
-              // package.json). Surfaced in the About tab so users can
-              // confirm which release they're hitting without shelling
-              // into the container.
+              // package.json). Surfaced in the General settings tab
+              // so users can confirm which release they're hitting
+              // without shelling into the container.
               version: { type: "string" },
+              // True when the deployment supports the browser
+              // password-change flow (env UI_PASSWORD set OR a
+              // persisted password-hash exists). API-key-only
+              // deployments report false; the Settings → General
+              // password change section hides in that case.
+              passwordAuthEnabled: { type: "boolean" },
             },
           },
         },
@@ -96,6 +102,7 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
       minimal: config.minimalUi,
       workspaceRoot: config.workspacePath,
       version: SERVER_VERSION,
+      passwordAuthEnabled: passwordAuthEnabled(),
     }),
   );
 };

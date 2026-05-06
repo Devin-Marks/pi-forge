@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import {
   api,
@@ -16,8 +16,9 @@ import { useUiConfigStore } from "../store/ui-config-store";
 import { EMPTY_STATUS, useMcpStore } from "../store/mcp-store";
 import { THEME_DEFS, useThemeStore, type ThemeId } from "../lib/theme";
 import { getStoredToken } from "../lib/auth-client";
+import { useAuthStore } from "../store/auth-store";
 
-type Tab = "providers" | "agent" | "mcp" | "tools" | "skills" | "appearance" | "backup" | "about";
+type Tab = "providers" | "agent" | "mcp" | "tools" | "skills" | "appearance" | "backup" | "general";
 
 interface Props {
   onClose: () => void;
@@ -61,7 +62,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           // deployments often want to disable bash/edit/write at the
           // tool level, regardless of what providers / agent settings
           // are exposed.
-          (["skills", "tools", "appearance", "backup", "about"] as const)
+          (["skills", "tools", "appearance", "backup", "general"] as const)
         : ([
             "providers",
             "agent",
@@ -70,7 +71,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
             "skills",
             "appearance",
             "backup",
-            "about",
+            "general",
           ] as const),
     [minimal],
   );
@@ -126,7 +127,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
                             ? "Appearance"
                             : t === "backup"
                               ? "Backup"
-                              : "About"}
+                              : "General"}
               </button>
             ))}
           </div>
@@ -177,7 +178,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           {tab === "skills" && <SkillsTab onError={setError} />}
           {tab === "appearance" && <AppearanceTab />}
           {tab === "backup" && <BackupTab onError={setError} />}
-          {tab === "about" && <AboutTab />}
+          {tab === "general" && <GeneralTab />}
         </div>
       </div>
     </div>
@@ -2468,23 +2469,27 @@ function McpDraftForm(props: {
   );
 }
 
-// ---------------- About tab ----------------
+// ---------------- General tab ----------------
+
+const MIN_PASSWORD_LENGTH = 8;
 
 /**
- * Read-only "what am I running" pane. Shows the deployed server
- * version (from `/ui-config`) plus a couple of orienting links —
- * GitHub repo, CHANGELOG, security policy. Useful for confirming a
- * deploy actually rolled forward without shelling into the container.
+ * Catch-all "what am I running + account" pane. Combines the previous
+ * About pane (version + links) with an in-place password-change form
+ * for deployments that use UI_PASSWORD auth. The password section
+ * hides on API-key-only deployments — there's nothing to change in
+ * that case.
  */
-function AboutTab() {
+function GeneralTab() {
   const version = useUiConfigStore((s) => s.version);
   const loaded = useUiConfigStore((s) => s.loaded);
+  const passwordAuthEnabled = useUiConfigStore((s) => s.passwordAuthEnabled);
   return (
     <div className="space-y-6 text-sm text-neutral-300">
       <header className="space-y-1">
         <h2 className="text-base font-semibold text-neutral-100">pi-forge</h2>
         <p className="text-xs text-neutral-500">
-          Browser workbench for the{" "}
+          Browser interface for the{" "}
           <a
             href="https://github.com/badlogic/pi-mono"
             target="_blank"
@@ -2547,6 +2552,144 @@ function AboutTab() {
           </li>
         </ul>
       </section>
+
+      {passwordAuthEnabled && <ChangePasswordSection />}
     </div>
   );
+}
+
+/**
+ * Inline password-change form mirroring the UX of the forced
+ * first-login ChangePasswordScreen but rendered inside Settings →
+ * General. Reuses the existing useAuthStore.changePassword action
+ * (which handles hashing on the server, atomic write to
+ * password-hash, and re-issuing the JWT). Reads pending + error
+ * state from the same store so a failed change persists across
+ * re-renders.
+ */
+function ChangePasswordSection() {
+  const changePassword = useAuthStore((s) => s.changePassword);
+  const pending = useAuthStore((s) => s.changePasswordPending);
+  const remoteError = useAuthStore((s) => s.changePasswordError);
+
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [localError, setLocalError] = useState<string | undefined>(undefined);
+  // Prior pending state — rising-edge detect on `pending` flipping
+  // false with no remoteError tells us a successful save just landed,
+  // so we can clear the form fields and surface a confirmation.
+  const [savedFlash, setSavedFlash] = useState(false);
+  const wasPendingRef = useRef(false);
+  useEffect(() => {
+    if (wasPendingRef.current && !pending && remoteError === undefined) {
+      setCurrent("");
+      setNext("");
+      setConfirm("");
+      setSavedFlash(true);
+      const t = window.setTimeout(() => setSavedFlash(false), 2500);
+      return () => window.clearTimeout(t);
+    }
+    wasPendingRef.current = pending;
+    return undefined;
+  }, [pending, remoteError]);
+
+  const onSubmit = (e: FormEvent<HTMLFormElement>): void => {
+    e.preventDefault();
+    setLocalError(undefined);
+    setSavedFlash(false);
+    if (next.length < MIN_PASSWORD_LENGTH) {
+      setLocalError(`New password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+      return;
+    }
+    if (next !== confirm) {
+      setLocalError("New password and confirmation do not match.");
+      return;
+    }
+    if (next === current) {
+      setLocalError("New password must differ from the current one.");
+      return;
+    }
+    void changePassword(current, next);
+  };
+
+  const error = localError ?? friendlyChangePasswordError(remoteError);
+
+  return (
+    <section className="space-y-2 border-t border-neutral-800 pt-5">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+        Change password
+      </h3>
+      <p className="text-xs text-neutral-500">
+        Updates the scrypt hash on disk; existing browser sessions stay signed in.
+      </p>
+      <form onSubmit={onSubmit} className="space-y-2">
+        <label className="block space-y-1">
+          <span className="text-xs text-neutral-400">Current password</span>
+          <input
+            type="password"
+            value={current}
+            onChange={(e) => setCurrent(e.target.value)}
+            autoComplete="current-password"
+            className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm outline-none focus:border-neutral-500"
+          />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-xs text-neutral-400">New password</span>
+          <input
+            type="password"
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+            autoComplete="new-password"
+            minLength={MIN_PASSWORD_LENGTH}
+            className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm outline-none focus:border-neutral-500"
+          />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-xs text-neutral-400">Confirm new password</span>
+          <input
+            type="password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            autoComplete="new-password"
+            minLength={MIN_PASSWORD_LENGTH}
+            className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm outline-none focus:border-neutral-500"
+          />
+        </label>
+        {error !== undefined && (
+          <p role="alert" className="text-xs text-red-400">
+            {error}
+          </p>
+        )}
+        {savedFlash && (
+          <p role="status" className="text-xs text-emerald-400">
+            Password updated.
+          </p>
+        )}
+        <button
+          type="submit"
+          disabled={pending || current.length === 0 || next.length === 0}
+          className="rounded-md bg-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {pending ? "Saving…" : "Update password"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function friendlyChangePasswordError(code: string | undefined): string | undefined {
+  if (code === undefined) return undefined;
+  switch (code) {
+    case "invalid_password":
+      return "Current password is incorrect.";
+    case "password_unchanged":
+      return "New password must differ from the current one.";
+    case "ui_password_not_configured":
+      return "Password auth is not configured on this server.";
+    case "auth_required":
+      return "Session expired — sign in again.";
+    default:
+      return `Could not change password: ${code}`;
+  }
 }

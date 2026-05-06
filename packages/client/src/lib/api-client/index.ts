@@ -117,10 +117,21 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
   ) {
     fail(status, "expected { minimal: boolean, workspaceRoot: string }");
   }
-  // `version` is forward-compatible: older servers without the field
-  // fall through to "unknown" so the About tab still renders.
+  // `version` and `passwordAuthEnabled` are forward-compatible: older
+  // servers without the fields fall through to safe defaults.
+  // - version → "unknown" so the General tab still renders.
+  // - passwordAuthEnabled → true so the password section still shows
+  //   (the worst case is a confusing 400 on submit; better than
+  //   silently hiding the form on a server that does support it).
   const version = typeof value.version === "string" ? value.version : "unknown";
-  return { minimal: value.minimal, workspaceRoot: value.workspaceRoot, version };
+  const passwordAuthEnabled =
+    typeof value.passwordAuthEnabled === "boolean" ? value.passwordAuthEnabled : true;
+  return {
+    minimal: value.minimal,
+    workspaceRoot: value.workspaceRoot,
+    version,
+    passwordAuthEnabled,
+  };
 }
 
 function vHealth(value: unknown, status: number): HealthResponse {
