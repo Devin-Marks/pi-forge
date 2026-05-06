@@ -400,6 +400,33 @@ export async function createSession(
   };
   live.unsubscribe = makeSubscribeHandler(live);
   registry.set(live.sessionId, live);
+
+  // Set a meaningful default name on the new session so the sidebar
+  // doesn't show every fresh-create as the indistinguishable
+  // "session abc1234" fallback. Pattern: "New session" with a numeric
+  // suffix to disambiguate against existing siblings in this project.
+  // Best-effort — the session is fully usable regardless. The user
+  // can rename via the sidebar's inline rename at any time.
+  try {
+    const siblings = await listSessionsForProject(projectId, workspacePath);
+    const existingNames = new Set(
+      siblings
+        .filter((s) => s.sessionId !== live.sessionId)
+        .map((s) => s.name)
+        .filter((n): n is string => typeof n === "string"),
+    );
+    let candidate = "New session";
+    let n = 2;
+    while (existingNames.has(candidate)) {
+      candidate = `New session (${n})`;
+      n += 1;
+    }
+    session.setSessionName(candidate);
+  } catch {
+    // Naming failure is non-fatal; leave the SDK default and let the
+    // sidebar fall back to "session <id>" if needed.
+  }
+
   return live;
 }
 
