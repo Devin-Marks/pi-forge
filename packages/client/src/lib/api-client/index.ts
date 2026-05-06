@@ -117,7 +117,10 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
   ) {
     fail(status, "expected { minimal: boolean, workspaceRoot: string }");
   }
-  return { minimal: value.minimal, workspaceRoot: value.workspaceRoot };
+  // `version` is forward-compatible: older servers without the field
+  // fall through to "unknown" so the About tab still renders.
+  const version = typeof value.version === "string" ? value.version : "unknown";
+  return { minimal: value.minimal, workspaceRoot: value.workspaceRoot, version };
 }
 
 function vHealth(value: unknown, status: number): HealthResponse {

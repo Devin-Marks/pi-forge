@@ -114,6 +114,8 @@ export interface UiConfigResponse {
   minimal: boolean;
   /** Absolute path to the workspace root, used by minimal-mode project create. */
   workspaceRoot: string;
+  /** Server build version (mirrors packages/server's package.json). */
+  version: string;
 }
 
 export interface UnifiedSession {
