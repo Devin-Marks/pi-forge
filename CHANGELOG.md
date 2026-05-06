@@ -34,16 +34,31 @@ the README for the support window policy.
 
 ### Fixed
 
-- **Editor refreshes when the agent edits an open file.** The
-  per-tool-result reload logic existed but silently missed every
-  fire because the agent's tool calls emit project-relative paths
-  (`src/foo.ts`) while open editor tabs are keyed by absolute path
-  (`/Users/.../proj/src/foo.ts`). Path matching now tries both:
-  exact match against the open file's absolute path, then a
-  project-root-prefixed resolution as a fallback. Also: if any
-  write/edit tool result lands in a batch, the file browser tree
-  refreshes immediately (instead of waiting for `agent_end`) so
-  newly-created files appear without a perceptible lag.
+- **Editor refreshes when the agent edits an open file.** Replaces
+  the per-tool-result detection (which was fragile against SDK
+  changes — the latest `EditToolDetails` only exposes `{ diff,
+  firstChangedLine }`, no path field) with a single
+  `agent_end`-triggered refresh that re-reads every open editor
+  tab from disk and reconciles per file: silent reload for clean
+  buffers, externally-changed banner for dirty buffers. Catches
+  every change source (built-in tools, MCP tools, terminal commands
+  the agent shelled out to, git ops) without needing to know the
+  shape of any tool's result.
+- **Auto-scroll to bottom when a new user message lands.** The
+  chat already auto-scrolled while following the bottom, but a
+  user who'd scrolled up to read history and then submitted a
+  prompt stayed parked in history while the agent's response
+  streamed off-screen. New rule: any time a user-role message
+  appears at the tail, force-scroll to bottom and re-engage
+  follow mode. Catches both the local-submit path and cross-tab
+  delivery.
+- **New sessions get distinct names.** `createSession` now sets a
+  `New session` default name (with `New session (2)`, `(3)`, …
+  suffixes to disambiguate against existing siblings in the same
+  project), mirroring the `(clone)` suffix logic the fork path
+  added in v1.0.3. Previously fresh sessions all fell back to the
+  `session abc1234` sessionId-based fallback in the sidebar, which
+  reads as effectively-identical at a glance.
 
 ### Added
 
