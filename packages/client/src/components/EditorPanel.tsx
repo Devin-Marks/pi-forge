@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { useFileStore, type OpenFile } from "../store/file-store";
 import { useActiveProject } from "../store/project-store";
-import { Save, WrapText, X, XSquare } from "lucide-react";
+import { AlertTriangle, Save, WrapText, X, XSquare } from "lucide-react";
 
 const WRAP_KEY_PREFIX = "forge.editor.wrap.";
 
@@ -101,6 +101,7 @@ export function EditorPanel() {
       <Tabs
         files={openFiles}
         activePath={activePath}
+        externallyChanged={externallyChanged}
         onActivate={setActiveFile}
         onClose={closeFile}
         onCloseAll={closeAllFiles}
@@ -163,12 +164,14 @@ function EditorLoading() {
 function Tabs({
   files,
   activePath,
+  externallyChanged,
   onActivate,
   onClose,
   onCloseAll,
 }: {
   files: OpenFile[];
   activePath: string | undefined;
+  externallyChanged: Record<string, boolean>;
   onActivate: (path: string | undefined) => void;
   onClose: (path: string) => void;
   onCloseAll: () => void;
@@ -204,17 +207,32 @@ function Tabs({
         {files.map((f) => {
           const name = f.path.split("/").pop() ?? f.path;
           const active = f.path === activePath;
+          // Externally-changed only fires when the tab is dirty (the
+          // refresh helper silently reloads clean tabs). Surface it
+          // via an amber tint + warning icon so the user notices on
+          // inactive tabs — without this signal, the only place the
+          // collision shows up is the banner inside the active tab.
+          const extChanged = externallyChanged[f.path] === true;
+          const baseClass = active
+            ? "bg-neutral-950 text-neutral-100"
+            : "text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200";
+          const conflictClass = extChanged ? "bg-amber-900/30 text-amber-200" : "";
           return (
             <div
               key={f.tabId}
-              className={`group flex items-center gap-1 border-r border-neutral-800 px-3 py-1.5 text-xs ${
-                active
-                  ? "bg-neutral-950 text-neutral-100"
-                  : "text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
-              }`}
+              className={`group flex items-center gap-1 border-r border-neutral-800 px-3 py-1.5 text-xs ${baseClass} ${conflictClass}`}
+              title={
+                extChanged
+                  ? `${f.path}\n\nExternal change while you have unsaved edits — open the tab to review.`
+                  : f.path
+              }
             >
-              <button onClick={() => onActivate(f.path)} className="truncate" title={f.path}>
-                {f.dirty && <span className="mr-1 text-amber-400">•</span>}
+              <button onClick={() => onActivate(f.path)} className="truncate">
+                {extChanged ? (
+                  <AlertTriangle size={11} className="mr-1 inline text-amber-400" />
+                ) : f.dirty ? (
+                  <span className="mr-1 text-amber-400">•</span>
+                ) : null}
                 {name}
               </button>
               <button
