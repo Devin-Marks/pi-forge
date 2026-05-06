@@ -14,6 +14,7 @@ import { makeDedupe, makeLock } from "./concurrency.js";
 import { effectiveSkillsForProject } from "./config-manager.js";
 import { readProjects } from "./project-manager.js";
 import { filterEnabledTools, readToolOverrides } from "./tool-overrides.js";
+import { discoverExtensionResources } from "./extensions-discovery.js";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import {
   customToolsForProject as mcpCustomToolsForProject,
@@ -162,11 +163,21 @@ export const BUILTIN_TOOL_NAMES: readonly string[] = [
 async function buildToolsAllowlist(
   customTools: readonly ToolDefinition[],
   projectId: string,
+  workspacePath: string,
 ): Promise<string[]> {
   const overrides = await readToolOverrides();
+  // Pi extensions register tools programmatically — those names are
+  // invisible to BUILTIN_TOOL_NAMES and to `customTools` (which only
+  // covers our MCP shim). Without enumerating them here, the
+  // strict-allowlist semantics in the SDK's `_refreshToolRegistry`
+  // would silently drop every extension-contributed tool. See
+  // packages/server/src/extensions-discovery.ts for the discovery
+  // contract.
+  const extensionResources = await discoverExtensionResources(workspacePath);
   const candidates = [
     ...BUILTIN_TOOL_NAMES.map((name) => ({ family: "builtin" as const, name })),
     ...customTools.map((t) => ({ family: "mcp" as const, name: t.name })),
+    ...extensionResources.tools.map((t) => ({ family: "extension" as const, name: t.name })),
   ];
   return filterEnabledTools(overrides, projectId, candidates);
 }
@@ -372,6 +383,7 @@ export async function createSession(
     workspacePath,
     config.piConfigDir,
     settingsManager,
+    projectId,
   );
   const { session } = await createAgentSession({
     cwd: workspacePath,
@@ -380,7 +392,7 @@ export async function createSession(
     resourceLoader,
     agentDir: config.piConfigDir,
     customTools,
-    tools: await buildToolsAllowlist(customTools, projectId),
+    tools: await buildToolsAllowlist(customTools, projectId, workspacePath),
   });
 
   const now = new Date();
@@ -551,6 +563,7 @@ export async function resumeSession(
       workspacePath,
       config.piConfigDir,
       settingsManager,
+      projectId,
     );
     const { session } = await createAgentSession({
       cwd: workspacePath,
@@ -559,7 +572,7 @@ export async function resumeSession(
       resourceLoader,
       agentDir: config.piConfigDir,
       customTools,
-      tools: await buildToolsAllowlist(customTools, projectId),
+      tools: await buildToolsAllowlist(customTools, projectId, workspacePath),
     });
 
     const now = new Date();
@@ -924,6 +937,7 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
     source.workspacePath,
     config.piConfigDir,
     settingsManager,
+    source.projectId,
   );
   const { session } = await createAgentSession({
     cwd: source.workspacePath,
@@ -932,7 +946,7 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
     resourceLoader,
     agentDir: config.piConfigDir,
     customTools,
-    tools: await buildToolsAllowlist(customTools, source.projectId),
+    tools: await buildToolsAllowlist(customTools, source.projectId, source.workspacePath),
   });
 
   const now = new Date();
@@ -1003,6 +1017,7 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
         source.workspacePath,
         config.piConfigDir,
         restoredSettingsManager,
+        source.projectId,
       );
       const { session: restoredSession } = await createAgentSession({
         cwd: source.workspacePath,
@@ -1011,7 +1026,11 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
         resourceLoader: restoredResourceLoader,
         agentDir: config.piConfigDir,
         customTools: restoredCustomTools,
-        tools: await buildToolsAllowlist(restoredCustomTools, source.projectId),
+        tools: await buildToolsAllowlist(
+          restoredCustomTools,
+          source.projectId,
+          source.workspacePath,
+        ),
       });
       // Mutate the existing LiveSession in place rather than
       // replacing the registry entry — any SSE client holding a

@@ -296,7 +296,7 @@ function vSkillsList(value: unknown, status: number): { skills: SkillSummary[] }
         !isObject(s) ||
         typeof s.name !== "string" ||
         typeof s.description !== "string" ||
-        (s.source !== "global" && s.source !== "project") ||
+        (s.source !== "global" && s.source !== "project" && s.source !== "extension") ||
         typeof s.filePath !== "string" ||
         typeof s.enabled !== "boolean" ||
         typeof s.effective !== "boolean" ||
@@ -313,6 +313,9 @@ function vSkillsList(value: unknown, status: number): { skills: SkillSummary[] }
         effective: s.effective,
         disableModelInvocation: s.disableModelInvocation,
       };
+      if (typeof s.extensionPath === "string") {
+        summary.extensionPath = s.extensionPath;
+      }
       if (s.projectOverride === "enabled" || s.projectOverride === "disabled") {
         summary.projectOverride = s.projectOverride;
       }
@@ -1225,10 +1228,22 @@ export const api = {
         ? `?projectId=${encodeURIComponent(projectId)}`
         : "";
     return request(`/api/v1/config/tools${qs}`, (v) => {
-      if (!isObject(v) || !Array.isArray(v.builtin) || !Array.isArray(v.mcp)) {
+      if (
+        !isObject(v) ||
+        !Array.isArray(v.builtin) ||
+        !Array.isArray(v.mcp) ||
+        // `extension` is forward-compatible: an older server without
+        // the field still parses (we coerce to []) so the client
+        // doesn't error out against a stale deploy.
+        (v.extension !== undefined && !Array.isArray(v.extension))
+      ) {
         throw new ApiError(0, "invalid_response_body");
       }
-      return v as unknown as ToolListing;
+      const out = v as unknown as ToolListing;
+      if (out.extension === undefined) {
+        (out as { extension: ToolListing["extension"] }).extension = [];
+      }
+      return out;
     });
   },
 
@@ -1248,7 +1263,7 @@ export const api = {
    * inheriting the global default.
    */
   setToolEnabled: (
-    family: "builtin" | "mcp",
+    family: "builtin" | "mcp" | "extension",
     name: string,
     enabled: boolean,
     scope: "global" | "project" = "global",
@@ -1292,12 +1307,26 @@ export const api = {
       if (!isObject(v) || typeof v.projects !== "object" || v.projects === null) {
         throw new ApiError(0, "invalid_response_body");
       }
+      // Backfill `extension: { enable: [], disable: [] }` on every
+      // project entry — older servers (or servers whose response
+      // schema accidentally strips the field) don't include it, and
+      // the cascade UI assumes all three families are present.
+      const projects = v.projects as Record<string, Record<string, unknown>>;
+      for (const entry of Object.values(projects)) {
+        if (entry.extension === undefined || entry.extension === null) {
+          entry.extension = { enable: [], disable: [] };
+        }
+      }
       return v as unknown as ToolOverridesResponse;
     }),
 
   /** Clear a per-project tool override so the project inherits the
    *  global default. Idempotent. */
-  clearToolProjectOverride: (family: "builtin" | "mcp", name: string, projectId: string) =>
+  clearToolProjectOverride: (
+    family: "builtin" | "mcp" | "extension",
+    name: string,
+    projectId: string,
+  ) =>
     request(
       `/api/v1/config/tools/${family}/${encodeURIComponent(name)}/enabled?projectId=${encodeURIComponent(projectId)}`,
       (v) => {

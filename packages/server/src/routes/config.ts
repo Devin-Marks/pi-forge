@@ -28,6 +28,7 @@ import {
   getStatus as mcpGetStatus,
 } from "../mcp/manager.js";
 import { BUILTIN_TOOL_NAMES } from "../session-registry.js";
+import { discoverExtensionResources } from "../extensions-discovery.js";
 import {
   getAllToolOverrides,
   getProjectToolState,
@@ -145,8 +146,10 @@ const skillSchema = {
   properties: {
     name: { type: "string" },
     description: { type: "string" },
-    source: { type: "string", enum: ["global", "project"] },
+    source: { type: "string", enum: ["global", "project", "extension"] },
     filePath: { type: "string" },
+    /** Identifier of the package that contributed this skill (only when source === "extension"). */
+    extensionPath: { type: "string" },
     enabled: { type: "boolean" },
     /** Tri-state per-project override; absent = inherit from global. */
     projectOverride: { type: "string", enum: ["enabled", "disabled"] },
@@ -852,8 +855,9 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
         description:
           "All per-project tool overrides across all projects. Returns " +
           "`{ projects: { <projectId>: { builtin: { enable, disable }, " +
-          "mcp: { enable, disable } } } }`. Absent project keys mean " +
-          "'no overrides defined' (the project inherits from global).",
+          "mcp: { enable, disable }, extension: { enable, disable } } } }`. " +
+          "Absent project keys mean 'no overrides defined' (the project " +
+          "inherits from global).",
         tags: ["config"],
         response: {
           200: {
@@ -864,7 +868,7 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
                 type: "object",
                 additionalProperties: {
                   type: "object",
-                  required: ["builtin", "mcp"],
+                  required: ["builtin", "mcp", "extension"],
                   properties: {
                     builtin: {
                       type: "object",
@@ -875,6 +879,14 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
                       },
                     },
                     mcp: {
+                      type: "object",
+                      required: ["enable", "disable"],
+                      properties: {
+                        enable: { type: "array", items: { type: "string" } },
+                        disable: { type: "array", items: { type: "string" } },
+                      },
+                    },
+                    extension: {
                       type: "object",
                       required: ["enable", "disable"],
                       properties: {
@@ -906,10 +918,12 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
       schema: {
         description:
           "List every tool the agent could see, with its current " +
-          "enable/disable state. Two families: `builtin` (pi's seven " +
+          "enable/disable state. Three families: `builtin` (pi's " +
           "shipped coding tools — read, bash, edit, write, grep, " +
-          "find, ls) and `mcp` (one entry per connected MCP server, " +
-          "each with its tool list). When `?projectId=` is provided, " +
+          "find, ls), `mcp` (one entry per connected MCP server, " +
+          "each with its tool list), and `extension` (one entry " +
+          "per pi extension that registers tools, grouped by the " +
+          "extension's path). When `?projectId=` is provided, " +
           "project-scoped MCP servers are included alongside global " +
           "ones; the project-scope server-name shadowing rule from " +
           "`mcp/manager.customToolsForProject` applies. Tool changes " +
@@ -923,7 +937,7 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
         response: {
           200: {
             type: "object",
-            required: ["builtin", "mcp"],
+            required: ["builtin", "mcp", "extension"],
             properties: {
               builtin: {
                 type: "array",
@@ -976,6 +990,32 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
                   },
                 },
               },
+              extension: {
+                type: "array",
+                items: {
+                  type: "object",
+                  required: ["packageSource", "tools"],
+                  properties: {
+                    /** Package identifier ("pi-subagents", git URL, etc.) — sourced from
+                     *  ResolvedResource.metadata.source. The user-facing name. */
+                    packageSource: { type: "string" },
+                    tools: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        required: ["name", "description", "enabled", "globalEnabled"],
+                        properties: {
+                          name: { type: "string" },
+                          description: { type: "string" },
+                          enabled: { type: "boolean" },
+                          globalEnabled: { type: "boolean" },
+                          projectOverride: { type: "string", enum: ["enabled", "disabled"] },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
             },
           },
           500: errorSchema,
@@ -987,6 +1027,7 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
         const overrides = await readToolOverrides();
         const builtinDisabled = new Set(overrides.builtin);
         const mcpDisabled = new Set(overrides.mcp);
+        const extensionDisabled = new Set(overrides.extension);
         const projectId =
           typeof req.query.projectId === "string" && req.query.projectId.length > 0
             ? req.query.projectId
@@ -997,14 +1038,40 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
         // doesn't show an empty MCP list for a previously-configured
         // project. Best-effort — load failures shouldn't 500 the
         // whole tool listing.
+        let projectWorkspacePath: string | undefined;
         if (projectId !== undefined) {
           const project = await getProject(projectId);
           if (project !== undefined) {
+            projectWorkspacePath = project.path;
             await mcpEnsureProjectLoaded(project.id, project.path).catch(() => undefined);
           }
         }
 
         const mcpServers = mcpGetStatus(projectId !== undefined ? { projectId } : undefined);
+
+        // Enumerate pi extensions visible to the project's cwd
+        // (or process.cwd as the fallback when no project is
+        // selected — same behavior as the agent's discovery on a
+        // fresh session). Extension discovery is best-effort: a
+        // bad extension manifest must not 500 the whole tools
+        // listing.
+        const extResources = await discoverExtensionResources(
+          projectWorkspacePath ?? process.cwd(),
+        );
+        // Group tools by package source (e.g. "pi-subagents") for
+        // the Settings UI. The package name comes from the resolved
+        // ResolvedResource.metadata.source, which is the user-facing
+        // npm/git identifier — much friendlier than the extension's
+        // entry-file path.
+        const extensionGroups = new Map<string, typeof extResources.tools>();
+        for (const t of extResources.tools) {
+          const existing = extensionGroups.get(t.packageSource);
+          if (existing === undefined) {
+            extensionGroups.set(t.packageSource, [t]);
+          } else {
+            existing.push(t);
+          }
+        }
 
         return {
           builtin: BUILTIN_TOOL_NAMES.map((name) => {
@@ -1074,6 +1141,28 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
             if (s.lastError !== undefined) out.lastError = s.lastError;
             return out;
           }),
+          extension: Array.from(extensionGroups.entries()).map(([packageSource, tools]) => ({
+            packageSource,
+            tools: tools.map((t) => {
+              const tOut: {
+                name: string;
+                description: string;
+                enabled: boolean;
+                globalEnabled: boolean;
+                projectOverride?: "enabled" | "disabled";
+              } = {
+                name: t.name,
+                description: t.description ?? "",
+                enabled: isToolEffective(overrides, projectId, "extension", t.name),
+                globalEnabled: !extensionDisabled.has(t.name),
+              };
+              if (projectId !== undefined) {
+                const ov = getProjectToolState(overrides, projectId, "extension", t.name);
+                if (ov !== undefined) tOut.projectOverride = ov;
+              }
+              return tOut;
+            }),
+          })),
         };
       } catch (err) {
         return internalError(reply, err);
@@ -1107,7 +1196,7 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
           type: "object",
           required: ["family", "name"],
           properties: {
-            family: { type: "string", enum: ["builtin", "mcp"] },
+            family: { type: "string", enum: ["builtin", "mcp", "extension"] },
             name: { type: "string", minLength: 1 },
           },
         },
@@ -1199,7 +1288,7 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
           type: "object",
           required: ["family", "name"],
           properties: {
-            family: { type: "string", enum: ["builtin", "mcp"] },
+            family: { type: "string", enum: ["builtin", "mcp", "extension"] },
             name: { type: "string", minLength: 1 },
           },
         },

@@ -5,6 +5,7 @@ import { AuthStorage, ModelRegistry, type Skill, loadSkills } from "@mariozechne
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { config } from "./config.js";
 import { makeLock } from "./concurrency.js";
+import { discoverExtensionResources } from "./extensions-discovery.js";
 import {
   getProjectSkillState,
   readSkillOverrides,
@@ -386,8 +387,10 @@ export async function liveProvidersListing(): Promise<ProvidersListing> {
 export interface SkillSummary {
   name: string;
   description: string;
-  source: "global" | "project";
+  source: "global" | "project" | "extension";
   filePath: string;
+  /** Path of the extension that contributed this skill (only when source === "extension"). */
+  extensionPath?: string;
   /** Whether the skill is enabled in pi's GLOBAL settings.skills list. */
   enabled: boolean;
   /**
@@ -410,10 +413,17 @@ export async function listSkills(
   workspacePath: string,
   projectId?: string,
 ): Promise<SkillSummary[]> {
+  // Pi packages can contribute skill directories or files via
+  // `package.json#pi.skills`, resolved by DefaultPackageManager.
+  // discoverExtensionResources returns those resolved paths so
+  // loadSkills can scan them alongside the SDK's default global /
+  // project dirs.
+  const extResources = await discoverExtensionResources(workspacePath);
+  const extensionSkillPaths = extResources.skillPaths.map((s) => s.skillPath);
   const result = loadSkills({
     cwd: workspacePath,
     agentDir: config.piConfigDir,
-    skillPaths: [],
+    skillPaths: extensionSkillPaths,
     includeDefaults: true,
   });
   const settings = await readSettings();
@@ -423,8 +433,15 @@ export async function listSkills(
   // on `effectiveSkillsForProject` for the full pattern semantics.
   const globalDisabled = disabledNamesFromPatterns(settings.skills ?? []);
   const overrides = await readSkillOverrides();
+  // Map registered skill paths → owning package source (e.g.
+  // "pi-subagents") so each summary can attribute its origin
+  // beyond the bare global / project heuristic.
+  const skillPathToPackage = new Map<string, string>();
+  for (const s of extResources.skillPaths) {
+    skillPathToPackage.set(s.skillPath, s.packageSource);
+  }
   return result.skills.map((s) =>
-    skillSummary(s, workspacePath, globalDisabled, overrides, projectId),
+    skillSummary(s, workspacePath, globalDisabled, overrides, projectId, skillPathToPackage),
   );
 }
 
@@ -434,11 +451,19 @@ function skillSummary(
   globalDisabled: Set<string>,
   overrides: SkillOverrides,
   projectId: string | undefined,
+  skillPathToPackage: Map<string, string>,
 ): SkillSummary {
-  // The SDK's loadSkills puts global ones under agentDir and project ones
-  // under workspacePath/.pi/skills. Use baseDir prefix as the source
-  // discriminator since paths can be normalized differently on macOS/Linux.
-  const isProject = s.baseDir.startsWith(workspacePath);
+  // The SDK's loadSkills puts global ones under agentDir, project ones
+  // under workspacePath/.pi/skills, and package-contributed ones under
+  // whatever path the package's `pi.skills` manifest entry resolved
+  // to (typically `~/.pi/agent/packages/<name>/skills/...`). Match
+  // against the package skill-path map FIRST — those paths usually
+  // don't fall under the project / global heuristics below, but
+  // checking explicitly is safer.
+  const packageSource = findPackageForSkill(s.baseDir, skillPathToPackage);
+  const isProject = packageSource === undefined && s.baseDir.startsWith(workspacePath);
+  const source: SkillSummary["source"] =
+    packageSource !== undefined ? "extension" : isProject ? "project" : "global";
   const isEnabledGlobal = !globalDisabled.has(s.name);
   const projectOverride =
     projectId !== undefined ? getProjectSkillState(overrides, projectId, s.name) : undefined;
@@ -447,14 +472,39 @@ function skillSummary(
   const summary: SkillSummary = {
     name: s.name,
     description: s.description,
-    source: isProject ? "project" : "global",
+    source,
     filePath: s.filePath,
     enabled: isEnabledGlobal,
     effective,
     disableModelInvocation: s.disableModelInvocation,
   };
+  if (packageSource !== undefined) summary.extensionPath = packageSource;
   if (projectOverride !== undefined) summary.projectOverride = projectOverride;
   return summary;
+}
+
+/**
+ * Match a skill's `baseDir` against the package-skill-path map.
+ * The skill's baseDir might be exactly a registered path or a
+ * subdirectory of one (loadSkills recurses). Pick the longest
+ * matching prefix so the closest registering package wins. Returns
+ * the package source identifier ("pi-subagents", a git URL, etc.)
+ * or `undefined` when the skill didn't come from any registered
+ * package.
+ */
+function findPackageForSkill(
+  baseDir: string,
+  skillPathToPackage: Map<string, string>,
+): string | undefined {
+  let best: { path: string; pkg: string } | undefined;
+  for (const [path, pkg] of skillPathToPackage) {
+    if (baseDir === path || baseDir.startsWith(path + "/")) {
+      if (best === undefined || path.length > best.path.length) {
+        best = { path, pkg };
+      }
+    }
+  }
+  return best?.pkg;
 }
 
 /**

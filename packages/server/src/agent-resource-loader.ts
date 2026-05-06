@@ -46,6 +46,7 @@ import {
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 import { config } from "./config.js";
+import { getProjectDisabledSkillNames } from "./skill-overrides.js";
 
 /**
  * Plain string (not a backtick template) so what's stored is exactly
@@ -79,19 +80,40 @@ export const FORGE_SECRET_HYGIENE_RULE =
  * When `config.agentSecretHygieneRule` is false (the default), the
  * loader is built with no addendum and behaves identically to the
  * SDK's own default loader — opt-in only, see the file header.
+ *
+ * When `projectId` is provided, the loader applies a `skillsOverride`
+ * filter that drops any skill the user has explicitly disabled for
+ * that project. This is the only path that reaches package-contributed
+ * skills: pi's `DefaultPackageManager.collectPackageResources` marks
+ * package skills `enabled: true` unconditionally and the pattern-based
+ * `effectiveSkillsForProject` flow only touches auto-discovered ones.
+ * The hook runs AFTER pi loads everything, so it's source-agnostic.
  */
 export async function buildForgeResourceLoader(
   cwd: string,
   agentDir: string,
   settingsManager: SettingsManager,
+  projectId?: string,
 ): Promise<ResourceLoader> {
   const appendSystemPrompt = config.agentSecretHygieneRule ? [FORGE_SECRET_HYGIENE_RULE] : [];
-  const loader = new DefaultResourceLoader({
+  const disabledSkills =
+    projectId !== undefined ? await getProjectDisabledSkillNames(projectId) : new Set<string>();
+  const baseOptions = {
     cwd,
     agentDir,
     settingsManager,
     appendSystemPrompt,
-  });
+  };
+  const loader =
+    disabledSkills.size > 0
+      ? new DefaultResourceLoader({
+          ...baseOptions,
+          skillsOverride: ({ skills, diagnostics }) => ({
+            skills: skills.filter((s) => !disabledSkills.has(s.name)),
+            diagnostics,
+          }),
+        })
+      : new DefaultResourceLoader(baseOptions);
   await loader.reload();
   return loader;
 }

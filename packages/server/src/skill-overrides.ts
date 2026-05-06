@@ -134,6 +134,23 @@ export function getProjectSkillState(
 }
 
 /**
+ * Return the set of skill names this project has explicitly disabled.
+ * Used by the resource-loader's `skillsOverride` hook to filter out
+ * skills that pi's pattern system can't reach — specifically
+ * package-contributed skills, which `DefaultPackageManager` registers
+ * as `enabled: true` regardless of `settings.skills` patterns. The
+ * pattern-based override path in `effectiveSkillsForProject` still
+ * handles top-level (auto-discovered) skills; this helper backstops
+ * everything pi loads.
+ */
+export async function getProjectDisabledSkillNames(projectId: string): Promise<Set<string>> {
+  const cur = await readSkillOverrides();
+  const entry = cur.projects[projectId];
+  if (entry === undefined) return new Set();
+  return new Set(entry.disable);
+}
+
+/**
  * Drop every override mention of a deleted project so the file
  * doesn't accumulate orphaned entries. Called from project-manager
  * on project delete.
