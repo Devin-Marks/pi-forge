@@ -12,6 +12,7 @@ import {
 } from "../session-registry.js";
 import { errorSchema, liveSummaryBody, liveSummarySchema } from "./_schemas.js";
 import { buildTurnDiff } from "../turn-diff-builder.js";
+import { buildCompactionHistory } from "../compaction-history.js";
 
 const unifiedSchema = {
   type: "object",
@@ -273,6 +274,74 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
       const live = getSession(req.params.id);
       if (live === undefined) return notFound(reply);
       return { messages: live.session.messages };
+    },
+  );
+
+  // Compaction history. Returns the per-compaction archive that the SDK
+  // strips out of `live.session.messages` after each compact() call, so
+  // the chat view can render a "compacted N messages → Y tokens" card
+  // at each compaction point with the archived messages one click away.
+  // Server-side derivation keeps the entry-id arithmetic out of the
+  // client. See packages/server/src/compaction-history.ts for the
+  // shape contract.
+  fastify.get<{ Params: { id: string } }>(
+    "/sessions/:id/compactions",
+    {
+      schema: {
+        description:
+          "Per-compaction archive for the live session. Each entry " +
+          "carries the SDK-generated summary, the pre-compaction " +
+          "token count, and the AgentMessage[] that was archived (no " +
+          "longer in the LLM's context window). `insertBeforeIndex` " +
+          "tells the client where to splice a card into the post-" +
+          "compaction `messages` array. 404 if the session isn't " +
+          "currently live.",
+        tags: ["sessions"],
+        params: {
+          type: "object",
+          required: ["id"],
+          properties: { id: { type: "string" } },
+        },
+        response: {
+          200: {
+            type: "object",
+            required: ["compactions"],
+            properties: {
+              compactions: {
+                type: "array",
+                items: {
+                  type: "object",
+                  required: [
+                    "id",
+                    "timestamp",
+                    "summary",
+                    "tokensBefore",
+                    "insertBeforeIndex",
+                    "archivedMessages",
+                  ],
+                  properties: {
+                    id: { type: "string" },
+                    timestamp: { type: "string" },
+                    summary: { type: "string" },
+                    tokensBefore: { type: "integer", minimum: 0 },
+                    insertBeforeIndex: { type: "integer", minimum: 0 },
+                    archivedMessages: {
+                      type: "array",
+                      items: { type: "object", additionalProperties: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          404: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const live = getSession(req.params.id);
+      if (live === undefined) return notFound(reply);
+      return { compactions: buildCompactionHistory(live.session) };
     },
   );
 
