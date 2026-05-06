@@ -133,6 +133,23 @@ export function ChatView({ sessionId }: Props) {
     if (isFollowingBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [messages, streamingText, isStreaming]);
 
+  // Force scroll-to-bottom + re-engage follow mode whenever a NEW
+  // user message lands at the tail. Catches both the "user typed in
+  // the input box" path AND the "user message arrived via cross-tab
+  // sync" path. Without this, a user who scrolled up to read history
+  // and then submits a prompt stays parked in history while the
+  // agent's response streams off-screen.
+  const lastUserMessageCountRef = useRef(0);
+  useEffect(() => {
+    const userCount = messages.reduce((n, m) => (m.role === "user" ? n + 1 : n), 0);
+    if (userCount > lastUserMessageCountRef.current) {
+      const el = scrollRef.current;
+      if (el !== null) el.scrollTop = el.scrollHeight;
+      isFollowingBottomRef.current = true;
+    }
+    lastUserMessageCountRef.current = userCount;
+  }, [messages]);
+
   return (
     <ChatDiffViewContext.Provider
       value={{ viewType: chatViewType, setViewType: setAndPersistChatViewType }}
