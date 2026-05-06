@@ -14,6 +14,42 @@ the README for the support window policy.
 
 ## [Unreleased]
 
+### Added
+
+- **Git init button in the Git pane.** When the active project isn't
+  a git repository yet, the Git tab shows an "Initialize git repo"
+  button instead of the previous text-only hint. Click runs `git init
+  -b main` (default branch `main`) on the project root via a new
+  `POST /api/v1/git/init` route, then re-polls status so the panel
+  flips into the normal Staged / Unstaged layout. Idempotent — the
+  route returns `{ alreadyInitialised: true }` if the project is
+  already a repo. Falls back to plain `git init` on git versions older
+  than 2.28 (which don't recognise `-b`).
+- **About tab in Settings.** New tab at the end of the settings tab
+  bar showing the deployed server version (read from the server's
+  `package.json` and surfaced via `/api/v1/ui-config`), plus links to
+  the GitHub repo, CHANGELOG, and SECURITY policy. Useful for
+  confirming a deploy actually rolled forward without shelling into
+  the container.
+
+### Fixed
+
+- **Chat toggle now fully hides the chat column**, including the
+  empty-state branches (project picker, "no project" placeholder,
+  "+ New session" prompt). Previously the column stayed mounted when
+  there was no active session even after the user toggled chat off,
+  leaving the project-first-open page visible. The header chat button
+  is the single source of truth for chat-column visibility now.
+- **Skills export no longer 500s on an empty skills directory.**
+  `GET /api/v1/config/skills/export` now returns `409
+  skills_directory_empty` when `${piConfigDir}/skills/` is missing or
+  contains no files, and the Settings → Backup tab surfaces this as a
+  neutral "No skills to export" info line instead of a red error
+  banner. (Background: tar 7.x's `create()` throws synchronously on
+  an empty entries list, and a hand-rolled empty tar is rejected by
+  tar 7.x's reader as `TAR_BAD_ARCHIVE` — refusing the export with a
+  clear message is better than shipping a download nobody can use.)
+
 ## [1.1.0] — 2026-05-05
 
 ### Renamed
