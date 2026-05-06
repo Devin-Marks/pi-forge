@@ -49,8 +49,6 @@ import { cmake } from "@codemirror/legacy-modes/mode/cmake";
 import { nginx } from "@codemirror/legacy-modes/mode/nginx";
 import type { OpenFile } from "../store/file-store";
 
-const AUTOSAVE_DEBOUNCE_MS = 1000;
-
 /**
  * CodeMirror host. Lives in its own module so EditorPanel can pull it
  * in via `React.lazy()` — the CM bundle is ~700 KB minified and the
@@ -187,18 +185,11 @@ export function CodeMirrorEditor({
     });
   }, [file.draft]);
 
-  // Debounced autosave: schedule a save 1s after the last `dirty`
-  // transition. Cleared on tab switch (component unmounts via key).
-  // Skipped when `saveError` is set — the user has to explicitly
-  // retry (Cmd/Ctrl+S) so we don't hammer a broken endpoint and
-  // overwrite the diagnostic that explains why saves are failing.
-  useEffect(() => {
-    if (!file.dirty || file.binary || file.saveError !== undefined) return undefined;
-    const timer = window.setTimeout(() => {
-      onSaveRef.current();
-    }, AUTOSAVE_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
-  }, [file.dirty, file.draft, file.binary, file.saveError]);
+  // No autosave. Saves go through Cmd/Ctrl+S (handled by the editor's
+  // keymap and routed via `onSaveShortcut`) or the explicit Save
+  // button in EditorPanel's toolbar. The `dirty` flag on each tab
+  // surfaces unsaved state in the tab strip so the user knows when a
+  // save is needed.
 
   // Pending-navigation effect: when the file-store sets `pendingNav`
   // on this tab (e.g. from a search-result click), scroll the editor
