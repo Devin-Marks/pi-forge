@@ -253,6 +253,13 @@ export function ChatView({ sessionId }: Props) {
                 ) {
                   return; // rendered inline next to its toolCall
                 }
+                // Hide the SDK-synthesized compaction summary message
+                // (role: "compactionSummary"). The same summary text
+                // already renders inside our CompactionCard's
+                // disclosure body, so showing it as a top-of-chat
+                // bubble would just duplicate the content under an
+                // "unknown message" fallback.
+                if (m.role === "compactionSummary") return;
                 out.push(<Message key={i} message={m} toolResultsById={toolResultsById} />);
               });
               // Trailing cards (insertBeforeIndex === messages.length)

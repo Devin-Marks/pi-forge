@@ -248,6 +248,16 @@ interface SessionState {
    */
   agentEndCountBySession: Record<string, number>;
   /**
+   * Per-session monotonic counter incremented on every
+   * `compaction_end` event. Mirrors `agentEndCountBySession` for
+   * compaction events specifically — components that need to react to
+   * "compaction just happened" (e.g. ContextInspectorPanel re-fetching
+   * token usage, since the SDK rewrites context size on compaction)
+   * key off this counter. Separate from agentEndCount so we don't
+   * cascade unrelated agent_end-only side effects.
+   */
+  compactionEndCountBySession: Record<string, number>;
+  /**
    * Per-session queued-message snapshot from the SDK's `queue_update`
    * event. `steering` and `followUp` arrays mirror the SDK's two
    * queues — Pi delivers steering at the next agent decision point
@@ -309,6 +319,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   streamingTextBySession: {},
   activeToolBySession: {},
   agentEndCountBySession: {},
+  compactionEndCountBySession: {},
   queuedBySession: {},
   error: undefined,
   loadingList: false,
@@ -901,12 +912,30 @@ function applyEvent(
         : undefined;
     set((s) => ({
       bannerBySession: { ...s.bannerBySession, [sessionId]: errorBanner },
+      // Bump the compaction-end counter so panels that need to
+      // react (ContextInspectorPanel re-fetches token usage,
+      // anything else watching compaction state) get a stable
+      // dependency-array signal without re-rendering on every
+      // unrelated event.
+      compactionEndCountBySession: {
+        ...s.compactionEndCountBySession,
+        [sessionId]: (s.compactionEndCountBySession[sessionId] ?? 0) + 1,
+      },
     }));
     // Refetch the per-compaction archive so the chat can render a
     // CompactionCard for the just-completed event. Fire-and-forget;
     // a transient failure is fine — the next session reload picks
     // it up.
     void useSessionStore.getState().loadCompactions(sessionId);
+    // Also force a messages refetch — the SDK has rewritten
+    // live.session.messages to the post-compaction shape (older
+    // entries archived, plus a synthesized compaction-summary
+    // message), but the client's messagesBySession cache is still
+    // the pre-compaction array. Without this, the user sees the
+    // CompactionCard appear above stale content that the agent no
+    // longer has in its context. Same coalesced refetch path the
+    // agent_end handler uses.
+    scheduleMessagesRefetch(set, sessionId);
     return;
   }
   if (event.type === "auto_retry_start") {
