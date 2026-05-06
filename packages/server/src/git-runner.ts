@@ -255,6 +255,30 @@ function sanitizeStderr(stderr: string, cwd?: string): string {
 }
 
 /**
+ * Initialize a fresh git repo at `cwd` with `main` as the initial
+ * branch. `git init -b main` requires git ≥ 2.28; below that the
+ * `--initial-branch` flag is unrecognized and we fall back to a
+ * plain `git init` — caller can still rename to main on the first
+ * commit if desired. Idempotent: if `cwd` is already a repo, this
+ * resolves without changing anything (git's own `init` is a no-op
+ * on an existing repo).
+ */
+export async function initRepo(cwd: string): Promise<void> {
+  try {
+    await runGit(cwd, ["init", "-b", "main"]);
+  } catch (err) {
+    // Older git versions (< 2.28) don't recognise `-b`. Detect via
+    // the stderr message and retry without it. Other errors propagate.
+    const msg = err instanceof Error ? err.message : "";
+    if (/unknown (option|switch).*-b|invalid option.*initial-branch/i.test(msg)) {
+      await runGit(cwd, ["init"]);
+      return;
+    }
+    throw err;
+  }
+}
+
+/**
  * True iff `cwd` is inside a git working tree. Cheap probe used by
  * every public function so "not a repo" can return the empty default
  * rather than throw. Exported so route helpers (e.g. for the diff

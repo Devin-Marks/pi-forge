@@ -117,7 +117,10 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
   ) {
     fail(status, "expected { minimal: boolean, workspaceRoot: string }");
   }
-  return { minimal: value.minimal, workspaceRoot: value.workspaceRoot };
+  // `version` is forward-compatible: older servers without the field
+  // fall through to "unknown" so the About tab still renders.
+  const version = typeof value.version === "string" ? value.version : "unknown";
+  return { minimal: value.minimal, workspaceRoot: value.workspaceRoot, version };
 }
 
 function vHealth(value: unknown, status: number): HealthResponse {
@@ -1593,6 +1596,21 @@ export const api = {
   },
 
   // ---------------- git ----------------
+  gitInit: (projectId: string) =>
+    request<{ alreadyInitialised: boolean; isGitRepo: boolean }>(
+      `/api/v1/git/init`,
+      (v, status) => {
+        if (
+          !isObject(v) ||
+          typeof v.alreadyInitialised !== "boolean" ||
+          typeof v.isGitRepo !== "boolean"
+        ) {
+          fail(status, "expected { alreadyInitialised, isGitRepo }");
+        }
+        return { alreadyInitialised: v.alreadyInitialised, isGitRepo: v.isGitRepo };
+      },
+      { method: "POST", body: { projectId } },
+    ),
   gitStatus: (projectId: string) =>
     request(`/api/v1/git/status?projectId=${encodeURIComponent(projectId)}`, vGitStatus),
   gitDiff: (projectId: string) =>

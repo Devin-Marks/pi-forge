@@ -18,6 +18,7 @@ import {
 import { buildExportTar, importConfigFromBuffer, MAX_IMPORT_BYTES } from "../config-export.js";
 import {
   buildSkillsExportTar,
+  SkillsDirectoryEmptyError,
   importSkillsFromFiles,
   importSkillsFromTar,
   MAX_SKILLS_IMPORT_BYTES,
@@ -692,8 +693,11 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
   // Skills tree export. Streams a tar.gz of every file under
   // `${piConfigDir}/skills/` — single-file skills (`<name>.md`) and
   // directory skills (`<name>/SKILL.md` plus assets) round-trip
-  // verbatim. Empty exports are valid (zero-entry tar) so the route
-  // doesn't 404 on a fresh install.
+  // verbatim. When the skills directory is missing or empty, the
+  // route returns 409 with a stable code so the UI can show "no
+  // skills to export" instead of triggering a download — see the
+  // SkillsDirectoryEmptyError class in skills-export.ts for why we
+  // don't ship an empty archive.
   fastify.get(
     "/config/skills/export",
     {
@@ -701,8 +705,8 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
         description:
           "Stream a `.tar.gz` of every file under `${piConfigDir}/skills/`. " +
           "Single-file (`<name>.md`) and directory skills (`<name>/SKILL.md` + " +
-          "assets) both round-trip. Empty trees produce a zero-entry tar — " +
-          "consumers should accept that.",
+          "assets) both round-trip. Returns 409 `skills_directory_empty` when " +
+          "the skills tree is missing or contains no files.",
         tags: ["config"],
         response: {
           200: {
@@ -710,6 +714,7 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
             type: "string",
             format: "binary",
           },
+          409: errorSchema,
           500: errorSchema,
         },
       },
@@ -724,6 +729,9 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
           .header("X-Pi-Forge-File-Count", String(fileCount));
         return reply.send(stream);
       } catch (err) {
+        if (err instanceof SkillsDirectoryEmptyError) {
+          return reply.code(409).send({ error: "skills_directory_empty" });
+        }
         return internalError(reply, err);
       }
     },

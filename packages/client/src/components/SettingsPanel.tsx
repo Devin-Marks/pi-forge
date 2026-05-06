@@ -17,7 +17,7 @@ import { EMPTY_STATUS, useMcpStore } from "../store/mcp-store";
 import { THEME_DEFS, useThemeStore, type ThemeId } from "../lib/theme";
 import { getStoredToken } from "../lib/auth-client";
 
-type Tab = "providers" | "agent" | "mcp" | "tools" | "skills" | "appearance" | "backup";
+type Tab = "providers" | "agent" | "mcp" | "tools" | "skills" | "appearance" | "backup" | "about";
 
 interface Props {
   onClose: () => void;
@@ -61,8 +61,17 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           // deployments often want to disable bash/edit/write at the
           // tool level, regardless of what providers / agent settings
           // are exposed.
-          (["skills", "tools", "appearance", "backup"] as const)
-        : (["providers", "agent", "mcp", "tools", "skills", "appearance", "backup"] as const),
+          (["skills", "tools", "appearance", "backup", "about"] as const)
+        : ([
+            "providers",
+            "agent",
+            "mcp",
+            "tools",
+            "skills",
+            "appearance",
+            "backup",
+            "about",
+          ] as const),
     [minimal],
   );
   const [tab, setTab] = useState<Tab>(initialTab ?? (minimal ? "skills" : "providers"));
@@ -115,7 +124,9 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
                           ? "Skills"
                           : t === "appearance"
                             ? "Appearance"
-                            : "Backup"}
+                            : t === "backup"
+                              ? "Backup"
+                              : "About"}
               </button>
             ))}
           </div>
@@ -166,6 +177,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           {tab === "skills" && <SkillsTab onError={setError} />}
           {tab === "appearance" && <AppearanceTab />}
           {tab === "backup" && <BackupTab onError={setError} />}
+          {tab === "about" && <AboutTab />}
         </div>
       </div>
     </div>
@@ -1526,12 +1538,21 @@ function BackupTab({ onError }: { onError: (msg: string | undefined) => void }) 
     onError(undefined);
     setBusy(true);
     setLastSkillsImport(undefined);
+    setLastSkillsExport(undefined);
     try {
       const { blob, filename, fileCount } = await api.exportSkills();
       triggerDownload(blob, filename);
       setLastSkillsExport({ filename, fileCount });
     } catch (err) {
-      onError(`Skills export failed: ${errorCode(err)}`);
+      // Empty-skills is the most common reason this fails on a fresh
+      // install — surface it as an info message via the result slot
+      // (`fileCount: 0`) instead of a red error banner. Other errors
+      // keep the generic banner.
+      if (err instanceof ApiError && err.code === "skills_directory_empty") {
+        setLastSkillsExport({ filename: "", fileCount: 0 });
+      } else {
+        onError(`Skills export failed: ${errorCode(err)}`);
+      }
     } finally {
       setBusy(false);
     }
@@ -1651,15 +1672,20 @@ function BackupTab({ onError }: { onError: (msg: string | undefined) => void }) 
         >
           {busy ? "Working…" : "Download skills archive"}
         </button>
-        {lastSkillsExport !== undefined && (
-          <p className="mt-2 text-xs text-emerald-400">
-            Exported <code className="font-mono">{lastSkillsExport.filename}</code> (
-            {lastSkillsExport.fileCount === 0
-              ? "no skills on disk"
-              : `${lastSkillsExport.fileCount} file${lastSkillsExport.fileCount === 1 ? "" : "s"} packed`}
-            )
-          </p>
-        )}
+        {lastSkillsExport !== undefined &&
+          (lastSkillsExport.fileCount === 0 ? (
+            // Empty-skills sentinel: server returned 409
+            // skills_directory_empty. Show as a neutral info line, not
+            // an error — there's nothing wrong, just nothing to ship.
+            <p className="mt-2 text-xs text-neutral-400">
+              No skills to export — your skills directory is empty.
+            </p>
+          ) : (
+            <p className="mt-2 text-xs text-emerald-400">
+              Exported <code className="font-mono">{lastSkillsExport.filename}</code> (
+              {lastSkillsExport.fileCount} file{lastSkillsExport.fileCount === 1 ? "" : "s"} packed)
+            </p>
+          ))}
       </section>
 
       <section>
@@ -2438,6 +2464,89 @@ function McpDraftForm(props: {
           {busy ? "Saving…" : "Save"}
         </button>
       </div>
+    </div>
+  );
+}
+
+// ---------------- About tab ----------------
+
+/**
+ * Read-only "what am I running" pane. Shows the deployed server
+ * version (from `/ui-config`) plus a couple of orienting links —
+ * GitHub repo, CHANGELOG, security policy. Useful for confirming a
+ * deploy actually rolled forward without shelling into the container.
+ */
+function AboutTab() {
+  const version = useUiConfigStore((s) => s.version);
+  const loaded = useUiConfigStore((s) => s.loaded);
+  return (
+    <div className="space-y-6 text-sm text-neutral-300">
+      <header className="space-y-1">
+        <h2 className="text-base font-semibold text-neutral-100">pi-forge</h2>
+        <p className="text-xs text-neutral-500">
+          Browser workbench for the{" "}
+          <a
+            href="https://github.com/badlogic/pi-mono"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-400 underline hover:text-blue-300"
+          >
+            pi coding agent
+          </a>
+          .
+        </p>
+      </header>
+
+      <section className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Version</h3>
+        <p className="font-mono text-sm">
+          {loaded ? (
+            version.length > 0 ? (
+              version
+            ) : (
+              <span className="text-neutral-500">unknown</span>
+            )
+          ) : (
+            <span className="text-neutral-500">loading…</span>
+          )}
+        </p>
+      </section>
+
+      <section className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Links</h3>
+        <ul className="space-y-1 text-xs">
+          <li>
+            <a
+              href="https://github.com/Devin-Marks/pi-forge"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 underline hover:text-blue-300"
+            >
+              github.com/Devin-Marks/pi-forge
+            </a>
+          </li>
+          <li>
+            <a
+              href="https://github.com/Devin-Marks/pi-forge/blob/main/CHANGELOG.md"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 underline hover:text-blue-300"
+            >
+              Changelog
+            </a>
+          </li>
+          <li>
+            <a
+              href="https://github.com/Devin-Marks/pi-forge/blob/main/SECURITY.md"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 underline hover:text-blue-300"
+            >
+              Security
+            </a>
+          </li>
+        </ul>
+      </section>
     </div>
   );
 }

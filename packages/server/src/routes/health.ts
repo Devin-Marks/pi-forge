@@ -1,7 +1,30 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { FastifyPluginAsync } from "fastify";
 import { sessionCount } from "../session-registry.js";
 import { ptyCount } from "../pty-manager.js";
 import { config } from "../config.js";
+
+/**
+ * Read the server's own package.json once at module load. Used by the
+ * /ui-config response so the browser can render an "About" footer
+ * with the deployed version. Resolves relative to the compiled
+ * server file (`packages/server/dist/routes/health.js`) — three
+ * `../` to reach the package root regardless of whether this runs
+ * from `dist/` (production) or `src/` (tsx watch dev mode).
+ */
+const SERVER_VERSION: string = (() => {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const pkgPath = join(here, "..", "..", "package.json");
+    const raw = readFileSync(pkgPath, "utf8");
+    const parsed = JSON.parse(raw) as { version?: unknown };
+    return typeof parsed.version === "string" ? parsed.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
 
 export const healthRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get(
@@ -49,7 +72,7 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
         response: {
           200: {
             type: "object",
-            required: ["minimal", "workspaceRoot"],
+            required: ["minimal", "workspaceRoot", "version"],
             properties: {
               // True when MINIMAL_UI is set: hides terminal, git pane,
               // last-turn pane, and providers/agent settings sections;
@@ -59,6 +82,11 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
               // Absolute path of the workspace root. Minimal-mode
               // project creation builds `<workspaceRoot>/<name>`.
               workspaceRoot: { type: "string" },
+              // Server build version (mirrors packages/server's
+              // package.json). Surfaced in the About tab so users can
+              // confirm which release they're hitting without shelling
+              // into the container.
+              version: { type: "string" },
             },
           },
         },
@@ -67,6 +95,7 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
     async () => ({
       minimal: config.minimalUi,
       workspaceRoot: config.workspacePath,
+      version: SERVER_VERSION,
     }),
   );
 };

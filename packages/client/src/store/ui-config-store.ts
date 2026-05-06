@@ -20,6 +20,8 @@ interface UiConfigState {
   minimal: boolean;
   /** Absolute workspace root reported by the server. */
   workspaceRoot: string;
+  /** Server build version (mirrors packages/server's package.json). */
+  version: string;
   /** Last load error (sticky until a retry succeeds), for diagnostics. */
   error: string | undefined;
   load: () => Promise<void>;
@@ -29,6 +31,7 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
   loaded: false,
   minimal: false,
   workspaceRoot: "",
+  version: "",
   error: undefined,
   load: async () => {
     try {
@@ -37,6 +40,7 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
         loaded: true,
         minimal: cfg.minimal,
         workspaceRoot: cfg.workspaceRoot,
+        version: cfg.version,
         error: undefined,
       });
     } catch (err) {

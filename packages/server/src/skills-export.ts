@@ -65,9 +65,28 @@ export interface SkillsImportSummary {
 }
 
 /**
- * Build the export tar. Skips silently when the skills directory
- * doesn't exist — empty exports are valid (returns a tar with zero
- * entries, matching the config-export shape on a fresh install).
+ * Thrown by `buildSkillsExportTar` when the skills directory is
+ * missing or empty. The route layer catches this and returns a 409
+ * with a structured body so the UI can show "No skills to export"
+ * instead of triggering a download of an empty / malformed archive.
+ *
+ * (Background: tar 7.x's `create()` throws synchronously with "no
+ * paths specified to add to archive" on an empty entries list, and a
+ * hand-rolled 1024-zero-byte tar is rejected by tar 7.x's reader as
+ * `TAR_BAD_ARCHIVE`. Both round-trip and "ship something to satisfy
+ * the download" approaches are worse than just refusing the export.)
+ */
+export class SkillsDirectoryEmptyError extends Error {
+  constructor() {
+    super("skills directory is empty");
+    this.name = "SkillsDirectoryEmptyError";
+  }
+}
+
+/**
+ * Build the export tar. Throws `SkillsDirectoryEmptyError` when the
+ * skills tree is missing or contains no files — see the class
+ * docstring for why we don't ship an empty archive.
  *
  * Streams from the source dir directly; no staging copy is needed
  * because the skills tree is read-only from this module's
@@ -77,19 +96,16 @@ export interface SkillsImportSummary {
  */
 export async function buildSkillsExportTar(): Promise<SkillsExportResult> {
   const src = skillsDir();
-  let fileCount = 0;
   let entries: string[] = [];
   try {
     entries = await listFilesRelative(src);
-    fileCount = entries.length;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
-  // tar.create accepts a list of paths relative to `cwd`. An empty
-  // list still produces a valid (empty) gzipped tar.
+  if (entries.length === 0) throw new SkillsDirectoryEmptyError();
   const pack = tarCreate({ gzip: true, cwd: src }, entries);
   const stream = pack as unknown as Readable;
-  return { fileCount, stream };
+  return { fileCount: entries.length, stream };
 }
 
 /**
