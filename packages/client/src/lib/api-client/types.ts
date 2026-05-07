@@ -154,8 +154,10 @@ export type SkillOverrideState = "enabled" | "disabled";
 export interface SkillSummary {
   name: string;
   description: string;
-  source: "global" | "project";
+  source: "global" | "project" | "extension";
   filePath: string;
+  /** Path of the extension that contributed this skill (only when source === "extension"). */
+  extensionPath?: string;
   /** Global enable from pi's settings.skills. */
   enabled: boolean;
   /** Tri-state per-project override; absent = inherit from global. */
@@ -210,6 +212,18 @@ export interface ToolListing {
     lastError?: string;
     tools: (ToolListingItem & { shortName: string })[];
   }[];
+  /**
+   * Pi-package extension tools, grouped by the package source name
+   * (e.g. `"pi-subagents"`, a git URL). The package source comes from
+   * `DefaultPackageManager.resolve()` metadata and is the user-facing
+   * identifier. Each tool entry carries the same enable/global/
+   * projectOverride shape as the other families. Empty array on
+   * deployments with no packages installed.
+   */
+  extension: {
+    packageSource: string;
+    tools: ToolListingItem[];
+  }[];
 }
 
 /**
@@ -225,6 +239,7 @@ export interface ToolOverridesResponse {
     {
       builtin: { enable: string[]; disable: string[] };
       mcp: { enable: string[]; disable: string[] };
+      extension: { enable: string[]; disable: string[] };
     }
   >;
 }

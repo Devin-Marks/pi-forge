@@ -16,6 +16,7 @@ const ACTIVE_SESSION_KEY = "pi-forge/active-session-id";
 export const EMPTY_SESSIONS: UnifiedSession[] = [];
 export const EMPTY_MESSAGES: AgentMessageLike[] = [];
 export const EMPTY_STRING = "";
+export const EMPTY_COMPACTIONS: CompactionEvent[] = [];
 
 /**
  * Per-session pending streaming-text delta buffer + RAF id. We accumulate
@@ -75,6 +76,23 @@ export interface AgentMessageLike {
   role?: string;
   type?: string;
   [k: string]: unknown;
+}
+
+/**
+ * Per-compaction archive shipped by GET /sessions/:id/compactions.
+ * Server-derived from the JSONL entries — see
+ * packages/server/src/compaction-history.ts. The chat view splices a
+ * card at `insertBeforeIndex` in the post-compaction messages array;
+ * `archivedMessages` renders behind a disclosure when the user wants
+ * the detail.
+ */
+export interface CompactionEvent {
+  id: string;
+  timestamp: string;
+  summary: string;
+  tokensBefore: number;
+  insertBeforeIndex: number;
+  archivedMessages: AgentMessageLike[];
 }
 
 /**
@@ -185,6 +203,17 @@ interface SessionState {
   /** Per-session SSE-fed message arrays, keyed by sessionId. */
   messagesBySession: Record<string, AgentMessageLike[]>;
   /**
+   * Per-session compaction archive — one entry per pi compact() call.
+   * Sourced from the GET /sessions/:id/compactions REST endpoint
+   * (NOT the SSE stream — fetched on session open and on every
+   * compaction_end event). The chat view splices a CompactionCard
+   * into messagesBySession at each event's `insertBeforeIndex`,
+   * letting the user expand the archive that the SDK summarised
+   * away. See packages/server/src/compaction-history.ts for the
+   * shape contract.
+   */
+  compactionsBySession: Record<string, CompactionEvent[]>;
+  /**
    * Per-session pending input draft set by setPendingDraft and
    * consumed by ChatInput's session-change effect (one-shot). Used
    * to seed the input after fork-with-edit so the user message
@@ -219,6 +248,16 @@ interface SessionState {
    */
   agentEndCountBySession: Record<string, number>;
   /**
+   * Per-session monotonic counter incremented on every
+   * `compaction_end` event. Mirrors `agentEndCountBySession` for
+   * compaction events specifically — components that need to react to
+   * "compaction just happened" (e.g. ContextInspectorPanel re-fetching
+   * token usage, since the SDK rewrites context size on compaction)
+   * key off this counter. Separate from agentEndCount so we don't
+   * cascade unrelated agent_end-only side effects.
+   */
+  compactionEndCountBySession: Record<string, number>;
+  /**
    * Per-session queued-message snapshot from the SDK's `queue_update`
    * event. `steering` and `followUp` arrays mirror the SDK's two
    * queues — Pi delivers steering at the next agent decision point
@@ -246,6 +285,13 @@ interface SessionState {
    */
   reloadMessages: (sessionId: string) => void;
   /**
+   * Fetch the per-compaction archive for a session and stash it in
+   * `compactionsBySession`. Called on session open + after every
+   * `compaction_end` event. Failures are non-fatal — the chat
+   * still renders without the cards.
+   */
+  loadCompactions: (sessionId: string) => Promise<void>;
+  /**
    * Pre-fill the chat input on next render for `sessionId`. Used by
    * the session tree's "edit & resubmit" fork flow: we fork from a
    * user message's parent (so the user message is NOT in the new
@@ -266,12 +312,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   byProject: {},
   activeSessionId: localStorage.getItem(ACTIVE_SESSION_KEY) ?? undefined,
   messagesBySession: {},
+  compactionsBySession: {},
   pendingDraftBySession: {},
   streamingBySession: {},
   bannerBySession: {},
   streamingTextBySession: {},
   activeToolBySession: {},
   agentEndCountBySession: {},
+  compactionEndCountBySession: {},
   queuedBySession: {},
   error: undefined,
   loadingList: false,
@@ -368,6 +416,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     scheduleMessagesRefetch(set, sessionId);
   },
 
+  loadCompactions: async (sessionId) => {
+    try {
+      const r = await api.getCompactions(sessionId);
+      set((s) => ({
+        compactionsBySession: {
+          ...s.compactionsBySession,
+          [sessionId]: r.compactions,
+        },
+      }));
+    } catch {
+      // Non-fatal — chat just renders without the cards. Don't
+      // surface as `error` because that's the noisy global banner;
+      // a missing compaction archive isn't worth interrupting the
+      // user's session for.
+    }
+  },
+
   setPendingDraft: (sessionId, draft) =>
     set((s) => ({
       pendingDraftBySession: { ...s.pendingDraftBySession, [sessionId]: draft },
@@ -392,6 +457,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (existing !== undefined) return; // already open
     const ctrl = new AbortController();
     controllers.set(sessionId, ctrl);
+
+    // Fetch the compaction archive once on session open so the chat
+    // can render any historical CompactionCards immediately. Live
+    // compactions during this session refresh via the
+    // `compaction_end` SSE event handler in applyEvent. Fire-and-
+    // forget; non-fatal on failure.
+    void get().loadCompactions(sessionId);
 
     // Identity-checked deletes below. Without this, React Strict Mode's
     // double-mount in dev (mount → unmount → mount) can create:
@@ -840,7 +912,30 @@ function applyEvent(
         : undefined;
     set((s) => ({
       bannerBySession: { ...s.bannerBySession, [sessionId]: errorBanner },
+      // Bump the compaction-end counter so panels that need to
+      // react (ContextInspectorPanel re-fetches token usage,
+      // anything else watching compaction state) get a stable
+      // dependency-array signal without re-rendering on every
+      // unrelated event.
+      compactionEndCountBySession: {
+        ...s.compactionEndCountBySession,
+        [sessionId]: (s.compactionEndCountBySession[sessionId] ?? 0) + 1,
+      },
     }));
+    // Refetch the per-compaction archive so the chat can render a
+    // CompactionCard for the just-completed event. Fire-and-forget;
+    // a transient failure is fine — the next session reload picks
+    // it up.
+    void useSessionStore.getState().loadCompactions(sessionId);
+    // Also force a messages refetch — the SDK has rewritten
+    // live.session.messages to the post-compaction shape (older
+    // entries archived, plus a synthesized compaction-summary
+    // message), but the client's messagesBySession cache is still
+    // the pre-compaction array. Without this, the user sees the
+    // CompactionCard appear above stale content that the agent no
+    // longer has in its context. Same coalesced refetch path the
+    // agent_end handler uses.
+    scheduleMessagesRefetch(set, sessionId);
     return;
   }
   if (event.type === "auto_retry_start") {

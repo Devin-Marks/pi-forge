@@ -27,6 +27,9 @@ export function ContextInspectorPanel() {
   const agentEndCount = useSessionStore((s) =>
     sessionId !== undefined ? (s.agentEndCountBySession[sessionId] ?? 0) : 0,
   );
+  const compactionEndCount = useSessionStore((s) =>
+    sessionId !== undefined ? (s.compactionEndCountBySession[sessionId] ?? 0) : 0,
+  );
   // Ctx1 — live updates between agent_end events. Subscribe to the
   // session-store's streaming text + flag so we can synthesize a
   // tail "streaming assistant" row in the message list while the
@@ -87,12 +90,15 @@ export function ContextInspectorPanel() {
     }
   };
 
-  // Initial load + agent_end refresh. Skip the dep on `refresh`
-  // because it's a fresh closure each render and would self-loop.
+  // Initial load + agent_end + compaction_end refresh. Skip the dep
+  // on `refresh` because it's a fresh closure each render and would
+  // self-loop. The compaction counter is a separate signal so a
+  // compaction with no agent_end (the SDK can compact mid-turn)
+  // still kicks the pane to refetch token usage.
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, agentEndCount]);
+  }, [sessionId, agentEndCount, compactionEndCount]);
 
   // Cancel any in-flight request on unmount.
   useEffect(

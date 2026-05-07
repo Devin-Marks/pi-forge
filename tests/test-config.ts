@@ -75,8 +75,10 @@ async function jsend(
 async function main(): Promise<void> {
   const workspacePath = await mkdtemp(join(tmpdir(), "pi-forge-ws-"));
   const configDir = await mkdtemp(join(tmpdir(), "pi-forge-cfg-"));
+  const dataDir = await mkdtemp(join(tmpdir(), "pi-forge-data-"));
   process.env.WORKSPACE_PATH = workspacePath;
   process.env.PI_CONFIG_DIR = configDir;
+  process.env.FORGE_DATA_DIR = dataDir;
   process.env.SESSION_DIR = join(workspacePath, ".pi", "sessions");
   process.env.NODE_ENV = "test";
   delete process.env.UI_PASSWORD;
@@ -85,6 +87,7 @@ async function main(): Promise<void> {
 
   console.log(`[test-config] WORKSPACE_PATH=${workspacePath}`);
   console.log(`[test-config] PI_CONFIG_DIR=${configDir}`);
+  console.log(`[test-config] FORGE_DATA_DIR=${dataDir}`);
 
   const buildModule = (await import(
     resolve(repoRoot, "packages/server/dist/index.js")

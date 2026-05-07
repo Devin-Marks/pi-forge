@@ -452,6 +452,7 @@ async function main(): Promise<void> {
           {
             builtin: { enable: string[]; disable: string[] };
             mcp: { enable: string[]; disable: string[] };
+            extension: { enable: string[]; disable: string[] };
           }
         >;
       };
@@ -470,6 +471,19 @@ async function main(): Promise<void> {
       assert(
         "  cascade.mcp.disable does NOT include the global mcp disable",
         proj?.mcp.disable.includes("myserver__add") === false,
+        JSON.stringify(proj),
+      );
+      // Regression: the response schema must declare `extension`. Fastify
+      // strips properties that aren't in the response schema, and the
+      // SettingsPanel UI assumed all three families were present, so a
+      // missing `extension` key crashed the whole tab. The schema now
+      // requires it; the field must come back even when there's no
+      // outstanding extension override.
+      assert(
+        "  cascade.extension is present (response schema includes it)",
+        proj?.extension !== undefined &&
+          Array.isArray(proj.extension.enable) &&
+          Array.isArray(proj.extension.disable),
         JSON.stringify(proj),
       );
     }

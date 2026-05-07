@@ -11,14 +11,17 @@ import {
   Rows2,
 } from "lucide-react";
 import {
+  EMPTY_COMPACTIONS,
   EMPTY_MESSAGES,
   EMPTY_STRING,
   useSessionStore,
   type ActiveTool,
   type AgentMessageLike,
+  type CompactionEvent,
 } from "../store/session-store";
 import { useActiveProject } from "../store/project-store";
 import { ChatMarkdown } from "./ChatMarkdown";
+import { CompactionCard } from "./CompactionCard";
 import { DiffBlock } from "./DiffBlock";
 import { SessionTreePanel } from "./SessionTreePanel";
 
@@ -74,6 +77,9 @@ export function ChatView({ sessionId }: Props) {
   // would return a new ref each render and trip React 18's
   // useSyncExternalStore infinite-loop guard. See session-store.ts.
   const messages = useSessionStore((s) => s.messagesBySession[sessionId] ?? EMPTY_MESSAGES);
+  const compactions = useSessionStore(
+    (s) => s.compactionsBySession[sessionId] ?? EMPTY_COMPACTIONS,
+  );
   const streamingText = useSessionStore((s) => s.streamingTextBySession[sessionId] ?? EMPTY_STRING);
   const isStreaming = useSessionStore((s) => s.streamingBySession[sessionId] ?? false);
   const activeTool = useSessionStore((s) => s.activeToolBySession[sessionId]);
@@ -208,16 +214,60 @@ export function ChatView({ sessionId }: Props) {
                   }
                 }
               }
-              return messages.map((m, i) => {
+              // Group compactions by `insertBeforeIndex` so each
+              // render-loop tick can ask "any cards land here?" in O(1).
+              // Multiple compactions can share insertBeforeIndex=0 —
+              // those are the older events whose kept window has
+              // itself been re-archived; render them stacked at the
+              // top in chronological order.
+              const compactionsAt = new Map<number, CompactionEvent[]>();
+              for (const ev of compactions) {
+                const list = compactionsAt.get(ev.insertBeforeIndex) ?? [];
+                list.push(ev);
+                compactionsAt.set(ev.insertBeforeIndex, list);
+              }
+              const renderArchived = (ev: CompactionEvent): React.ReactNode =>
+                ev.archivedMessages.map((am, i) => (
+                  <Message key={i} message={am} toolResultsById={toolResultsById} />
+                ));
+              const out: React.ReactNode[] = [];
+              const renderCardsAt = (idx: number): void => {
+                const events = compactionsAt.get(idx);
+                if (events === undefined) return;
+                for (const ev of events) {
+                  out.push(
+                    <CompactionCard
+                      key={`compaction-${ev.id}`}
+                      event={ev}
+                      renderArchived={() => renderArchived(ev)}
+                    />,
+                  );
+                }
+              };
+              messages.forEach((m, i) => {
+                renderCardsAt(i);
                 if (
                   m.role === "toolResult" &&
                   typeof m.toolCallId === "string" &&
                   pairedIds.has(m.toolCallId)
                 ) {
-                  return null; // rendered inline next to its toolCall
+                  return; // rendered inline next to its toolCall
                 }
-                return <Message key={i} message={m} toolResultsById={toolResultsById} />;
+                // Hide the SDK-synthesized compaction summary message
+                // (role: "compactionSummary"). The same summary text
+                // already renders inside our CompactionCard's
+                // disclosure body, so showing it as a top-of-chat
+                // bubble would just duplicate the content under an
+                // "unknown message" fallback.
+                if (m.role === "compactionSummary") return;
+                out.push(<Message key={i} message={m} toolResultsById={toolResultsById} />);
               });
+              // Trailing cards (insertBeforeIndex === messages.length)
+              // — the entire current context was archived but no
+              // messages have been pushed since. Rare; render at the
+              // bottom for completeness.
+              renderCardsAt(messages.length);
+              return out;
             })()}
             {streamingText.length > 0 && (
               <div className="message-bubble rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3">

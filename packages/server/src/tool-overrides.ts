@@ -41,7 +41,7 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { config } from "./config.js";
 
-export type ToolFamily = "builtin" | "mcp";
+export type ToolFamily = "builtin" | "mcp" | "extension";
 export type ToolOverrideState = "enabled" | "disabled";
 
 interface ProjectFamilyOverrides {
@@ -54,6 +54,7 @@ interface ProjectFamilyOverrides {
 interface ProjectOverrides {
   builtin: ProjectFamilyOverrides;
   mcp: ProjectFamilyOverrides;
+  extension: ProjectFamilyOverrides;
 }
 
 export interface ToolOverrides {
@@ -61,14 +62,20 @@ export interface ToolOverrides {
   builtin: string[];
   /** Bridged MCP tool names disabled GLOBALLY. */
   mcp: string[];
+  /** Pi-extension-registered tool names disabled GLOBALLY. */
+  extension: string[];
   /** Map from projectId → that project's tri-state overrides. */
   projects: Record<string, ProjectOverrides>;
 }
 
-const EMPTY: ToolOverrides = { builtin: [], mcp: [], projects: {} };
+const EMPTY: ToolOverrides = { builtin: [], mcp: [], extension: [], projects: {} };
 
 function emptyProject(): ProjectOverrides {
-  return { builtin: { enable: [], disable: [] }, mcp: { enable: [], disable: [] } };
+  return {
+    builtin: { enable: [], disable: [] },
+    mcp: { enable: [], disable: [] },
+    extension: { enable: [], disable: [] },
+  };
 }
 
 async function ensureDir(): Promise<void> {
@@ -118,15 +125,16 @@ export async function readToolOverrides(): Promise<ToolOverrides> {
   try {
     const raw = await readFile(config.toolOverridesFile, "utf8");
     if (raw.trim().length === 0) {
-      return { builtin: [], mcp: [], projects: {} };
+      return { builtin: [], mcp: [], extension: [], projects: {} };
     }
     const parsed = JSON.parse(raw) as unknown;
     if (typeof parsed !== "object" || parsed === null) {
-      return { builtin: [], mcp: [], projects: {} };
+      return { builtin: [], mcp: [], extension: [], projects: {} };
     }
     const obj = parsed as {
       builtin?: unknown;
       mcp?: unknown;
+      extension?: unknown;
       projects?: unknown;
     };
     const builtin = Array.isArray(obj.builtin)
@@ -135,21 +143,30 @@ export async function readToolOverrides(): Promise<ToolOverrides> {
     const mcp = Array.isArray(obj.mcp)
       ? obj.mcp.filter((n): n is string => typeof n === "string")
       : [];
+    // `extension` is a new family added alongside the existing
+    // builtin/mcp pair. Backwards-compatible: an older overrides
+    // file with no `extension` key parses to the empty list, so
+    // every extension tool is enabled by default until the user
+    // explicitly disables it.
+    const extension = Array.isArray(obj.extension)
+      ? obj.extension.filter((n): n is string => typeof n === "string")
+      : [];
     const projects: Record<string, ProjectOverrides> = {};
     if (typeof obj.projects === "object" && obj.projects !== null) {
       for (const [pid, val] of Object.entries(obj.projects as Record<string, unknown>)) {
         if (typeof val !== "object" || val === null) continue;
-        const v = val as { builtin?: unknown; mcp?: unknown };
+        const v = val as { builtin?: unknown; mcp?: unknown; extension?: unknown };
         projects[pid] = {
           builtin: normalizeFamilyOverrides(v.builtin),
           mcp: normalizeFamilyOverrides(v.mcp),
+          extension: normalizeFamilyOverrides(v.extension),
         };
       }
     }
-    return { builtin, mcp, projects };
+    return { builtin, mcp, extension, projects };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return { builtin: [], mcp: [], projects: {} };
+      return { builtin: [], mcp: [], extension: [], projects: {} };
     }
     throw err;
   }
@@ -166,7 +183,7 @@ export async function setToolEnabled(
   enabled: boolean,
 ): Promise<ToolOverrides> {
   const cur = await readToolOverrides();
-  const list = family === "builtin" ? cur.builtin : cur.mcp;
+  const list = familyList(cur, family);
   const idx = list.indexOf(name);
   if (enabled) {
     if (idx === -1) return cur; // already enabled (not in disabled set)
@@ -177,6 +194,18 @@ export async function setToolEnabled(
   }
   await atomicWrite(cur);
   return cur;
+}
+
+function familyList(cur: ToolOverrides, family: ToolFamily): string[] {
+  if (family === "builtin") return cur.builtin;
+  if (family === "mcp") return cur.mcp;
+  return cur.extension;
+}
+
+function projectFamily(entry: ProjectOverrides, family: ToolFamily): ProjectFamilyOverrides {
+  if (family === "builtin") return entry.builtin;
+  if (family === "mcp") return entry.mcp;
+  return entry.extension;
 }
 
 /**
@@ -193,7 +222,7 @@ export async function setProjectToolOverride(
 ): Promise<ToolOverrides> {
   const cur = await readToolOverrides();
   const entry = cur.projects[projectId] ?? emptyProject();
-  const fam = family === "builtin" ? entry.builtin : entry.mcp;
+  const fam = projectFamily(entry, family);
   // Remove from BOTH lists first — flipping enable→disable or vice
   // versa is just remove + maybe add. Same dance as
   // skill-overrides.setProjectSkillOverride.
@@ -209,7 +238,9 @@ export async function setProjectToolOverride(
     entry.builtin.enable.length === 0 &&
     entry.builtin.disable.length === 0 &&
     entry.mcp.enable.length === 0 &&
-    entry.mcp.disable.length === 0;
+    entry.mcp.disable.length === 0 &&
+    entry.extension.enable.length === 0 &&
+    entry.extension.disable.length === 0;
   if (empty) {
     delete cur.projects[projectId];
   } else {
@@ -232,7 +263,7 @@ export function getProjectToolState(
 ): ToolOverrideState | undefined {
   const entry = overrides.projects[projectId];
   if (entry === undefined) return undefined;
-  const fam = family === "builtin" ? entry.builtin : entry.mcp;
+  const fam = projectFamily(entry, family);
   if (fam.enable.includes(name)) return "enabled";
   if (fam.disable.includes(name)) return "disabled";
   return undefined;
@@ -254,8 +285,7 @@ export function isToolEffective(
     if (state === "enabled") return true;
     if (state === "disabled") return false;
   }
-  const globalDisabled = family === "builtin" ? overrides.builtin : overrides.mcp;
-  return !globalDisabled.includes(name);
+  return !familyList(overrides, family).includes(name);
 }
 
 /**
@@ -291,6 +321,7 @@ export interface ToolOverridesCascade {
     {
       builtin: { enable: string[]; disable: string[] };
       mcp: { enable: string[]; disable: string[] };
+      extension: { enable: string[]; disable: string[] };
     }
   >;
 }

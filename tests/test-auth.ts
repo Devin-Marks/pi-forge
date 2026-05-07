@@ -19,7 +19,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import { randomBytes } from "node:crypto";
-import { dirname, resolve } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -76,6 +78,16 @@ interface RunningServer {
 
 async function startServer(env: Record<string, string | undefined>): Promise<RunningServer> {
   const port = await pickFreePort();
+  // Force per-spawn isolation of the data dir. The default
+  // (~/.pi-forge) leaks any password-hash / jwt-secret / projects.json
+  // the developer has on their actual machine into the test, which
+  // breaks the "auth disabled" / "API_KEY only" scenarios — they
+  // assume no on-disk hash exists, but `authEnabled()` reads
+  // existsSync(passwordHashFile) and returns true even when neither
+  // env var is set. mkdtemp gives each spawn a clean slate; the
+  // cleanup runs in stop().
+  const dataDir = await mkdtemp(join(tmpdir(), "pi-forge-test-auth-"));
+  const workspacePath = join(dataDir, "workspace");
   const child = spawn(process.execPath, [serverEntry], {
     cwd: repoRoot,
     env: {
@@ -84,6 +96,8 @@ async function startServer(env: Record<string, string | undefined>): Promise<Run
       PORT: String(port),
       LOG_LEVEL: "warn",
       NODE_ENV: "test",
+      FORGE_DATA_DIR: dataDir,
+      WORKSPACE_PATH: workspacePath,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -91,12 +105,14 @@ async function startServer(env: Record<string, string | undefined>): Promise<Run
 
   const base = `http://127.0.0.1:${port}`;
   const stop = async (): Promise<void> => {
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    await new Promise<void>((res) => {
-      child.once("exit", () => res());
-      child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 1500).unref();
-    });
+    if (child.exitCode === null && child.signalCode === null) {
+      await new Promise<void>((res) => {
+        child.once("exit", () => res());
+        child.kill("SIGTERM");
+        setTimeout(() => child.kill("SIGKILL"), 1500).unref();
+      });
+    }
+    await rm(dataDir, { recursive: true, force: true }).catch(() => undefined);
   };
 
   try {

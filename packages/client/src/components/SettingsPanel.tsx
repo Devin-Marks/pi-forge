@@ -1129,6 +1129,7 @@ function ToolsTab({ onError }: { onError: (msg: string | undefined) => void }) {
       {
         builtin: { enable: string[]; disable: string[] };
         mcp: { enable: string[]; disable: string[] };
+        extension: { enable: string[]; disable: string[] };
       }
     >
   >({});
@@ -1154,7 +1155,7 @@ function ToolsTab({ onError }: { onError: (msg: string | undefined) => void }) {
   }, []);
 
   const toggleGlobal = async (
-    family: "builtin" | "mcp",
+    family: "builtin" | "mcp" | "extension",
     name: string,
     nextEnabled: boolean,
   ): Promise<void> => {
@@ -1170,7 +1171,7 @@ function ToolsTab({ onError }: { onError: (msg: string | undefined) => void }) {
   };
 
   const setProjectOverride = async (
-    family: "builtin" | "mcp",
+    family: "builtin" | "mcp" | "extension",
     targetProjectId: string,
     name: string,
     state: "enabled" | "disabled" | undefined,
@@ -1228,6 +1229,48 @@ function ToolsTab({ onError }: { onError: (msg: string | undefined) => void }) {
           ))}
         </div>
       </section>
+
+      {listing.extension.length > 0 && (
+        <section>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-400">
+            Extension tools
+          </h3>
+          <p className="mb-2 text-[11px] text-neutral-500">
+            Tools registered programmatically by pi extensions installed under{" "}
+            <code className="font-mono">~/.pi/agent/extensions/</code> or a project's{" "}
+            <code className="font-mono">.pi/extensions/</code>. Disabled tools are dropped from the
+            allowlist passed to the next session — the extension itself remains loaded.
+          </p>
+          <div className="space-y-4">
+            {listing.extension.map((ext) => (
+              <div key={ext.packageSource} className="space-y-2">
+                <div className="text-[11px] font-semibold text-neutral-300">
+                  Package: <code className="font-mono text-neutral-400">{ext.packageSource}</code>
+                </div>
+                <div className="space-y-2">
+                  {ext.tools.map((t) => (
+                    <ToolCascadeRow
+                      key={`extension:${ext.packageSource}:${t.name}`}
+                      family="extension"
+                      name={t.name}
+                      fqn={t.name}
+                      description={t.description}
+                      globalEnabled={t.globalEnabled}
+                      projects={projects}
+                      allOverrides={allOverrides}
+                      busy={busy}
+                      onToggleGlobal={(next) => void toggleGlobal("extension", t.name, next)}
+                      onSetProjectOverride={(projectId, state) =>
+                        void setProjectOverride("extension", projectId, t.name, state)
+                      }
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -1251,7 +1294,7 @@ function ToolCascadeRow({
   onToggleGlobal,
   onSetProjectOverride,
 }: {
-  family: "builtin" | "mcp";
+  family: "builtin" | "mcp" | "extension";
   /** Display name (short for MCP, bare for builtins). */
   name: string;
   /** Wire/storage name. For MCP this is the bridged
@@ -1265,6 +1308,7 @@ function ToolCascadeRow({
     {
       builtin: { enable: string[]; disable: string[] };
       mcp: { enable: string[]; disable: string[] };
+      extension: { enable: string[]; disable: string[] };
     }
   >;
   busy: boolean;
@@ -1275,7 +1319,11 @@ function ToolCascadeRow({
   const overrideStateFor = (projectId: string): "enabled" | "disabled" | undefined => {
     const entry = allOverrides[projectId];
     if (entry === undefined) return undefined;
-    const fam = family === "builtin" ? entry.builtin : entry.mcp;
+    const fam =
+      family === "builtin" ? entry.builtin : family === "mcp" ? entry.mcp : entry.extension;
+    // Defensive: an older server may return a project entry without
+    // the `extension` key. Treat as "no override" rather than crash.
+    if (fam === undefined) return undefined;
     if (fam.enable.includes(fqn)) return "enabled";
     if (fam.disable.includes(fqn)) return "disabled";
     return undefined;
@@ -1836,6 +1884,7 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
       {
         builtin: { enable: string[]; disable: string[] };
         mcp: { enable: string[]; disable: string[] };
+        extension: { enable: string[]; disable: string[] };
       }
     >
   >({});
@@ -2165,6 +2214,7 @@ function McpServerList(props: {
     {
       builtin: { enable: string[]; disable: string[] };
       mcp: { enable: string[]; disable: string[] };
+      extension: { enable: string[]; disable: string[] };
     }
   >;
   projects: { id: string; name: string; path: string }[];
