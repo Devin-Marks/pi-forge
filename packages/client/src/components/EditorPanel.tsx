@@ -2,8 +2,14 @@ import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { useFileStore, type OpenFile } from "../store/file-store";
 import { useActiveProject } from "../store/project-store";
 import { AlertTriangle, Save, WrapText, X, XSquare } from "lucide-react";
+import type { DiffLine } from "../lib/diff-parser";
 
 const WRAP_KEY_PREFIX = "forge.editor.wrap.";
+
+// Stable empty-array reference for the diff prop. Re-creating `[]`
+// inline on every render would trigger CodeMirrorEditor's
+// `useEffect([diffChanges])` to re-dispatch unnecessarily.
+const EMPTY_DIFF: DiffLine[] = [];
 
 /**
  * Per-file-extension line-wrap preference, persisted across sessions.
@@ -78,6 +84,7 @@ export function EditorPanel() {
   const saveFile = useFileStore((s) => s.saveFile);
   const reloadFile = useFileStore((s) => s.reloadFile);
   const externallyChanged = useFileStore((s) => s.externallyChanged);
+  const gitDiffByPath = useFileStore((s) => s.gitDiffByPath);
 
   const active = openFiles.find((f) => f.path === activePath);
   const activeExt = active !== undefined ? extensionOf(active.path) : "";
@@ -131,6 +138,10 @@ export function EditorPanel() {
                 key={active.tabId}
                 file={active}
                 wrap={wrap}
+                // Always pass an array (default to empty) so the prop
+                // type stays `DiffLine[]`, not `DiffLine[] | undefined`
+                // — the latter trips exactOptionalPropertyTypes.
+                diffChanges={gitDiffByPath[active.path] ?? EMPTY_DIFF}
                 onChange={(v) => updateDraft(active.path, v)}
                 onSaveShortcut={() => {
                   if (project !== undefined) void saveFile(project.id, active.path);
