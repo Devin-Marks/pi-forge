@@ -77,18 +77,18 @@ export function SessionList({ projectId }: Props) {
 
   /**
    * Per-parent expansion state for the pi-subagents sub-agent dropdown.
-   * Children are spawned by the `subagent` extension tool — see
-   * `notes/MOBILE.md` and `CLAUDE.md` for context. Defaults to
-   * collapsed because most parents have zero children, and a default-
-   * expanded view would visually duplicate every existing top-level
-   * session row whenever a child happens to exist.
+   * Tracks user TOGGLES — undefined entries inherit the default
+   * (auto-expanded when the parent has children). Storing toggles
+   * rather than absolute state means a freshly-discovered parent
+   * with children gets expanded by default without the user having
+   * to click the chevron, AND user-collapsed state survives across
+   * refetches.
    */
-  const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set());
-  const toggleExpanded = (parentId: string): void => {
+  const [expandedParents, setExpandedParents] = useState<Map<string, boolean>>(new Map());
+  const toggleExpanded = (parentId: string, currentlyExpanded: boolean): void => {
     setExpandedParents((prev) => {
-      const next = new Set(prev);
-      if (next.has(parentId)) next.delete(parentId);
-      else next.add(parentId);
+      const next = new Map(prev);
+      next.set(parentId, !currentlyExpanded);
       return next;
     });
   };
@@ -116,8 +116,25 @@ export function SessionList({ projectId }: Props) {
     const topLevel = sessions.filter(
       (s) => s.parentSessionId === undefined || !topLevelIds.has(s.parentSessionId),
     );
+    // One-shot diagnostic so a still-broken grouping report can be
+    // triaged from the browser console: shows what parentSessionIds
+    // came in on the wire and which buckets they landed in. Strip
+    // when the sub-agent UX stabilises.
+    if (sessions.some((s) => s.parentSessionId !== undefined)) {
+      console.info("[subagent] SessionList grouping", {
+        projectId,
+        sessionCount: sessions.length,
+        topLevelCount: topLevel.length,
+        childCount: Array.from(childrenByParent.values()).reduce((n, a) => n + a.length, 0),
+        topLevelIds: Array.from(topLevelIds),
+        parentIdsOnChildren: sessions
+          .filter((s) => s.parentSessionId !== undefined)
+          .map((s) => s.parentSessionId),
+        bucketed: Array.from(childrenByParent.keys()),
+      });
+    }
     return { topLevel, childrenByParent };
-  }, [sessions]);
+  }, [sessions, projectId]);
 
   const submitDelete = async (): Promise<void> => {
     if (deleteDialog === undefined) return;
@@ -219,7 +236,11 @@ export function SessionList({ projectId }: Props) {
       */}
       {topLevel.flatMap((s) => {
         const children = childrenByParent.get(s.sessionId) ?? [];
-        const isExpanded = expandedParents.has(s.sessionId);
+        // Default-expanded for parents with children — the typical
+        // user intent is "show me this run's sub-agents." User-toggled
+        // state (Map entry exists) overrides the default.
+        const userToggle = expandedParents.get(s.sessionId);
+        const isExpanded = userToggle !== undefined ? userToggle : children.length > 0;
         const rows: ReactNode[] = [
           <SessionRow
             key={s.sessionId}
@@ -317,7 +338,7 @@ interface SessionRowProps {
   onChangeRename: (next: string) => void;
   onRenameKeyDown: (e: KeyboardEvent<HTMLInputElement>, sessionId: string) => void;
   onCommitRename: (sessionId: string) => void;
-  onToggleExpanded: (parentId: string) => void;
+  onToggleExpanded: (parentId: string, currentlyExpanded: boolean) => void;
   onAskDelete: (payload: DeletePayload) => void;
 }
 
@@ -360,7 +381,7 @@ function SessionRow(props: SessionRowProps) {
           line up across rows. */}
       {childCount > 0 ? (
         <button
-          onClick={() => onToggleExpanded(s.sessionId)}
+          onClick={() => onToggleExpanded(s.sessionId, isExpanded)}
           className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-neutral-500 hover:text-neutral-200"
           title={`${childCount} sub-agent session${childCount === 1 ? "" : "s"}`}
           aria-label={isExpanded ? "Collapse sub-agents" : "Expand sub-agents"}
