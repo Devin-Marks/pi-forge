@@ -1236,11 +1236,10 @@ function SubagentResultCard({
       )}
       {outputText.length > 0 && (
         <details
-          // For management mode + errors the output IS the body, so open
-          // by default — otherwise a failed call or "list agents" call
-          // looks blank. Normal successful runs collapse the verbose
-          // sub-agent output by default so the chat stays scannable.
-          open={isError || (isManagement && count === 0)}
+          // Errors open by default so failures aren't blank cards.
+          // Management calls and successful runs stay collapsed so the
+          // chat is scannable — the user can click to inspect.
+          open={isError}
           className="border-t border-sky-900/30"
         >
           <summary className="cursor-pointer px-2.5 py-1 text-[11px] text-neutral-500 hover:text-neutral-300">

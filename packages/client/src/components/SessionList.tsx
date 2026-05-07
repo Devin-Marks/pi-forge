@@ -236,11 +236,11 @@ export function SessionList({ projectId }: Props) {
       */}
       {topLevel.flatMap((s) => {
         const children = childrenByParent.get(s.sessionId) ?? [];
-        // Default-expanded for parents with children — the typical
-        // user intent is "show me this run's sub-agents." User-toggled
-        // state (Map entry exists) overrides the default.
+        // Default-collapsed: most parents have zero children, and a
+        // sweeping "show every run's sub-agents" expansion adds noise
+        // to the sidebar. User toggle persists.
         const userToggle = expandedParents.get(s.sessionId);
-        const isExpanded = userToggle !== undefined ? userToggle : children.length > 0;
+        const isExpanded = userToggle === true;
         const rows: ReactNode[] = [
           <SessionRow
             key={s.sessionId}
