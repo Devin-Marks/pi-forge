@@ -97,6 +97,7 @@ interface TestRegistry {
   findSessionLocation: (
     id: string,
   ) => Promise<{ projectId: string; workspacePath: string } | undefined>;
+  deleteColdSession: (id: string) => Promise<"deleted" | "live" | "not_found">;
 }
 interface TestProjectManager {
   createProject: (name: string, path: string) => Promise<{ id: string; path: string }>;
@@ -296,6 +297,25 @@ async function main(): Promise<void> {
       "flat-layout child's parentSessionId resolves and runId is undefined",
       flatChildEntry?.parentSessionId === flatParentId && flatChildEntry?.runId === undefined,
       `parentSessionId=${flatChildEntry?.parentSessionId} runId=${flatChildEntry?.runId}`,
+    );
+
+    // 8. Cascade-delete: deleting a parent session also wipes its
+    // pi-subagents sibling directory and any nested children, so the
+    // sidebar doesn't accumulate orphan child sessions whose parent
+    // is gone. We use the deep-layout fixture because it exercises
+    // the full <basename>/<runId>/run-N/<child>.jsonl tree the
+    // recursive rm has to clear.
+    const cascadeStatus = await registry.deleteColdSession(deepParentId);
+    assert("deleteColdSession on the deep parent returns 'deleted'", cascadeStatus === "deleted");
+    const reAfterCascade = await registry.discoverSessionsOnDisk(project.id, project.path);
+    assert(
+      "deep-layout child is gone after parent delete (cascade)",
+      reAfterCascade.find((d) => d.sessionId === deepChildId) === undefined,
+      `child still discovered: ${reAfterCascade.map((d) => d.sessionId).join(",")}`,
+    );
+    assert(
+      "deep-layout parent is gone after parent delete",
+      reAfterCascade.find((d) => d.sessionId === deepParentId) === undefined,
     );
   } finally {
     await registry.disposeAllSessions();

@@ -1,5 +1,5 @@
 import { mkdir, readdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   AgentSession,
   type AgentSessionEvent,
@@ -698,6 +698,30 @@ export async function deleteColdSession(
         const code = (err as NodeJS.ErrnoException).code;
         if (code === "ENOENT") return "deleted";
         throw err;
+      }
+      // Cascade-delete the pi-subagents sibling directory if this was
+      // a top-level parent session. The plugin's
+      // `getSubagentSessionRoot(parentSessionFile)` lays children at
+      // `<dirname(parentFile)>/<basename(parentFile, ".jsonl")>/...`,
+      // so we mirror that path and `rm -rf` it. Without this, deleting
+      // a parent leaves its child sub-agent JSONLs behind as
+      // sidebar orphans.
+      //
+      // Skipped for sub-agent CHILDREN — they don't have a sibling
+      // dir of their own (they live UNDER one). The project-scoped
+      // `subagent-artifacts/` dir is intentionally untouched: it's
+      // shared across every parent session in the project, not
+      // per-session, so blowing it away on single-session delete
+      // would clobber unrelated sessions' artifacts.
+      if (match.parentSessionId === undefined) {
+        const stem = basename(match.path, ".jsonl");
+        const siblingDir = join(dirname(match.path), stem);
+        // force: true makes ENOENT silent; recursive: true clears the
+        // run/runId/run-N tree the plugin nests under there. Failures
+        // for any other reason (perms, EBUSY) are swallowed — the
+        // primary delete already succeeded and the user-facing op is
+        // "session is gone."
+        await rm(siblingDir, { recursive: true, force: true }).catch(() => undefined);
       }
       return "deleted";
     }
