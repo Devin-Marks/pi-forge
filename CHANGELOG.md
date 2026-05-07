@@ -14,6 +14,8 @@ the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.1.3] — 2026-05-07
+
 ### Added
 
 - **VS Code-style git diff gutter in the file viewer.** CodeMirror
