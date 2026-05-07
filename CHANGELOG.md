@@ -16,22 +16,65 @@ the README for the support window policy.
 
 ### Added
 
-- **pi-subagents integration.** When the `pi-subagents` package is
-  installed (`pi install npm:pi-subagents`), three things turn on:
-  (1) the existing tool/extension surface already enables the plugin's
-  `subagent` tool — sessions get it via the regular allowlist; (2) tool
-  call cards in the chat for `subagent` are replaced with a richer
-  `SubagentResultCard` that lists each spawned sub-agent's name + task
-  + exit code and exposes an "Open" button that switches the active
-  session to the child JSONL; (3) the session sidebar now groups
-  sub-agent sessions under a chevron dropdown on their parent row.
-  Server-side, `discoverSessionsOnDisk` now walks one level deeper
-  into `<sessionDir>/<parentId>/<runId>/*.jsonl` (the path layout
-  pi-subagents writes to) and tags each child with `parentSessionId`
-  and `runId`; `findSessionLocation` and `resumeSession` resolve child
-  UUIDs the same as top-level sessions. Coverage in
-  `tests/test-subagent-discovery.ts` (registry-level) and
-  `tests/test-subagent-parser.ts` (pure parser).
+- **VS Code-style git diff gutter in the file viewer.** CodeMirror
+  editor now renders a 3px colored gutter strip per changed line —
+  green for additions, blue for modified, red triangle for the line
+  below a deletion — plus a proportional overview overlay on the right
+  scrollbar so changes are visible at a glance in long files. Diff
+  data flows in via a `setDiffEffect` StateEffect so swaps don't
+  require rebuilding EditorState (cursor / undo / scroll all
+  preserved). Pure-function `parseUnifiedDiff` parses git diff output
+  into per-line decorations keyed by new-file line numbers; full unit
+  coverage in `tests/test-diff-parser.ts`.
+- **Dependabot enabled.** `.github/dependabot.yml` configures weekly
+  version updates across three ecosystems: `npm` (root + every
+  workspace under `packages/*` via auto-discovery), `github-actions`
+  (workflow YAMLs), and `docker` (`docker/Dockerfile` base image).
+  Each stream tags PRs with `dependencies` plus an ecosystem label
+  and uses a conventional-commit prefix (`chore(deps)`, `chore(ci)`,
+  `chore(docker)`). The pi SDK trio is intentionally NOT ignored —
+  Dependabot still surfaces those bumps as PRs even though the
+  policy is "review carefully, never auto-merge" per `CLAUDE.md`.
+- **pi-subagents integration.** When the `pi-subagents` plugin is
+  installed (`pi install npm:pi-subagents`), spawned sub-agents are
+  now first-class sessions in pi-forge: discoverable, navigable,
+  cleanly grouped under their parent in the sidebar. Specifically:
+  - The `subagent` tool's result message is rendered as a richer
+    light-blue card in the chat (replaces the generic tool card),
+    with collapsible Input + Output sections and a small Open button
+    in the header that switches the active session to the spawned
+    child's JSONL.
+  - Server-side discovery walks the deeply-nested
+    `<sessionDir>/<projectId>/<basename>/<runId>/run-N/session.jsonl`
+    layout pi-subagents writes to, and tags each child with
+    `parentSessionId` + `runId` for sidebar grouping. Recursive
+    walker handles every layout variant the plugin emits without
+    enumerating each by hand.
+  - Sidebar shows children indented under their parent's row when
+    the chevron is expanded. True orphans (parent JSONL deleted but
+    child dir survived) fall back to top-level rendering.
+  - Open click resolves `sessionFile` → canonical `sessionId` via
+    a path lookup against the loaded session list (pi-subagents
+    names children `session.jsonl`, not `<uuid>.jsonl`, so deriving
+    the id from the basename is unreliable). Uses the JSONL header's
+    real id instead.
+  - Deleting a parent session cascades the entire pi-subagents
+    sibling directory so orphan children don't accumulate. The
+    project-scoped `subagent-artifacts/` dir is intentionally
+    untouched.
+
+### Fixed
+
+- **`FST_ERR_REP_ALREADY_SENT` 500s on git/files routes.** Every
+  handler that called `resolveProject` was ending with
+  `if (project === undefined) return;` after the helper already
+  called `reply.send(404)`. Fastify interpreted the resolved
+  `undefined` as "send this," racing the helper's 404 — surfacing
+  as a noisy 500 in the request log even though the client got
+  the 404 fine. All call sites in `git.ts` (14) and `files.ts` (9)
+  plus the shared `withProject` helper now `return reply` so
+  Fastify knows the response was handled. Doc-comments on both
+  helpers updated to make the contract explicit.
 
 ## [1.1.2] — 2026-05-06
 
