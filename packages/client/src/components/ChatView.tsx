@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   AtSign,
   Check,
@@ -6,9 +6,11 @@ import {
   ChevronRight,
   Columns2,
   Copy,
+  ExternalLink,
   FileCode,
   GitBranch,
   Rows2,
+  Users,
 } from "lucide-react";
 import {
   EMPTY_COMPACTIONS,
@@ -19,11 +21,12 @@ import {
   type AgentMessageLike,
   type CompactionEvent,
 } from "../store/session-store";
-import { useActiveProject } from "../store/project-store";
+import { useActiveProject, useProjectStore } from "../store/project-store";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { CompactionCard } from "./CompactionCard";
 import { DiffBlock } from "./DiffBlock";
 import { SessionTreePanel } from "./SessionTreePanel";
+import { parseSubagentDetails, type SubagentResult } from "../lib/subagent-parser";
 
 /**
  * Per-ChatView diff view-type preference. Each diff-rendering surface
@@ -839,6 +842,26 @@ function ToolCallEntry({
   const editFn = name === "edit" && result !== undefined ? extractFilename(result) : undefined;
   const editStats = editDiff !== undefined ? countDiffLines(editDiff) : undefined;
 
+  // pi-subagents tool gets a dedicated rich card instead of the
+  // generic toolCall+result rendering. Short-circuit BEFORE the
+  // generic render path: the user's eye should land on the violet
+  // sub-agent card with its prominent Open button, not on a row of
+  // small "subagent" badges nested under "Input/Output" details.
+  // Pre-result (running) state still fires through here — the card
+  // surfaces the input args (which agent + task) so the user sees
+  // what's running.
+  if (name === "subagent") {
+    return (
+      <SubagentInflightOrResult
+        argsText={argsText}
+        input={argsObj}
+        result={result}
+        isError={isError}
+        outputText={outputText}
+      />
+    );
+  }
+
   // Border tint reflects success/error/pending so the user can scan
   // a long thread without expanding every entry.
   const borderClass =
@@ -984,6 +1007,14 @@ function ToolResult({ message }: { message: AgentMessageLike }) {
     );
   }
 
+  // pi-subagents: replace the generic tool card with a richer surface
+  // listing each spawned sub-agent + a "open session" affordance.
+  // Standalone (orphan) toolResult — no paired toolCall, so we have no
+  // input args to show. argsText="" and the Input section won't render.
+  if (toolName === "subagent") {
+    return <SubagentResultCard message={message} argsText="" outputText={text} isError={isError} />;
+  }
+
   // Generic tool result fallback.
   return (
     <details
@@ -995,6 +1026,270 @@ function ToolResult({ message }: { message: AgentMessageLike }) {
       </summary>
       <pre className="overflow-auto px-3 pb-2 font-mono text-[11px] text-neutral-400">{text}</pre>
     </details>
+  );
+}
+
+/**
+ * Render a `subagent` tool result with one row per spawned sub-agent.
+ * Each row's "open session" button switches the active session to the
+ * child via `setActiveSession(childSessionId)` — the sidebar's chevron
+ * grouping then reveals the child under its parent. Management-mode
+ * calls (`mode: "management"`) and details we couldn't parse fall
+ * back to a plain text block so we never lose information silently.
+ */
+/**
+ * Wrapper that picks the right sub-agent card variant based on whether
+ * the tool has finished. In-flight (no result yet) renders a compact
+ * "Sub-agent running…" card; completed renders SubagentResultCard,
+ * which always carries Input + Output collapsibles so the user can
+ * inspect what was sent and what came back — same affordance the
+ * generic ToolCallEntry has.
+ */
+function SubagentInflightOrResult({
+  argsText,
+  input,
+  result,
+  isError,
+  outputText,
+}: {
+  argsText: string;
+  input: Record<string, unknown> | undefined;
+  result: AgentMessageLike | undefined;
+  isError: boolean;
+  outputText: string;
+}) {
+  if (result !== undefined) {
+    return (
+      <SubagentResultCard
+        message={result}
+        argsText={argsText}
+        outputText={outputText}
+        isError={isError}
+      />
+    );
+  }
+  // In-flight: pull a friendly preview out of the SubagentParams shape
+  // (single mode → input.agent / input.task; parallel/chain mode →
+  // count of tasks; management mode → input.action). Best-effort —
+  // schema-bumps on the plugin side just degrade to "running" with
+  // no detail, never crash.
+  let summary: string | undefined;
+  if (input !== undefined) {
+    const agent = typeof input.agent === "string" ? input.agent : undefined;
+    const task = typeof input.task === "string" ? input.task : undefined;
+    const action = typeof input.action === "string" ? input.action : undefined;
+    const tasks = Array.isArray(input.tasks) ? input.tasks.length : undefined;
+    const chain = Array.isArray(input.chain) ? input.chain.length : undefined;
+    if (action !== undefined) summary = `action: ${action}`;
+    else if (tasks !== undefined) summary = `${tasks} parallel task${tasks === 1 ? "" : "s"}`;
+    else if (chain !== undefined) summary = `${chain}-step chain`;
+    else if (agent !== undefined && task !== undefined) summary = `${agent} — ${task}`;
+    else if (agent !== undefined) summary = agent;
+  }
+  return (
+    <div className="overflow-hidden rounded border border-l-2 border-sky-700/50 border-l-sky-400 bg-sky-950/15 text-xs">
+      <div className="flex items-center justify-between gap-2 px-2.5 py-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Users size={11} className="shrink-0 text-sky-300" />
+          <span className="truncate font-medium text-sky-100">Sub-agent running…</span>
+          {summary !== undefined && (
+            <span className="ml-1 truncate font-mono text-[11px] text-sky-200/70" title={summary}>
+              {summary}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SubagentResultCard({
+  message,
+  argsText,
+  outputText,
+  isError,
+}: {
+  message: AgentMessageLike;
+  argsText: string;
+  outputText: string;
+  isError: boolean;
+}) {
+  const setActiveSession = useSessionStore((s) => s.setActiveSession);
+  const setActiveProject = useProjectStore((s) => s.setActive);
+  const byProject = useSessionStore((s) => s.byProject);
+  // Resolve a tool-result `sessionFile` (absolute path) back to its
+  // canonical sessionId by scanning the loaded session list. pi-subagents
+  // writes children as a literal `session.jsonl`, so the filename's
+  // stem is the string "session" — useless for navigation. Server-side
+  // discovery reads the JSONL header for the real id and surfaces both
+  // path AND sessionId on UnifiedSession; we look up by path here.
+  const sessionByPath = useMemo(() => {
+    const map = new Map<string, { sessionId: string; projectId: string }>();
+    for (const list of Object.values(byProject)) {
+      for (const s of list) {
+        if (typeof s.path === "string" && s.path.length > 0) {
+          map.set(s.path, { sessionId: s.sessionId, projectId: s.projectId });
+        }
+      }
+    }
+    return map;
+  }, [byProject]);
+  const openByFile = (sessionFile: string | undefined): void => {
+    if (sessionFile === undefined) {
+      console.warn("[subagent] Open clicked but result has no sessionFile");
+      return;
+    }
+    const match = sessionByPath.get(sessionFile);
+    console.info("[subagent] Open clicked", { sessionFile, match });
+    if (match === undefined) {
+      // The child wasn't in any project's session list — most likely
+      // because the project sidebar hasn't been refreshed since the
+      // sub-agent ran. Reload the active project's list and retry.
+      // For now: surface a console warning rather than silently doing
+      // nothing. (A future revision could trigger a refetch + retry.)
+      console.warn(
+        "[subagent] Open: sessionFile not found in any project's session list",
+        sessionFile,
+      );
+      return;
+    }
+    setActiveProject(match.projectId);
+    setActiveSession(match.sessionId);
+  };
+  const parsed = parseSubagentDetails(message.details);
+  const isManagement = parsed.mode === "management";
+  const count = parsed.results.length;
+  const headline =
+    count === 1
+      ? `Sub-agent: ${parsed.results[0]!.agent}`
+      : count > 1
+        ? `${count} sub-agents (${parsed.mode})`
+        : isManagement
+          ? "Sub-agent management"
+          : "Sub-agent";
+
+  // Light-blue (sky) color treatment per request — distinctive but
+  // soft. Failures get a red border but keep the rest of the card
+  // intact (so the input + output sections are still inspectable
+  // when the call errored).
+  const borderColors = isError
+    ? "border-red-700/50 border-l-red-400 bg-red-950/15"
+    : "border-sky-700/50 border-l-sky-400 bg-sky-950/15";
+
+  return (
+    <div className={`overflow-hidden rounded border border-l-2 ${borderColors} text-xs`}>
+      <div className="flex items-center justify-between gap-2 px-2.5 py-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Users size={11} className="shrink-0 text-sky-300" />
+          <span className="truncate font-medium text-sky-100">{headline}</span>
+          {parsed.context !== undefined && (
+            <span
+              className="shrink-0 rounded bg-sky-900/40 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wider text-sky-200"
+              title={parsed.context === "fork" ? "Forked from parent context" : "Fresh context"}
+            >
+              {parsed.context}
+            </span>
+          )}
+          {isError && (
+            <span className="shrink-0 rounded bg-red-900/40 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wider text-red-200">
+              error
+            </span>
+          )}
+        </div>
+        {parsed.results.length === 1 && parsed.results[0]!.sessionFile !== undefined && (
+          <button
+            onClick={() => openByFile(parsed.results[0]!.sessionFile)}
+            className="inline-flex shrink-0 items-center gap-1 rounded border border-sky-700/60 px-1.5 py-0.5 text-[10px] font-medium text-sky-200 hover:border-sky-500 hover:bg-sky-900/30 hover:text-sky-100"
+            title={`Open sub-agent session — ${parsed.results[0]!.sessionFile}`}
+          >
+            <ExternalLink size={10} />
+            Open
+          </button>
+        )}
+      </div>
+      {/* Multi-result body — one row per child with its own Open button. */}
+      {count > 1 && (
+        <div className="space-y-1.5 border-t border-sky-900/30 px-2.5 py-2">
+          {parsed.results.map((r, i) => (
+            <SubagentResultRow
+              key={r.sessionFile ?? `${i}-${r.agent}`}
+              result={r}
+              onOpenFile={openByFile}
+            />
+          ))}
+        </div>
+      )}
+      {/* Input + Output collapsibles — same affordance the generic
+          ToolCallEntry has. Always present (when there's content),
+          collapsed by default, so the card stays compact but the user
+          can still see what was sent and what came back. Failures
+          surface here as Output content rather than disappearing. */}
+      {argsText.length > 0 && (
+        <details className="border-t border-sky-900/30">
+          <summary className="cursor-pointer px-2.5 py-1 text-[11px] text-neutral-500 hover:text-neutral-300">
+            Input
+          </summary>
+          <pre className="overflow-auto px-2.5 pb-2 font-mono text-[11px] text-neutral-400">
+            {argsText}
+          </pre>
+        </details>
+      )}
+      {outputText.length > 0 && (
+        <details
+          // Errors open by default so failures aren't blank cards.
+          // Management calls and successful runs stay collapsed so the
+          // chat is scannable — the user can click to inspect.
+          open={isError}
+          className="border-t border-sky-900/30"
+        >
+          <summary className="cursor-pointer px-2.5 py-1 text-[11px] text-neutral-500 hover:text-neutral-300">
+            Output
+          </summary>
+          <pre className="overflow-auto px-2.5 pb-2 font-mono text-[11px] text-neutral-300 whitespace-pre-wrap">
+            {outputText}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function SubagentResultRow({
+  result,
+  onOpenFile,
+}: {
+  result: SubagentResult;
+  onOpenFile: (sessionFile: string | undefined) => void;
+}) {
+  const failed = result.exitCode !== 0;
+  return (
+    <div
+      className={`flex items-center justify-between gap-2 rounded border ${failed ? "border-red-700/40" : "border-sky-900/40"} bg-neutral-950/60 px-2 py-1.5`}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <span className="font-mono text-[11px] font-medium text-sky-200">{result.agent}</span>
+          {failed && (
+            <span className="text-[10px] font-medium text-red-400">exit {result.exitCode}</span>
+          )}
+        </div>
+        {result.task.length > 0 && (
+          <div className="mt-0.5 truncate text-[11px] text-neutral-400" title={result.task}>
+            {result.task}
+          </div>
+        )}
+      </div>
+      {result.sessionFile !== undefined && (
+        <button
+          onClick={() => onOpenFile(result.sessionFile)}
+          className="inline-flex shrink-0 items-center gap-1 rounded border border-sky-700/60 px-1.5 py-0.5 text-[10px] font-medium text-sky-200 hover:border-sky-500 hover:bg-sky-900/30 hover:text-sky-100"
+          title={result.sessionFile}
+        >
+          <ExternalLink size={10} />
+          Open
+        </button>
+      )}
+    </div>
   );
 }
 

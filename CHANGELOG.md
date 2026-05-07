@@ -14,6 +14,25 @@ the README for the support window policy.
 
 ## [Unreleased]
 
+### Added
+
+- **pi-subagents integration.** When the `pi-subagents` package is
+  installed (`pi install npm:pi-subagents`), three things turn on:
+  (1) the existing tool/extension surface already enables the plugin's
+  `subagent` tool — sessions get it via the regular allowlist; (2) tool
+  call cards in the chat for `subagent` are replaced with a richer
+  `SubagentResultCard` that lists each spawned sub-agent's name + task
+  + exit code and exposes an "Open" button that switches the active
+  session to the child JSONL; (3) the session sidebar now groups
+  sub-agent sessions under a chevron dropdown on their parent row.
+  Server-side, `discoverSessionsOnDisk` now walks one level deeper
+  into `<sessionDir>/<parentId>/<runId>/*.jsonl` (the path layout
+  pi-subagents writes to) and tags each child with `parentSessionId`
+  and `runId`; `findSessionLocation` and `resumeSession` resolve child
+  UUIDs the same as top-level sessions. Coverage in
+  `tests/test-subagent-discovery.ts` (registry-level) and
+  `tests/test-subagent-parser.ts` (pure parser).
+
 ## [1.1.2] — 2026-05-06
 
 ### Added

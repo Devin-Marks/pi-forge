@@ -135,6 +135,23 @@ export interface UnifiedSession {
   createdAt: string;
   messageCount: number;
   firstMessage: string;
+  /**
+   * Set when this session was spawned by the pi-subagents extension —
+   * the parent session's id. The sidebar groups children under their
+   * parent in a chevron dropdown.
+   */
+  parentSessionId?: string;
+  /** pi-subagents run id when this is a child session. */
+  runId?: string;
+  /**
+   * Absolute disk path to the session JSONL. Set for disk-discovered
+   * sessions; undefined for live-only sessions that haven't flushed
+   * to disk yet. The SubagentResultCard uses this to resolve a
+   * `sessionFile` reference from a tool result back to the canonical
+   * sessionId — pi-subagents children are named `session.jsonl`, so
+   * deriving the id from the basename is unreliable.
+   */
+  path?: string;
 }
 
 export interface SessionSummary {

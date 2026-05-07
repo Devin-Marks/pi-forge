@@ -243,6 +243,9 @@ function vUnifiedSession(value: unknown, status: number): UnifiedSession {
     firstMessage: value.firstMessage,
   };
   if (typeof value.name === "string") out.name = value.name;
+  if (typeof value.parentSessionId === "string") out.parentSessionId = value.parentSessionId;
+  if (typeof value.runId === "string") out.runId = value.runId;
+  if (typeof value.path === "string") out.path = value.path;
   return out;
 }
 
