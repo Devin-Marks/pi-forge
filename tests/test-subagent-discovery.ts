@@ -98,6 +98,7 @@ interface TestRegistry {
     id: string,
   ) => Promise<{ projectId: string; workspacePath: string } | undefined>;
   deleteColdSession: (id: string) => Promise<"deleted" | "live" | "not_found">;
+  getSession: (id: string) => TestLive | undefined;
 }
 interface TestProjectManager {
   createProject: (name: string, path: string) => Promise<{ id: string; path: string }>;
@@ -305,8 +306,25 @@ async function main(): Promise<void> {
     // is gone. We use the deep-layout fixture because it exercises
     // the full <basename>/<runId>/run-N/<child>.jsonl tree the
     // recursive rm has to clear.
+    //
+    // We ALSO resume the deep child first so it's a live registry
+    // entry (matching the bug case: user opened a sub-agent session
+    // in the UI, then deleted its parent). The cascade has to dispose
+    // the live LiveSession AND remove the JSONL — without the
+    // dispose, the registry holds a zombie pointing at a deleted
+    // file and any attached SSE clients keep emitting events that
+    // can't be persisted.
+    await registry.resumeSession(deepChildId, project.id, project.path);
+    assert(
+      "deep child is live in the registry before cascade",
+      registry.getSession(deepChildId) !== undefined,
+    );
     const cascadeStatus = await registry.deleteColdSession(deepParentId);
     assert("deleteColdSession on the deep parent returns 'deleted'", cascadeStatus === "deleted");
+    assert(
+      "deep child's LiveSession was disposed by the cascade",
+      registry.getSession(deepChildId) === undefined,
+    );
     const reAfterCascade = await registry.discoverSessionsOnDisk(project.id, project.path);
     assert(
       "deep-layout child is gone after parent delete (cascade)",
