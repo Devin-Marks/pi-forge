@@ -6,9 +6,11 @@ import {
   ChevronRight,
   Columns2,
   Copy,
+  ExternalLink,
   FileCode,
   GitBranch,
   Rows2,
+  Users,
 } from "lucide-react";
 import {
   EMPTY_COMPACTIONS,
@@ -24,6 +26,7 @@ import { ChatMarkdown } from "./ChatMarkdown";
 import { CompactionCard } from "./CompactionCard";
 import { DiffBlock } from "./DiffBlock";
 import { SessionTreePanel } from "./SessionTreePanel";
+import { parseSubagentDetails, type SubagentResult } from "../lib/subagent-parser";
 
 /**
  * Per-ChatView diff view-type preference. Each diff-rendering surface
@@ -984,6 +987,12 @@ function ToolResult({ message }: { message: AgentMessageLike }) {
     );
   }
 
+  // pi-subagents: replace the generic tool card with a richer surface
+  // listing each spawned sub-agent + a "open session" affordance.
+  if (toolName === "subagent") {
+    return <SubagentResultCard message={message} fallbackText={text} isError={isError} />;
+  }
+
   // Generic tool result fallback.
   return (
     <details
@@ -995,6 +1004,121 @@ function ToolResult({ message }: { message: AgentMessageLike }) {
       </summary>
       <pre className="overflow-auto px-3 pb-2 font-mono text-[11px] text-neutral-400">{text}</pre>
     </details>
+  );
+}
+
+/**
+ * Render a `subagent` tool result with one row per spawned sub-agent.
+ * Each row's "open session" button switches the active session to the
+ * child via `setActiveSession(childSessionId)` — the sidebar's chevron
+ * grouping then reveals the child under its parent. Management-mode
+ * calls (`mode: "management"`) and details we couldn't parse fall
+ * back to a plain text block so we never lose information silently.
+ */
+function SubagentResultCard({
+  message,
+  fallbackText,
+  isError,
+}: {
+  message: AgentMessageLike;
+  fallbackText: string;
+  isError: boolean;
+}) {
+  const setActiveSession = useSessionStore((s) => s.setActiveSession);
+  const parsed = parseSubagentDetails(message.details);
+  const isManagement = parsed.mode === "management";
+  const isUnknown = parsed.mode === "unknown";
+  const headline =
+    parsed.results.length === 1
+      ? `subagent → ${parsed.results[0]!.agent}`
+      : parsed.results.length > 1
+        ? `subagent → ${parsed.results.length} agents (${parsed.mode})`
+        : isManagement
+          ? "subagent management"
+          : "subagent";
+  return (
+    <details
+      open
+      className={`rounded border ${isError ? "border-red-700/40" : "border-purple-900/40"} bg-purple-950/10 text-xs`}
+    >
+      <summary className="cursor-pointer px-3 py-2 text-neutral-200">
+        <span className="inline-flex items-center gap-1.5">
+          <Users size={12} className="text-purple-400" />
+          <span className="font-medium">{headline}</span>
+          {parsed.context !== undefined && (
+            <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-400">
+              {parsed.context}
+            </span>
+          )}
+          {isError && <span className="ml-1 text-red-400">error</span>}
+        </span>
+      </summary>
+      <div className="space-y-2 px-3 pb-3">
+        {parsed.results.map((r, i) => (
+          <SubagentResultRow
+            key={r.sessionId ?? `${i}-${r.agent}`}
+            result={r}
+            onOpen={(sid) => setActiveSession(sid)}
+          />
+        ))}
+        {parsed.results.length === 0 && (isManagement || isUnknown) && (
+          // Management calls + unrecognised payloads: keep the raw text
+          // visible so the user / a future debugger can see the response.
+          <pre className="overflow-auto rounded bg-neutral-950 p-2 font-mono text-[11px] text-neutral-400">
+            {fallbackText}
+          </pre>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function SubagentResultRow({
+  result,
+  onOpen,
+}: {
+  result: SubagentResult;
+  onOpen: (sessionId: string) => void;
+}) {
+  const failed = result.exitCode !== 0;
+  return (
+    <div
+      className={`rounded border ${failed ? "border-red-700/40" : "border-neutral-800"} bg-neutral-950 px-2.5 py-2`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-neutral-300">
+            <span className="font-mono text-purple-300">{result.agent}</span>
+            {failed && <span className="text-red-400">exit {result.exitCode}</span>}
+          </div>
+          {result.task.length > 0 && (
+            <div className="mt-0.5 truncate text-neutral-500" title={result.task}>
+              {result.task}
+            </div>
+          )}
+        </div>
+        {result.sessionId !== undefined && (
+          <button
+            onClick={() => onOpen(result.sessionId!)}
+            className="inline-flex shrink-0 items-center gap-1 rounded border border-neutral-700 px-2 py-1 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+            title={result.sessionFile ?? "Open sub-agent session"}
+          >
+            <ExternalLink size={11} />
+            Open
+          </button>
+        )}
+      </div>
+      {result.finalOutput !== undefined && (
+        <details className="mt-1.5">
+          <summary className="cursor-pointer text-[11px] text-neutral-500 hover:text-neutral-300">
+            output
+          </summary>
+          <pre className="mt-1 max-h-48 overflow-auto rounded bg-neutral-900 p-2 font-mono text-[11px] text-neutral-300">
+            {result.finalOutput}
+          </pre>
+        </details>
+      )}
+    </div>
   );
 }
 

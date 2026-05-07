@@ -36,12 +36,21 @@ const unifiedSchema = {
     createdAt: { type: "string", format: "date-time" },
     messageCount: { type: "integer", minimum: 0 },
     firstMessage: { type: "string" },
+    /**
+     * Set on pi-subagents child sessions — the id of the session that
+     * spawned this sub-agent. Drives the sidebar's parent-row chevron
+     * grouping.
+     */
+    parentSessionId: { type: "string" },
+    /** pi-subagents run id when this is a child session. */
+    runId: { type: "string" },
   },
 } as const;
 
 function unifiedFromUnified(u: UnifiedSession): Record<string, unknown> {
   // Fastify's response serializer drops `undefined`-valued keys, but emit a
-  // stable shape: convert dates to ISO strings + only include `name` when set.
+  // stable shape: convert dates to ISO strings + only include optional
+  // fields (`name`, sub-agent linkage) when set.
   const out: Record<string, unknown> = {
     sessionId: u.sessionId,
     projectId: u.projectId,
@@ -53,6 +62,8 @@ function unifiedFromUnified(u: UnifiedSession): Record<string, unknown> {
     firstMessage: u.firstMessage,
   };
   if (u.name !== undefined) out.name = u.name;
+  if (u.parentSessionId !== undefined) out.parentSessionId = u.parentSessionId;
+  if (u.runId !== undefined) out.runId = u.runId;
   return out;
 }
 

@@ -1,4 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
   AgentSession,
@@ -74,6 +74,17 @@ export interface DiscoveredSession {
   messageCount: number;
   /** First user message text (truncated by the SDK). */
   firstMessage: string;
+  /**
+   * When this is a sub-agent session (i.e. its JSONL lives one level
+   * deeper than the project session dir), the parent session's id.
+   * pi-subagents writes child sessions to
+   * `<sessionDir>/<parentId>/<runId>/<childId>.jsonl` — we surface the
+   * `parentId` and `runId` segments so the client can group children
+   * under their parent in the sidebar.
+   */
+  parentSessionId?: string;
+  /** The pi-subagents run id (the directory between parent and child). */
+  runId?: string;
 }
 
 /**
@@ -96,6 +107,10 @@ export interface UnifiedSession {
   createdAt: Date;
   messageCount: number;
   firstMessage: string;
+  /** Parent session id when this is a pi-subagents child session. */
+  parentSessionId?: string;
+  /** pi-subagents run id when this is a child session. */
+  runId?: string;
 }
 
 export class SessionNotFoundError extends Error {
@@ -552,11 +567,21 @@ export async function resumeSession(
     if (raced) return raced;
 
     const dir = sessionDirFor(projectId);
-    const sessions = await SessionManager.list(workspacePath, dir);
-    const match = sessions.find((s) => s.id === sessionId);
+    // Use our own discovery (not SessionManager.list directly) so
+    // pi-subagents child sessions, which live one level deeper at
+    // `<dir>/<parentId>/<runId>/<childId>.jsonl`, are also resolvable
+    // by id. Top-level sessions are returned alongside children.
+    const discovered = await discoverSessionsOnDisk(projectId, workspacePath);
+    const match = discovered.find((s) => s.sessionId === sessionId);
     if (match === undefined) throw new SessionNotFoundError(sessionId);
 
-    const sessionManager = SessionManager.open(match.path, dir, workspacePath);
+    // For child sessions, hand SessionManager.open the *child's* run
+    // dir as the sessionDir so any subsequent file operations the SDK
+    // performs land alongside the existing JSONL rather than in the
+    // project's top-level dir. For top-level sessions, the run dir
+    // collapses to the project session dir.
+    const childSessionDir = match.parentSessionId !== undefined ? join(match.path, "..") : dir;
+    const sessionManager = SessionManager.open(match.path, childSessionDir, workspacePath);
     const customTools = await resolveMcpCustomTools(projectId, workspacePath);
     const settingsManager = await buildSessionSettingsManager(workspacePath, projectId);
     const resourceLoader = await buildForgeResourceLoader(
@@ -582,7 +607,7 @@ export async function resumeSession(
       projectId,
       workspacePath,
       clients: new Set(),
-      createdAt: match.created,
+      createdAt: match.createdAt,
       lastActivityAt: now,
       lastAgentStartIndex: undefined,
       unsubscribe: () => undefined,
@@ -609,10 +634,11 @@ export async function deleteColdSession(
   if (registry.has(sessionId)) return "live";
   const projects = await readProjects();
   for (const project of projects) {
-    const dir = sessionDirFor(project.id);
-    let infos: SessionInfo[];
+    let infos: DiscoveredSession[];
     try {
-      infos = await SessionManager.list(project.path, dir);
+      // Use our discovery (includes child sessions) so deleting a
+      // pi-subagents child by id also works.
+      infos = await discoverSessionsOnDisk(project.id, project.path);
     } catch {
       // Project's session dir errored out (perms, missing, malformed
       // JSONL). Skip this project and try the next one — the cold
@@ -622,7 +648,7 @@ export async function deleteColdSession(
       // not_found vs deleted clearly.)
       continue;
     }
-    const match = infos.find((s) => s.id === sessionId);
+    const match = infos.find((s) => s.sessionId === sessionId);
     if (match !== undefined) {
       try {
         await rm(match.path, { force: true });
@@ -719,6 +745,12 @@ export async function disposeSession(sessionId: string): Promise<boolean> {
  * registry. Used by the sidebar list. Backed by the SDK's SessionManager.list
  * which parses each file's first-line header and a few message previews.
  *
+ * In addition to the project's own top-level JSONLs, this also scans one
+ * level deeper for **pi-subagents child sessions**, which the plugin
+ * writes to `<sessionDir>/<parentId>/<runId>/*.jsonl`. Each child surfaces
+ * with `parentSessionId` and `runId` set, which the sidebar uses to group
+ * children under their parent in a chevron dropdown.
+ *
  * Returns an empty array (not throws) when the per-project dir doesn't exist
  * yet — e.g. a project that has never had a session.
  */
@@ -730,8 +762,8 @@ export async function discoverSessionsOnDisk(
   // SDK's list() guards `existsSync(dir)` and returns [] for missing dirs,
   // so we don't need an outer ENOENT catch.
   const infos: SessionInfo[] = await SessionManager.list(workspacePath, dir);
-  return infos.map((info) => {
-    const out: DiscoveredSession = {
+  const out: DiscoveredSession[] = infos.map((info) => {
+    const ds: DiscoveredSession = {
       sessionId: info.id,
       path: info.path,
       cwd: info.cwd,
@@ -740,9 +772,88 @@ export async function discoverSessionsOnDisk(
       messageCount: info.messageCount,
       firstMessage: info.firstMessage,
     };
-    if (info.name !== undefined) out.name = info.name;
-    return out;
+    if (info.name !== undefined) ds.name = info.name;
+    return ds;
   });
+  // Surface pi-subagents child sessions as first-class discovered
+  // sessions. The plugin writes children to
+  // `<sessionDir>/<parentId>/<runId>/*.jsonl`. We tag each with the
+  // parent id (the dir name above runId) and runId so the sidebar can
+  // group them.
+  const children = await discoverSubagentChildSessions(workspacePath, dir);
+  for (const child of children) out.push(child);
+  return out;
+}
+
+/**
+ * Walk one level deeper than the project's session dir to surface
+ * pi-subagents child sessions. Layout:
+ *
+ *   <dir>/<parentSessionId>/<runId>/<childSessionId>.jsonl
+ *
+ * pi-subagents creates `<parentSessionId>` as a sibling DIRECTORY to
+ * the parent's `.jsonl` (the plugin's `getSubagentSessionRoot` helper).
+ * So we list `<dir>` and treat any directory whose name matches the
+ * UUID-shape of an existing parent as a candidate child root, then
+ * descend into per-`runId` subdirs for the actual child JSONLs.
+ *
+ * Errors from individual subdirs are swallowed — a corrupted child
+ * session must not block the rest of the sidebar listing.
+ */
+async function discoverSubagentChildSessions(
+  workspacePath: string,
+  dir: string,
+): Promise<DiscoveredSession[]> {
+  const out: DiscoveredSession[] = [];
+  let topEntries: { name: string; isDirectory: boolean }[];
+  try {
+    const direntList = await readdir(dir, { withFileTypes: true });
+    topEntries = direntList.map((d) => ({ name: d.name, isDirectory: d.isDirectory() }));
+  } catch {
+    // dir missing or unreadable — caller already handles the empty case.
+    return out;
+  }
+  for (const top of topEntries) {
+    if (!top.isDirectory) continue;
+    const parentId = top.name;
+    const parentDir = join(dir, parentId);
+    let runDirs: string[];
+    try {
+      const runEntries = await readdir(parentDir, { withFileTypes: true });
+      runDirs = runEntries.filter((d) => d.isDirectory()).map((d) => d.name);
+    } catch {
+      continue;
+    }
+    for (const runId of runDirs) {
+      const runDir = join(parentDir, runId);
+      // SessionManager.list will read the JSONL headers. Pass the run
+      // dir so the SDK's existsSync guard is happy and so any future
+      // session files the manager creates inside this dir land in the
+      // right place.
+      let infos: SessionInfo[];
+      try {
+        infos = await SessionManager.list(workspacePath, runDir);
+      } catch {
+        continue;
+      }
+      for (const info of infos) {
+        const ds: DiscoveredSession = {
+          sessionId: info.id,
+          path: info.path,
+          cwd: info.cwd,
+          createdAt: info.created,
+          modifiedAt: info.modified,
+          messageCount: info.messageCount,
+          firstMessage: info.firstMessage,
+          parentSessionId: parentId,
+          runId,
+        };
+        if (info.name !== undefined) ds.name = info.name;
+        out.push(ds);
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -791,12 +902,16 @@ export async function listSessionsForProject(
     const merged = liveById.get(d.sessionId);
     if (merged !== undefined) {
       // Disk wins for messageCount and firstMessage (see precedence in
-      // function doc); everything else stays as the live value.
+      // function doc); everything else stays as the live value. Sub-agent
+      // linkage fields are disk-side only — children are typically not
+      // live-resident.
       merged.messageCount = d.messageCount;
       merged.firstMessage = d.firstMessage;
+      if (d.parentSessionId !== undefined) merged.parentSessionId = d.parentSessionId;
+      if (d.runId !== undefined) merged.runId = d.runId;
       continue;
     }
-    liveById.set(d.sessionId, {
+    const u: UnifiedSession = {
       sessionId: d.sessionId,
       projectId,
       isLive: false,
@@ -806,7 +921,10 @@ export async function listSessionsForProject(
       createdAt: d.createdAt,
       messageCount: d.messageCount,
       firstMessage: d.firstMessage,
-    });
+    };
+    if (d.parentSessionId !== undefined) u.parentSessionId = d.parentSessionId;
+    if (d.runId !== undefined) u.runId = d.runId;
+    liveById.set(d.sessionId, u);
   }
   return Array.from(liveById.values()).sort(
     (a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime(),
@@ -832,10 +950,12 @@ export async function findSessionLocation(
   }
   const projects = await readProjects();
   for (const project of projects) {
-    const dir = sessionDirFor(project.id);
-    let infos: SessionInfo[];
+    let discovered: DiscoveredSession[];
     try {
-      infos = await SessionManager.list(project.path, dir);
+      // discoverSessionsOnDisk includes pi-subagents child sessions, so
+      // a child's UUID resolves to its parent project the same as a
+      // top-level session.
+      discovered = await discoverSessionsOnDisk(project.id, project.path);
     } catch (err) {
       // Don't fail the whole search just because one project's session
       // dir is corrupted, but DO log so the operator can see when a
@@ -844,14 +964,14 @@ export async function findSessionLocation(
       process.stderr.write(
         JSON.stringify({
           level: "warn",
-          msg: "findSessionLocation: skipping project due to SessionManager.list error",
+          msg: "findSessionLocation: skipping project due to discoverSessionsOnDisk error",
           projectId: project.id,
           err: err instanceof Error ? err.message : String(err),
         }) + "\n",
       );
       continue;
     }
-    if (infos.some((s) => s.id === sessionId)) {
+    if (discovered.some((s) => s.sessionId === sessionId)) {
       return { projectId: project.id, workspacePath: project.path };
     }
   }

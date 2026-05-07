@@ -135,6 +135,14 @@ export interface UnifiedSession {
   createdAt: string;
   messageCount: number;
   firstMessage: string;
+  /**
+   * Set when this session was spawned by the pi-subagents extension —
+   * the parent session's id. The sidebar groups children under their
+   * parent in a chevron dropdown.
+   */
+  parentSessionId?: string;
+  /** pi-subagents run id when this is a child session. */
+  runId?: string;
 }
 
 export interface SessionSummary {
