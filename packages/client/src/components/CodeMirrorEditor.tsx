@@ -52,6 +52,25 @@ import { nginx } from "@codemirror/legacy-modes/mode/nginx";
 import type { OpenFile } from "../store/file-store";
 
 /**
+ * Force the editor to fill its container so CodeMirror's own
+ * `.cm-scroller` is the actual scroller — not the parent div.
+ *
+ * Without this, `.cm-editor` grows to the document's natural content
+ * height, the parent's `overflow-auto` becomes the scroll container,
+ * and two things break: (1) the diff scrollbar overview overlay (which
+ * is mounted on `view.dom` / `.cm-editor`) gets translated along with
+ * the editor on every scroll, so the marks "move with" the content
+ * instead of staying pinned to the scrollbar; (2) CM6's viewport
+ * virtualization no longer triggers — every line in the file is in the
+ * DOM, killing performance on large files. With `height: 100%` here
+ * the wrapper div constrains the editor and `.cm-scroller` does its
+ * job.
+ */
+const editorFillContainerTheme = EditorView.theme({
+  "&": { height: "100%" },
+});
+
+/**
  * CodeMirror host. Lives in its own module so EditorPanel can pull it
  * in via `React.lazy()` — the CM bundle is ~700 KB minified and the
  * user might never open a file in a given session, so it shouldn't
@@ -129,6 +148,7 @@ export function CodeMirrorEditor({
     const langExt = languageExtension(file.language);
     const exts: Extension[] = [
       basicSetup,
+      editorFillContainerTheme,
       // Initial theme matches the user's currently-applied app
       // theme. Swapped at runtime via the compartment below; no
       // light-themed CodeMirror pack is bundled, so light mode
@@ -246,7 +266,12 @@ export function CodeMirrorEditor({
     return () => window.clearTimeout(id);
   }, [file.pendingNav, file.path]);
 
-  return <div ref={containerRef} className="flex-1 overflow-auto" />;
+  // `min-h-0` on the flex child so it shrinks rather than growing to
+  // its content's intrinsic height; combined with the editor theme
+  // above (`.cm-editor { height: 100% }`) this makes `.cm-scroller`
+  // the scroller. Removing the parent's `overflow-auto` is the whole
+  // point — see editorFillContainerTheme's doc-comment.
+  return <div ref={containerRef} className="flex-1 min-h-0 min-w-0" />;
 }
 
 function languageExtension(language: string): Extension | undefined {
