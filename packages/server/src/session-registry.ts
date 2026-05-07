@@ -111,6 +111,16 @@ export interface UnifiedSession {
   parentSessionId?: string;
   /** pi-subagents run id when this is a child session. */
   runId?: string;
+  /**
+   * Absolute path to the session JSONL on disk. Surfaced so the
+   * client can resolve a `sessionFile` reference (e.g. from a
+   * pi-subagents tool result) back to the canonical sessionId — the
+   * filename alone is unreliable since pi-subagents writes its
+   * children as a literal `session.jsonl` rather than `<uuid>.jsonl`.
+   * Only set for disk-discovered sessions; undefined for live-only
+   * sessions that haven't flushed to disk yet.
+   */
+  path?: string;
 }
 
 export class SessionNotFoundError extends Error {
@@ -1023,6 +1033,7 @@ export async function listSessionsForProject(
       merged.firstMessage = d.firstMessage;
       if (d.parentSessionId !== undefined) merged.parentSessionId = d.parentSessionId;
       if (d.runId !== undefined) merged.runId = d.runId;
+      merged.path = d.path;
       continue;
     }
     const u: UnifiedSession = {
@@ -1035,6 +1046,7 @@ export async function listSessionsForProject(
       createdAt: d.createdAt,
       messageCount: d.messageCount,
       firstMessage: d.firstMessage,
+      path: d.path,
     };
     if (d.parentSessionId !== undefined) u.parentSessionId = d.parentSessionId;
     if (d.runId !== undefined) u.runId = d.runId;

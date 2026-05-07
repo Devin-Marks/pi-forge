@@ -44,6 +44,13 @@ const unifiedSchema = {
     parentSessionId: { type: "string" },
     /** pi-subagents run id when this is a child session. */
     runId: { type: "string" },
+    /**
+     * Absolute disk path to the session JSONL — used by the
+     * SubagentResultCard to resolve a result's `sessionFile` reference
+     * back to the canonical sessionId (since pi-subagents writes
+     * children as a literal `session.jsonl` filename, not `<uuid>.jsonl`).
+     */
+    path: { type: "string" },
   },
 } as const;
 
@@ -64,6 +71,7 @@ function unifiedFromUnified(u: UnifiedSession): Record<string, unknown> {
   if (u.name !== undefined) out.name = u.name;
   if (u.parentSessionId !== undefined) out.parentSessionId = u.parentSessionId;
   if (u.runId !== undefined) out.runId = u.runId;
+  if (u.path !== undefined) out.path = u.path;
   return out;
 }
 

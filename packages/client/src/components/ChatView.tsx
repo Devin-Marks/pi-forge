@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   AtSign,
   Check,
@@ -21,7 +21,7 @@ import {
   type AgentMessageLike,
   type CompactionEvent,
 } from "../store/session-store";
-import { useActiveProject } from "../store/project-store";
+import { useActiveProject, useProjectStore } from "../store/project-store";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { CompactionCard } from "./CompactionCard";
 import { DiffBlock } from "./DiffBlock";
@@ -1115,16 +1115,50 @@ function SubagentResultCard({
   isError: boolean;
 }) {
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
+  const setActiveProject = useProjectStore((s) => s.setActive);
+  const byProject = useSessionStore((s) => s.byProject);
+  // Resolve a tool-result `sessionFile` (absolute path) back to its
+  // canonical sessionId by scanning the loaded session list. pi-subagents
+  // writes children as a literal `session.jsonl`, so the filename's
+  // stem is the string "session" — useless for navigation. Server-side
+  // discovery reads the JSONL header for the real id and surfaces both
+  // path AND sessionId on UnifiedSession; we look up by path here.
+  const sessionByPath = useMemo(() => {
+    const map = new Map<string, { sessionId: string; projectId: string }>();
+    for (const list of Object.values(byProject)) {
+      for (const s of list) {
+        if (typeof s.path === "string" && s.path.length > 0) {
+          map.set(s.path, { sessionId: s.sessionId, projectId: s.projectId });
+        }
+      }
+    }
+    return map;
+  }, [byProject]);
+  const openByFile = (sessionFile: string | undefined): void => {
+    if (sessionFile === undefined) {
+      console.warn("[subagent] Open clicked but result has no sessionFile");
+      return;
+    }
+    const match = sessionByPath.get(sessionFile);
+    console.info("[subagent] Open clicked", { sessionFile, match });
+    if (match === undefined) {
+      // The child wasn't in any project's session list — most likely
+      // because the project sidebar hasn't been refreshed since the
+      // sub-agent ran. Reload the active project's list and retry.
+      // For now: surface a console warning rather than silently doing
+      // nothing. (A future revision could trigger a refetch + retry.)
+      console.warn(
+        "[subagent] Open: sessionFile not found in any project's session list",
+        sessionFile,
+      );
+      return;
+    }
+    setActiveProject(match.projectId);
+    setActiveSession(match.sessionId);
+  };
   const parsed = parseSubagentDetails(message.details);
   const isManagement = parsed.mode === "management";
   const count = parsed.results.length;
-  // Single-result cards expose the Open button in the header for
-  // one-click navigation. Multi-result (parallel/chain) gets per-row
-  // Open buttons since there's no single sessionId to point at.
-  const singleSessionId =
-    count === 1 && parsed.results[0]!.sessionId !== undefined
-      ? parsed.results[0]!.sessionId
-      : undefined;
   const headline =
     count === 1
       ? `Sub-agent: ${parsed.results[0]!.agent}`
@@ -1162,21 +1196,11 @@ function SubagentResultCard({
             </span>
           )}
         </div>
-        {singleSessionId !== undefined && (
+        {parsed.results.length === 1 && parsed.results[0]!.sessionFile !== undefined && (
           <button
-            onClick={() => {
-              // Console breadcrumb so we can see in DevTools whether
-              // the click handler fires at all when "Open doesn't
-              // navigate" is reported. Strip when sub-agents UX
-              // stabilises.
-              console.info("[subagent] Open clicked", {
-                sessionId: singleSessionId,
-                sessionFile: parsed.results[0]!.sessionFile,
-              });
-              setActiveSession(singleSessionId);
-            }}
+            onClick={() => openByFile(parsed.results[0]!.sessionFile)}
             className="inline-flex shrink-0 items-center gap-1 rounded border border-sky-700/60 px-1.5 py-0.5 text-[10px] font-medium text-sky-200 hover:border-sky-500 hover:bg-sky-900/30 hover:text-sky-100"
-            title={`Open sub-agent session — ${singleSessionId}`}
+            title={`Open sub-agent session — ${parsed.results[0]!.sessionFile}`}
           >
             <ExternalLink size={10} />
             Open
@@ -1188,9 +1212,9 @@ function SubagentResultCard({
         <div className="space-y-1.5 border-t border-sky-900/30 px-2.5 py-2">
           {parsed.results.map((r, i) => (
             <SubagentResultRow
-              key={r.sessionId ?? `${i}-${r.agent}`}
+              key={r.sessionFile ?? `${i}-${r.agent}`}
               result={r}
-              onOpen={(sid) => setActiveSession(sid)}
+              onOpenFile={openByFile}
             />
           ))}
         </div>
@@ -1233,10 +1257,10 @@ function SubagentResultCard({
 
 function SubagentResultRow({
   result,
-  onOpen,
+  onOpenFile,
 }: {
   result: SubagentResult;
-  onOpen: (sessionId: string) => void;
+  onOpenFile: (sessionFile: string | undefined) => void;
 }) {
   const failed = result.exitCode !== 0;
   return (
@@ -1256,17 +1280,11 @@ function SubagentResultRow({
           </div>
         )}
       </div>
-      {result.sessionId !== undefined && (
+      {result.sessionFile !== undefined && (
         <button
-          onClick={() => {
-            console.info("[subagent] Open clicked (multi-row)", {
-              sessionId: result.sessionId,
-              sessionFile: result.sessionFile,
-            });
-            onOpen(result.sessionId!);
-          }}
+          onClick={() => onOpenFile(result.sessionFile)}
           className="inline-flex shrink-0 items-center gap-1 rounded border border-sky-700/60 px-1.5 py-0.5 text-[10px] font-medium text-sky-200 hover:border-sky-500 hover:bg-sky-900/30 hover:text-sky-100"
-          title={result.sessionFile ?? "Open sub-agent session"}
+          title={result.sessionFile}
         >
           <ExternalLink size={10} />
           Open
