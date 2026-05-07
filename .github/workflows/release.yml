@@ -241,9 +241,19 @@ jobs:
         # the registry-aware mode required for OIDC. Without this,
         # `npm publish` would silently use the default user-level
         # config and fail authentication.
+        #
+        # node-version is pinned (not `22`) because Node 22.22.2 ships
+        # with a broken bundled npm tree — `promise-retry` is missing
+        # from `@npmcli/arborist`'s node_modules, so any
+        # `npm install -g npm@<anything>` crashes with MODULE_NOT_FOUND
+        # before it can do the upgrade. Confirmed regression vs 22.22.1:
+        #   - https://github.com/nodejs/node/issues/62425
+        #   - https://github.com/actions/runner-images/issues/13883
+        # 22.22.1 is the last known-good 22.x. Drop the pin (back to
+        # `22`) once 22.22.3 ships with the fix from nodejs/node#62463.
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.22.1
           cache: npm
           registry-url: https://registry.npmjs.org
 
