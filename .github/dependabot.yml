@@ -55,3 +55,23 @@ updates:
     commit-message:
       prefix: "chore(docker)"
       include: "scope"
+    ignore:
+      # Pin the Docker base image to the current LTS major. Dependabot
+      # still surfaces patch / minor bumps within the LTS line (which
+      # we want — security fixes), but suppresses cross-major bumps
+      # that would jump to an odd-numbered "current" Node line (23,
+      # 25, 27, ...) before it stabilizes as the next LTS.
+      #
+      # Node's release cadence ships odd-numbered current lines that
+      # aren't supported long-term, plus even-numbered LTS lines (22,
+      # 24, 26, ...). Auto-bumping to a current line trades one
+      # known-good Node for an unsupported one, and we hit exactly
+      # that class of pain with the 22.22.2 bundled-npm regression
+      # (release.yml had to pin 22.22.1 mid-flight).
+      #
+      # Re-evaluate when 24 reaches Active LTS (April 2027) and we're
+      # ready to migrate. Update this rule + cut a manual upgrade PR
+      # rather than letting Dependabot drive the bump.
+      - dependency-name: "node"
+        update-types:
+          - "version-update:semver-major"
