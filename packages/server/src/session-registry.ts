@@ -573,7 +573,33 @@ export async function resumeSession(
     // by id. Top-level sessions are returned alongside children.
     const discovered = await discoverSessionsOnDisk(projectId, workspacePath);
     const match = discovered.find((s) => s.sessionId === sessionId);
-    if (match === undefined) throw new SessionNotFoundError(sessionId);
+    if (match === undefined) {
+      // Diagnostic log so a missing-session resume failure is
+      // explicit in stderr (the client just sees a 404 SSE
+      // disconnect, which doesn't tell us WHICH discovery missed).
+      process.stderr.write(
+        JSON.stringify({
+          level: "warn",
+          time: new Date().toISOString(),
+          msg: "resume-session-not-found",
+          projectId,
+          sessionId,
+          discoveredIds: discovered.map((s) => s.sessionId),
+        }) + "\n",
+      );
+      throw new SessionNotFoundError(sessionId);
+    }
+    process.stderr.write(
+      JSON.stringify({
+        level: "info",
+        time: new Date().toISOString(),
+        msg: "resume-session-found",
+        projectId,
+        sessionId,
+        path: match.path,
+        parentSessionId: match.parentSessionId,
+      }) + "\n",
+    );
 
     // For child sessions, hand SessionManager.open the *child's* run
     // dir as the sessionDir so any subsequent file operations the SDK
@@ -789,6 +815,29 @@ export async function discoverSessionsOnDisk(
   }
   const children = await discoverSubagentChildSessions(workspacePath, dir, basenameToParentId);
   for (const child of children) out.push(child);
+  // Diagnostic log when sub-agent discovery fires — keep this so
+  // future reports of "children aren't grouped" can be triaged from
+  // server stderr alone (no client-side debugging needed). One line
+  // per call, JSON-shaped for log shippers.
+  if (children.length > 0 || basenameToParentId.size > 0) {
+    process.stderr.write(
+      JSON.stringify({
+        level: "info",
+        time: new Date().toISOString(),
+        msg: "subagent-discovery",
+        projectId,
+        topLevelSessions: infos.length,
+        basenameMapSize: basenameToParentId.size,
+        childrenFound: children.length,
+        children: children.map((c) => ({
+          childId: c.sessionId,
+          parentSessionId: c.parentSessionId,
+          runId: c.runId,
+          path: c.path,
+        })),
+      }) + "\n",
+    );
+  }
   return out;
 }
 

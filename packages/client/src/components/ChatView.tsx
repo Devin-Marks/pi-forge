@@ -1079,22 +1079,18 @@ function SubagentInflightOrResult({
     else if (agent !== undefined) summary = agent;
   }
   return (
-    <div className="overflow-hidden rounded-lg border border-violet-800/50 border-l-4 border-l-violet-500 bg-violet-950/20 shadow-sm">
-      <div className="flex items-center justify-between gap-2 border-b border-violet-900/40 bg-violet-950/30 px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <Users size={14} className="shrink-0 text-violet-300" />
-          <span className="truncate font-semibold text-violet-100">Sub-agent running…</span>
+    <div className="overflow-hidden rounded border border-amber-700/50 border-l-2 border-l-amber-400 bg-amber-950/15 text-xs">
+      <div className="flex items-center justify-between gap-2 px-2.5 py-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Users size={11} className="shrink-0 text-amber-300" />
+          <span className="truncate font-medium text-amber-100">Sub-agent running…</span>
+          {summary !== undefined && (
+            <span className="ml-1 truncate font-mono text-[11px] text-amber-200/70" title={summary}>
+              {summary}
+            </span>
+          )}
         </div>
-        <span className="shrink-0 rounded bg-violet-900/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-violet-200">
-          in-flight
-        </span>
       </div>
-      {summary !== undefined && (
-        <div className="px-3 py-2 text-xs text-neutral-300">
-          <span className="text-neutral-500">running:</span>{" "}
-          <span className="font-mono">{summary}</span>
-        </div>
-      )}
     </div>
   );
 }
@@ -1113,6 +1109,14 @@ function SubagentResultCard({
   const isManagement = parsed.mode === "management";
   const isUnknown = parsed.mode === "unknown";
   const count = parsed.results.length;
+  // Single-result cards expose the Open button up in the header so the
+  // user can see-and-jump in one row of vertical space. Multi-result
+  // (parallel/chain) gets a per-result Open button down in the rows
+  // since there's no single sessionId to point at from the header.
+  const singleSessionId =
+    count === 1 && parsed.results[0]!.sessionId !== undefined
+      ? parsed.results[0]!.sessionId
+      : undefined;
   const headline =
     count === 1
       ? `Sub-agent: ${parsed.results[0]!.agent}`
@@ -1121,54 +1125,84 @@ function SubagentResultCard({
         : isManagement
           ? "Sub-agent management"
           : "Sub-agent";
-  // Saturated violet treatment + thicker border so the card pops out
-  // of the chat stream — sub-agent runs are a different *kind* of
-  // event than a normal tool call, and the visual weight should
-  // reflect that. Border-l accent strip mirrors the gh PR-review
-  // surface for a "this matters" feel.
+  // Compact orange/amber treatment — single-line header with optional
+  // body. Uses border-l-2 accent + amber-700 border for a subtle but
+  // distinctive treatment that doesn't dominate the chat stream.
   return (
     <div
-      className={`overflow-hidden rounded-lg border-l-4 ${
+      className={`overflow-hidden rounded border border-l-2 ${
         isError
-          ? "border-l-red-500 border border-red-700/40 bg-red-950/10"
-          : "border-l-violet-500 border border-violet-800/50 bg-violet-950/20"
-      } shadow-sm`}
+          ? "border-red-700/50 border-l-red-400 bg-red-950/15"
+          : "border-amber-700/50 border-l-amber-400 bg-amber-950/15"
+      } text-xs`}
     >
-      <div className="flex items-center justify-between gap-2 border-b border-violet-900/40 bg-violet-950/30 px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <Users size={14} className="shrink-0 text-violet-300" />
-          <span className="truncate font-semibold text-violet-100">{headline}</span>
+      <div className="flex items-center justify-between gap-2 px-2.5 py-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Users size={11} className="shrink-0 text-amber-300" />
+          <span className="truncate font-medium text-amber-100">{headline}</span>
           {parsed.context !== undefined && (
             <span
-              className="shrink-0 rounded bg-violet-900/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-violet-200"
+              className="shrink-0 rounded bg-amber-900/40 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wider text-amber-200"
               title={parsed.context === "fork" ? "Forked from parent context" : "Fresh context"}
             >
               {parsed.context}
             </span>
           )}
+          {isError && (
+            <span className="shrink-0 rounded bg-red-900/40 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wider text-red-200">
+              error
+            </span>
+          )}
         </div>
-        {isError && (
-          <span className="shrink-0 rounded bg-red-900/40 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-red-200">
-            error
-          </span>
+        {/* Header-right Open button when there's a single child to
+            navigate to. Icon-only with title-tip so it stays small. */}
+        {singleSessionId !== undefined && (
+          <button
+            onClick={() => setActiveSession(singleSessionId)}
+            className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-700/60 px-1.5 py-0.5 text-[10px] font-medium text-amber-200 hover:border-amber-500 hover:bg-amber-900/30 hover:text-amber-100"
+            title={`Open sub-agent session — ${singleSessionId}`}
+          >
+            <ExternalLink size={10} />
+            Open
+          </button>
         )}
       </div>
-      <div className="space-y-2 p-3">
-        {parsed.results.map((r, i) => (
-          <SubagentResultRow
-            key={r.sessionId ?? `${i}-${r.agent}`}
-            result={r}
-            onOpen={(sid) => setActiveSession(sid)}
-          />
-        ))}
-        {count === 0 && (isManagement || isUnknown) && (
-          // Management calls + unrecognised payloads: keep the raw text
-          // visible so the user / a future debugger can see the response.
-          <pre className="overflow-auto rounded bg-neutral-950 p-2 font-mono text-[11px] text-neutral-400">
-            {fallbackText}
+      {/* Body — only renders when there's something useful to show:
+          parallel/chain results (multiple), or management/unknown
+          mode's prose body. Single-result cards collapse fully to
+          the header-only treatment unless the result has a finalOutput
+          worth surfacing under a `<details>`. */}
+      {count > 1 && (
+        <div className="space-y-1.5 border-t border-amber-900/30 px-2.5 py-2">
+          {parsed.results.map((r, i) => (
+            <SubagentResultRow
+              key={r.sessionId ?? `${i}-${r.agent}`}
+              result={r}
+              onOpen={(sid) => setActiveSession(sid)}
+            />
+          ))}
+        </div>
+      )}
+      {count === 1 && parsed.results[0]!.finalOutput !== undefined && (
+        <details className="border-t border-amber-900/30 px-2.5 py-1.5">
+          <summary className="cursor-pointer text-[11px] text-neutral-500 hover:text-neutral-300">
+            output
+          </summary>
+          <pre className="mt-1 max-h-48 overflow-auto rounded bg-neutral-950 p-2 font-mono text-[11px] text-neutral-300">
+            {parsed.results[0]!.finalOutput}
           </pre>
-        )}
-      </div>
+        </details>
+      )}
+      {count === 0 && (isManagement || isUnknown) && fallbackText.length > 0 && (
+        // Management calls (`action: "list"` etc) and unrecognised
+        // payloads: render the raw text as readable body, NOT a
+        // monospace pre. The output is human-readable structured prose
+        // (e.g. "Executable agents:\n- name: description") and the pre
+        // treatment was making it disappear visually.
+        <div className="whitespace-pre-wrap border-t border-amber-900/30 px-2.5 py-2 text-[11px] leading-snug text-neutral-300">
+          {fallbackText}
+        </div>
+      )}
     </div>
   );
 }
@@ -1183,46 +1217,30 @@ function SubagentResultRow({
   const failed = result.exitCode !== 0;
   return (
     <div
-      className={`rounded border ${failed ? "border-red-700/40" : "border-violet-900/40"} bg-neutral-950/60 p-3`}
+      className={`flex items-center justify-between gap-2 rounded border ${failed ? "border-red-700/40" : "border-amber-900/40"} bg-neutral-950/60 px-2 py-1.5`}
     >
-      <div className="mb-2 flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2">
-            <span className="font-mono text-sm font-medium text-violet-200">{result.agent}</span>
-            {failed && (
-              <span className="text-[11px] font-medium text-red-400">exit {result.exitCode}</span>
-            )}
-          </div>
-          {result.task.length > 0 && (
-            <div className="mt-1 line-clamp-2 text-xs text-neutral-300" title={result.task}>
-              {result.task}
-            </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <span className="font-mono text-[11px] font-medium text-amber-200">{result.agent}</span>
+          {failed && (
+            <span className="text-[10px] font-medium text-red-400">exit {result.exitCode}</span>
           )}
         </div>
+        {result.task.length > 0 && (
+          <div className="mt-0.5 truncate text-[11px] text-neutral-400" title={result.task}>
+            {result.task}
+          </div>
+        )}
       </div>
-      {/* Primary CTA — full-width violet button so it reads as the
-          main action. Keyboard-accessible (button, not anchor) since
-          the navigation is purely client-side store mutation, not a
-          URL change. */}
       {result.sessionId !== undefined && (
         <button
           onClick={() => onOpen(result.sessionId!)}
-          className="mb-1 flex w-full items-center justify-center gap-1.5 rounded bg-violet-700 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-violet-600 focus:outline-none focus:ring-2 focus:ring-violet-400"
+          className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-700/60 px-1.5 py-0.5 text-[10px] font-medium text-amber-200 hover:border-amber-500 hover:bg-amber-900/30 hover:text-amber-100"
           title={result.sessionFile ?? "Open sub-agent session"}
         >
-          <ExternalLink size={12} />
-          Open sub-agent session
+          <ExternalLink size={10} />
+          Open
         </button>
-      )}
-      {result.finalOutput !== undefined && (
-        <details className="mt-2">
-          <summary className="cursor-pointer text-[11px] text-neutral-400 hover:text-neutral-200">
-            output
-          </summary>
-          <pre className="mt-1 max-h-48 overflow-auto rounded bg-neutral-900 p-2 font-mono text-[11px] text-neutral-300">
-            {result.finalOutput}
-          </pre>
-        </details>
       )}
     </div>
   );
