@@ -14,6 +14,21 @@ the README for the support window policy.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Diff scrollbar marks now stay pinned to the scrollbar.** The
+  CodeMirror file viewer's container had `overflow-auto` while the
+  editor itself had no forced height, so `.cm-editor` grew to the
+  document's full content height and the parent div became the actual
+  scroll container instead of CM6's `.cm-scroller`. The diff overview
+  overlay (mounted on `view.dom` / `.cm-editor`) translated along with
+  the editor on every scroll, making the colored marks "follow" the
+  text instead of staying anchored to the scrollbar. Forcing
+  `.cm-editor { height: 100% }` and switching the wrapper to
+  `flex-1 min-h-0` puts the scroll back where CM6 expects it — marks
+  are pinned, and viewport virtualization works again so large files
+  no longer render every line into the DOM.
+
 ## [1.1.3] — 2026-05-07
 
 ### Added
