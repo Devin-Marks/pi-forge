@@ -25,6 +25,56 @@ the README for the support window policy.
   published package's dependencies. Authentication uses npm Trusted
   Publishers (OIDC) — no long-lived `NPM_TOKEN` secret in the repo —
   and every release ships with a sigstore-signed provenance attestation.
+- **Inline compaction archive.** When the agent compacts its context,
+  archived messages no longer disappear — they collapse into an
+  expandable `CompactionCard` placed inline in the chat at the
+  compaction boundary. New `GET /sessions/:id/compactions` API returns
+  the per-compaction archived message arrays; the client lazy-loads on
+  expand. The previously-rendered "unknown message" synthesized
+  compaction summary is now hidden (its content already lives in the
+  card's disclosure body).
+- **Pi-package tools and skills surface in Settings.** Tools registered
+  by installed pi packages (npm/git, managed by `DefaultPackageManager`)
+  now appear in Settings → Tools grouped by package source, with the
+  same global enable/disable + per-project tri-state override UX as
+  builtin and MCP tools. Skills contributed by packages appear in
+  Settings → Skills with `source: extension`. Both are also wired into
+  the agent's tool allowlist so the model can actually invoke
+  package-registered tools (previously silently filtered out).
+
+### Changed
+
+- **MCP tool result text capped at ~25k tokens.** `mcp/tool-bridge.ts`
+  truncates over-cap text content with a 60/40 head/tail split and an
+  imperative marker that nudges the model to refine its query rather
+  than re-run the same call. Image content blocks pass through
+  untouched. Defaults: 100,000 chars, configurable via constants at
+  the top of the file.
+- **Pi SDK bumped to 0.73.0** (`@mariozechner/pi-coding-agent`,
+  `@mariozechner/pi-agent-core`, `@mariozechner/pi-ai` from 0.70.5).
+  No breaking changes affect pi-forge directly. End users running pi
+  alongside pi-forge with custom `models.json` may need to migrate
+  `compat.reasoningEffortMap` → `thinkingLevelMap` (v0.72.0 SDK
+  rename). Free win: bash tool output now streams incrementally
+  while commands run instead of only after completion (v0.73.0).
+
+### Fixed
+
+- **Disabling a per-project package-tool override no longer crashes the
+  Tools tab.** `GET /config/tools/overrides`'s response schema was
+  missing the `extension` family, so Fastify's serializer stripped the
+  field and SettingsPanel exploded on `fam.enable.includes(...)`.
+  Schema now requires it; client validator backfills defensively.
+- **Per-project skill disable now works for package-contributed
+  skills.** Pi's `DefaultPackageManager.collectPackageResources` marks
+  package skills `enabled: true` unconditionally and never consults
+  `settings.skills` patterns, so the existing pattern-based override
+  silently no-op'd for them. Fix uses the SDK-supported
+  `skillsOverride` callback on `DefaultResourceLoader` to apply a
+  source-agnostic name-based filter at session create.
+- **Test isolation.** Every spawned-server test now `mkdtemp`s its own
+  `FORGE_DATA_DIR` so the user's real `password-hash` can't leak into
+  CI auth scenarios.
 
 ## [1.1.1] — 2026-05-05
 
