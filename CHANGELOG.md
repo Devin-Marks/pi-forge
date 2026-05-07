@@ -14,6 +14,18 @@ the README for the support window policy.
 
 ## [Unreleased]
 
+### Added
+
+- **npm distribution.** pi-forge now publishes to npm as `pi-forge` on
+  every `v*` tag, in lockstep with the GHCR Docker image. Install via
+  `npm i -g pi-forge` or `npx pi-forge` for a no-Docker run path with
+  the embedded SPA. Published as a flat single-package layout — server
+  + client + bin shim assembled by `scripts/build-publish-dir.mjs` from
+  the workspace builds, with the server's runtime deps hoisted as the
+  published package's dependencies. Authentication uses npm Trusted
+  Publishers (OIDC) — no long-lived `NPM_TOKEN` secret in the repo —
+  and every release ships with a sigstore-signed provenance attestation.
+
 ## [1.1.1] — 2026-05-05
 
 ### Changed

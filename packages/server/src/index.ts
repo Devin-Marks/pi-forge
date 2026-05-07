@@ -466,7 +466,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   return fastify;
 }
 
-async function start(): Promise<void> {
+export async function start(): Promise<void> {
   // Ensure the workspace + forge data dirs exist before anything
   // tries to write under them. mkdir(recursive:true) is a no-op on an
   // existing dir, so this is safe to run on every boot. We do NOT
