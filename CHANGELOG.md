@@ -14,6 +14,8 @@ the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.1.2] — 2026-05-06
+
 ### Added
 
 - **npm distribution.** pi-forge now publishes to npm as `pi-forge` on
