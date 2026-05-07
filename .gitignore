@@ -79,6 +79,9 @@ Desktop.ini
 tmp/
 .tmp/
 
+# Git worktrees (in-tree convention: `git worktree add .worktrees/<branch>`)
+.worktrees/
+
 # Local working notes (not committed)
 notes/
 pi-webui-dev-plan.md
