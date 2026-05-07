@@ -4,6 +4,8 @@ import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { keymap } from "@codemirror/view";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { themeDef, useThemeStore } from "../lib/theme";
+import type { DiffLine } from "../lib/diff-parser";
+import { gitDiffExtension, setDiffEffect } from "./codemirror-diff-extension";
 import { StreamLanguage } from "@codemirror/language";
 import { javascript } from "@codemirror/lang-javascript";
 import { python } from "@codemirror/lang-python";
@@ -64,12 +66,21 @@ export function CodeMirrorEditor({
   onChange,
   onSaveShortcut,
   wrap,
+  diffChanges,
   onConsumePendingNav,
 }: {
   file: OpenFile;
   onChange: (next: string) => void;
   onSaveShortcut: () => void;
   wrap: boolean;
+  /**
+   * Per-line diff decorations to render in the gutter + scrollbar
+   * overview. Pass an empty array (or omit) when the file isn't in a
+   * git repo, when the working tree matches HEAD, or while the diff
+   * is being fetched. Updates are applied via `setDiffEffect` —
+   * cursor / undo / scroll are preserved.
+   */
+  diffChanges?: DiffLine[];
   /**
    * Called after the editor scrolls to a `pendingNav` position so the
    * caller can clear the field and prevent re-scroll on subsequent
@@ -125,6 +136,10 @@ export function CodeMirrorEditor({
       // reads cleanly on white backgrounds).
       themeCompartmentRef.current.of(editorMode === "dark" ? oneDark : []),
       wrapCompartmentRef.current.of(wrap ? EditorView.lineWrapping : []),
+      // Git diff gutter + scrollbar overview. The extension itself
+      // doesn't need a compartment — the StateField it ships with
+      // accepts diff updates via setDiffEffect dispatched below.
+      gitDiffExtension(),
       keymap.of([
         {
           key: "Mod-s",
@@ -145,6 +160,12 @@ export function CodeMirrorEditor({
     const state = EditorState.create({ doc: file.draft, extensions: exts });
     const view = new EditorView({ state, parent: containerRef.current });
     viewRef.current = view;
+    // Seed the initial diff if one was already known at mount (e.g.
+    // tab restored from session storage with a cached diff). The
+    // useEffect below handles subsequent updates.
+    if (diffChanges !== undefined && diffChanges.length > 0) {
+      view.dispatch({ effects: setDiffEffect.of(diffChanges) });
+    }
     return () => {
       view.destroy();
       viewRef.current = null;
@@ -184,6 +205,14 @@ export function CodeMirrorEditor({
       changes: { from: 0, to: view.state.doc.length, insert: file.draft },
     });
   }, [file.draft]);
+
+  // Push diff updates into the StateField. Empty array clears markers
+  // (file not in git, working tree matches HEAD, or fetch in flight).
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view === null) return;
+    view.dispatch({ effects: setDiffEffect.of(diffChanges ?? []) });
+  }, [diffChanges]);
 
   // No autosave. Saves go through Cmd/Ctrl+S (handled by the editor's
   // keymap and routed via `onSaveShortcut`) or the explicit Save

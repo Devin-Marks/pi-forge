@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api, ApiError, type FileTreeNode } from "../lib/api-client";
+import { parseUnifiedDiff, type DiffLine } from "../lib/diff-parser";
 
 /**
  * Per-tab editor state. Tracks an in-memory `draft` separately from
@@ -172,6 +173,29 @@ interface FileState {
   dismissExternallyChanged: (path: string) => void;
   externallyChanged: Record<string, boolean>;
 
+  /**
+   * Per-file working-tree-vs-index diff decorations, used by the
+   * editor's git-diff gutter + scrollbar overview. Keyed by absolute
+   * path. Empty/missing means "no diff to render" (file not in a git
+   * repo, working tree matches HEAD, or fetch hasn't run yet).
+   *
+   * Refreshed whenever the on-disk content might have changed:
+   *   - on open (initial fetch)
+   *   - after saveFile (the save shifts the working-tree side)
+   *   - after reloadFile / refreshOpenFiles (agent or external write)
+   * NOT refreshed on every keystroke — the gutter reflects what's on
+   * disk relative to git, not the in-memory dirty draft.
+   */
+  gitDiffByPath: Record<string, DiffLine[]>;
+  /**
+   * Fetch + parse the diff for a single open file. No-op (clears the
+   * map entry) on any error — a 404 from /git/diff/file means "not in
+   * a git repo" or "file not tracked", which is a normal state for
+   * non-git workspaces or new files. We don't surface those as errors
+   * to the user; the gutter just stays empty.
+   */
+  loadGitDiff: (projectId: string, path: string) => Promise<void>;
+
   // Tree mutations — fire the route, then refresh the tree on success.
   createFile: (projectId: string, parentAbsPath: string, name: string) => Promise<string>;
   createFolder: (projectId: string, parentAbsPath: string, name: string) => Promise<void>;
@@ -235,6 +259,26 @@ export const useFileStore = create<FileState>((set, get) => ({
   activePath: undefined,
   error: undefined,
   externallyChanged: {},
+  gitDiffByPath: {},
+
+  loadGitDiff: async (projectId, path) => {
+    try {
+      const r = await api.gitDiffFile(projectId, path, false);
+      const changes = parseUnifiedDiff(r.diff);
+      set((s) => ({ gitDiffByPath: { ...s.gitDiffByPath, [path]: changes } }));
+    } catch {
+      // Swallow — non-git workspaces, untracked files, or transient
+      // server errors all surface here and shouldn't put a red banner
+      // on the editor. Clear any stale diff for the path so the
+      // gutter doesn't show outdated decorations.
+      set((s) => {
+        if (!(path in s.gitDiffByPath)) return {};
+        const next = { ...s.gitDiffByPath };
+        delete next[path];
+        return { gitDiffByPath: next };
+      });
+    }
+  },
 
   loadTree: async (projectId) => {
     set((s) => ({ treeLoading: { ...s.treeLoading, [projectId]: true }, error: undefined }));
@@ -266,7 +310,7 @@ export const useFileStore = create<FileState>((set, get) => ({
     //    user switches back. We just clear what's in the store.
     if (currentProjectId === projectId && get().openFiles.length > 0) return;
     if (currentProjectId !== projectId) {
-      set({ openFiles: [], activePath: undefined, externallyChanged: {} });
+      set({ openFiles: [], activePath: undefined, externallyChanged: {}, gitDiffByPath: {} });
     }
     currentProjectId = projectId;
     const persisted = readPersistedTabs(projectId);
@@ -337,6 +381,10 @@ export const useFileStore = create<FileState>((set, get) => ({
         persist(currentProjectId, next);
         return next;
       });
+      // Fire-and-forget — the editor renders immediately with no
+      // gutter, then re-renders when the diff lands. Awaiting would
+      // delay the file appearing for non-trivial git ops.
+      void get().loadGitDiff(projectId, absPath);
     } catch (err) {
       set({ error: err instanceof ApiError ? err.code : (err as Error).message });
     }
@@ -351,7 +399,14 @@ export const useFileStore = create<FileState>((set, get) => ({
         s.activePath === path ? (next[idx] ?? next[idx - 1] ?? next[0])?.path : s.activePath;
       const ext = { ...s.externallyChanged };
       delete ext[path];
-      const result = { openFiles: next, activePath, externallyChanged: ext };
+      const diff = { ...s.gitDiffByPath };
+      delete diff[path];
+      const result = {
+        openFiles: next,
+        activePath,
+        externallyChanged: ext,
+        gitDiffByPath: diff,
+      };
       persist(currentProjectId, result);
       return result;
     });
@@ -359,7 +414,12 @@ export const useFileStore = create<FileState>((set, get) => ({
 
   closeAllFiles: () => {
     set(() => {
-      const result = { openFiles: [], activePath: undefined, externallyChanged: {} };
+      const result = {
+        openFiles: [],
+        activePath: undefined,
+        externallyChanged: {},
+        gitDiffByPath: {},
+      };
       persist(currentProjectId, result);
       return result;
     });
@@ -416,6 +476,10 @@ export const useFileStore = create<FileState>((set, get) => ({
         ),
         externallyChanged: omitKey(s.externallyChanged, path),
       }));
+      // Working tree just changed — refresh the diff so the gutter
+      // reflects the new state. Fire-and-forget; the editor will
+      // update when it lands.
+      void get().loadGitDiff(projectId, path);
     } catch (err) {
       const code = err instanceof ApiError ? err.code : (err as Error).message;
       // Set both the per-tab saveError (drives the StatusBar's "Save
@@ -454,6 +518,10 @@ export const useFileStore = create<FileState>((set, get) => ({
         ),
         externallyChanged: omitKey(s.externallyChanged, path),
       }));
+      // Disk content changed under us (agent edit, external write,
+      // user-initiated reload after externally-changed banner) — the
+      // git diff is now stale.
+      void get().loadGitDiff(projectId, path);
     } catch (err) {
       set({ error: err instanceof ApiError ? err.code : (err as Error).message });
     }
@@ -508,6 +576,12 @@ export const useFileStore = create<FileState>((set, get) => ({
       }
       return { openFiles: openFilesNext, externallyChanged };
     });
+    // After a refresh sweep, every open file's working-tree state
+    // may have shifted — refresh diffs for ALL open tabs in parallel.
+    // Includes tabs whose content didn't change (e.g. user committed
+    // and HEAD moved underneath; the file's content is the same but
+    // the diff is now empty).
+    await Promise.allSettled(snapshot.map((s) => get().loadGitDiff(projectId, s.path)));
   },
 
   markExternallyChanged: (path) => {
