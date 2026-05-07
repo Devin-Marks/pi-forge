@@ -247,6 +247,19 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
 
+      - name: Upgrade npm to a version that supports Trusted Publishers
+        # Node 22 LTS ships with npm 10.x by default, which predates
+        # Trusted Publisher OIDC support (added in npm 11.5.1, July
+        # 2025). On npm 10.x, `npm publish` silently ignores the
+        # GitHub OIDC token even with `id-token: write` granted, sends
+        # an unauthenticated PUT, and the registry replies 404
+        # (npm doesn't leak package existence to anonymous requesters,
+        # so "not authorized" surfaces as "not found"). The first
+        # v1.1.2 tag hit exactly this — Docker shipped, npm-publish
+        # 404'd. Upgrading globally before any subsequent npm command
+        # also applies the new version to `npm ci` and `npm publish`.
+        run: npm install -g npm@latest
+
       - name: Install dependencies
         run: npm ci
 
