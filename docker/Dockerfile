@@ -16,7 +16,7 @@
 # integrated terminal (bash + readline + a real coreutils).
 
 # ---------- builder ----------
-FROM node:22-bookworm-slim AS builder
+FROM node:26-bookworm-slim AS builder
 
 # Native deps for node-pty (Phase 11 will use it; the dep is already in
 # server/package.json, so install needs the toolchain regardless). On
@@ -45,7 +45,7 @@ COPY . .
 RUN npm run build
 
 # ---------- runtime ----------
-FROM node:22-bookworm-slim AS runtime
+FROM node:26-bookworm-slim AS runtime
 
 # `tini` for proper PID-1 signal handling (Ctrl-C → SIGTERM → graceful
 # shutdown of pi-forge's onClose hook). Without it, dropped SIGTERMs
