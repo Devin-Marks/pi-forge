@@ -166,8 +166,11 @@ function mapError(reply: FastifyReply, err: unknown): FastifyReply {
 
 /**
  * Resolve the project for a request. On miss, sends 404 + returns
- * undefined; caller MUST `return` immediately. See files.ts:resolveProject
- * for the same contract.
+ * undefined; caller MUST `return reply` immediately. Returning bare
+ * `undefined` trips Fastify's `FST_ERR_REP_ALREADY_SENT` because the
+ * route handler's resolved `undefined` is interpreted as "send this,"
+ * which races the 404 the helper already sent. See
+ * files.ts:resolveProject for the same contract.
  */
 async function resolveProject(
   projectId: string,
@@ -201,7 +204,10 @@ async function withProject<T>(
   fn: (project: { id: string; path: string }) => Promise<T>,
 ): Promise<T | FastifyReply | undefined> {
   const project = await resolveProject(projectId, reply);
-  if (project === undefined) return undefined;
+  // resolveProject already called reply.send for the 404 path —
+  // returning the reply here tells Fastify the response was handled,
+  // avoiding the FST_ERR_REP_ALREADY_SENT double-send error.
+  if (project === undefined) return reply;
   try {
     return await fn(project);
   } catch (err) {
@@ -245,7 +251,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         if (await isGitRepo(project.path)) {
           return { alreadyInitialised: true, isGitRepo: true };
@@ -284,7 +290,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.query.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         return await getStatus(project.path);
       } catch (err) {
@@ -448,7 +454,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         await addRemote(project.path, req.body.name, req.body.url);
         return { ok: true };
@@ -486,7 +492,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.query.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         await removeRemote(project.path, req.params.name);
         return { ok: true };
@@ -525,7 +531,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         await checkoutBranch(project.path, req.body.branch);
         return { ok: true };
@@ -567,7 +573,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         const opts: { startPoint?: string; checkout?: boolean } = {};
         if (req.body.startPoint !== undefined) opts.startPoint = req.body.startPoint;
@@ -612,7 +618,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.query.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         const force = req.query.force === "1" || req.query.force === "true";
         await deleteBranch(project.path, req.params.name, { force });
@@ -658,7 +664,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         await stagePaths(project.path, req.body.paths);
         return { ok: true };
@@ -703,7 +709,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         await unstagePaths(project.path, req.body.paths);
         return { ok: true };
@@ -754,7 +760,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         await revertPaths(project.path, req.body.paths);
         return { ok: true };
@@ -796,7 +802,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       const message = req.body.message.trim();
       if (message.length === 0) {
         return reply.code(400).send({ error: "empty_message" });
@@ -838,7 +844,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         const opts: { remote?: string; prune?: boolean } = {};
         if (req.body.remote !== undefined) opts.remote = req.body.remote;
@@ -884,7 +890,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         const opts: { remote?: string; branch?: string; rebase?: boolean } = {};
         if (req.body.remote !== undefined) opts.remote = req.body.remote;
@@ -943,7 +949,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         const opts: { remote?: string; branch?: string; setUpstream?: boolean } = {};
         if (req.body.remote !== undefined) opts.remote = req.body.remote;

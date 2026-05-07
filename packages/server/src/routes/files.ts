@@ -195,10 +195,12 @@ function mapError(reply: FastifyReply, err: unknown): FastifyReply {
  *
  * Contract: returns the project on success. On miss, sends a 404
  * via `reply` AND returns undefined — caller MUST `if (project ===
- * undefined) return;` immediately to avoid double-send. The 404
- * response is intentionally awaited (Fastify reply.send returns the
- * reply object; awaiting it ensures any onSend hooks have run before
- * the route handler proceeds).
+ * undefined) return reply;` immediately. Returning bare `undefined`
+ * trips Fastify's `FST_ERR_REP_ALREADY_SENT` because the handler's
+ * resolved value is interpreted as "send this," racing the 404 the
+ * helper already sent. The 404 response is intentionally awaited
+ * (Fastify reply.send returns the reply object; awaiting it ensures
+ * any onSend hooks have run before the route handler proceeds).
  */
 async function resolveProject(
   projectId: string,
@@ -323,7 +325,7 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.query.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         // Clamp client-supplied maxDepth to a sane window. The schema
         // already gates on `^[0-9]+$`, so parseInt is safe; we cap at
@@ -373,7 +375,7 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.query.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       const target = req.query.path ?? project.path;
       try {
         const result = await downloadStream(target, project.path);
@@ -431,7 +433,7 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.query.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         const result = await readFile(req.query.path, project.path);
         return result;
@@ -471,7 +473,7 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         await writeFile(req.body.path, project.path, req.body.content);
         return { path: req.body.path };
@@ -509,7 +511,7 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         const created = await makeDirectory(req.body.parentPath, project.path, req.body.name);
         return { path: created };
@@ -549,7 +551,7 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         const renamed = await renameEntry(req.body.path, project.path, req.body.name);
         return { path: renamed };
@@ -590,7 +592,7 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         const moved = await moveEntry(req.body.src, req.body.dest, project.path);
         return { path: moved };
@@ -632,7 +634,7 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.query.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       try {
         const recursive = req.query.recursive === "true";
         await deleteEntry(req.query.path, project.path, { recursive });
@@ -718,7 +720,7 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.query.projectId, reply);
-      if (project === undefined) return;
+      if (project === undefined) return reply;
       const { q } = req.query;
       const regex = req.query.regex === "1" || req.query.regex === "true";
       const caseSensitive = req.query.caseSensitive === "1" || req.query.caseSensitive === "true";
