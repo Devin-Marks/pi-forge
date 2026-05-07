@@ -28,6 +28,41 @@ the README for the support window policy.
   `flex-1 min-h-0` puts the scroll back where CM6 expects it — marks
   are pinned, and viewport virtualization works again so large files
   no longer render every line into the DOM.
+- **pi-subagents now works inside the Docker image.** The plugin
+  shells out via `child_process.spawn("pi", ...)` and on Linux has no
+  fallback resolution — the container previously failed every subagent
+  call with `spawn pi ENOENT`. The runtime image now prepends
+  `/app/node_modules/.bin` to `PATH`, exposing the `pi` bin shim
+  shipped by `@mariozechner/pi-coding-agent` (already a server
+  dependency, so no extra install). Verifiable with
+  `docker compose exec pi-forge sh -c 'which pi && pi --version'`.
+- **Session sidebar refreshes around sub-agents.** The list now
+  refetches when (a) a parent session finishes a `subagent` tool call
+  (so newly-spawned children appear without a manual refresh), and
+  (b) a parent session is deleted (so the server's cascade-removed
+  child JSONLs disappear from `byProject` instead of lingering as
+  sidebar orphans). Cross-tab `session_deleted` receivers refetch on
+  the same paths.
+- **Cascade-delete now disposes LIVE sub-agent children before
+  removing their JSONLs.** Previously, opening a sub-agent session in
+  the UI promoted it to a `LiveSession` in the in-memory registry,
+  and deleting the parent's JSONL would `rm -rf` the sibling subagent
+  dir but leave the live child entry pointing at the now-deleted
+  file. Any SSE clients still attached to the zombie kept emitting
+  events that couldn't be persisted. `deleteColdSession` now disposes
+  every registered child of the deleted parent (in parallel — each
+  dispose can wait up to 5 s on its own LLM-call abort) before
+  unlinking. Test coverage added in `tests/test-subagent-discovery.ts`
+  via a resume-then-cascade fixture.
+
+### Documentation
+
+- README's "Tools & MCP" feature list now includes pi-subagents.
+  `docs/configuration.md` gains a "Pi plugins" section documenting
+  the `pi install npm:<package>` install path and the pi-subagents
+  surface specifically. CLAUDE.md drops the "sub-agent dropdown"
+  deferred entry and rewrites the Pi-SDK-key-fact line to point at
+  the actual integration code.
 
 ## [1.1.3] — 2026-05-07
 

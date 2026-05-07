@@ -114,9 +114,17 @@ USER pi
 # SHELL=/bin/bash so node-pty spawns bash for the integrated terminal
 # (pty-manager.ts uses `process.env.SHELL || '/bin/sh'`). TERM hint
 # helps line-editing programs pick a sane terminfo entry inside xterm.
+#
+# PATH prepends /app/node_modules/.bin so the `pi` CLI shipped by
+# @mariozechner/pi-coding-agent (already a server dep) is on PATH for
+# the running server and any process it spawns. The pi-subagents
+# plugin shells out via `child_process.spawn("pi", ...)` with no
+# fallback resolution on Linux — without this, the subagent tool
+# fails with `spawn pi ENOENT` inside the container.
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \
+    PATH=/app/node_modules/.bin:$PATH \
     WORKSPACE_PATH=/workspace \
     PI_CONFIG_DIR=/home/pi/.pi/agent \
     FORGE_DATA_DIR=/home/pi/.pi-forge \

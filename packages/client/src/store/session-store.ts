@@ -161,6 +161,13 @@ function revokeOptimisticBlobUrls(messages: readonly AgentMessageLike[]): void {
  * Revokes blob URLs in the soon-to-be-discarded messages so optimistic
  * image attachments that never got refetched don't leak.
  */
+function findProjectIdForSession(state: SessionState, sessionId: string): string | undefined {
+  for (const [pid, list] of Object.entries(state.byProject)) {
+    if (list.some((u) => u.sessionId === sessionId)) return pid;
+  }
+  return undefined;
+}
+
 function removeSessionFromState(current: SessionState, sessionId: string): Partial<SessionState> {
   const stale = current.messagesBySession[sessionId];
   if (stale !== undefined) revokeOptimisticBlobUrls(stale);
@@ -634,12 +641,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // Capture projectId before we wipe the entry — cross-tab
       // listeners only need the id, but we may want to filter by
       // project later.
-      const priorProjectId = (() => {
-        for (const [pid, list] of Object.entries(get().byProject)) {
-          if (list.some((u) => u.sessionId === sessionId)) return pid;
-        }
-        return undefined;
-      })();
+      const priorProjectId = findProjectIdForSession(get(), sessionId);
       await api.disposeSession(sessionId, opts);
       set((s) => removeSessionFromState(s, sessionId));
       if (get().activeSessionId === undefined) {
@@ -652,6 +654,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // JSONL cleanup, etc.).
       if (priorProjectId !== undefined) {
         postCrossTab({ type: "session_deleted", projectId: priorProjectId, sessionId });
+        // Cascade refetch: the server hard-delete also rm -rf's any
+        // pi-subagents child session JSONLs sitting under the
+        // parent's directory (see deleteColdSession in
+        // session-registry.ts). The local removeSessionFromState
+        // above only knows about the parent id — without a refetch,
+        // those children linger in byProject as sidebar orphans
+        // pointing at deleted files.
+        void get().loadSessionsForProject(priorProjectId);
       }
     } catch (err) {
       set({ error: err instanceof ApiError ? err.code : (err as Error).message });
@@ -832,6 +842,15 @@ function applyEvent(
     // bubble) shows up before the next tool fires. Without this the
     // user sees a stretch of "running …" badges with no output.
     scheduleMessagesRefetch(set, sessionId);
+    // pi-subagents: a `subagent` tool call just finished, which
+    // means one or more child session JSONLs were written to disk
+    // under the parent's directory. Refetch the project's session
+    // list so the sidebar picks them up — pi has no native
+    // "child session created" SDK event we can hook into.
+    if (event.toolName === "subagent") {
+      const projectId = findProjectIdForSession(get(), sessionId);
+      if (projectId !== undefined) void get().loadSessionsForProject(projectId);
+    }
     return;
   }
 
@@ -1130,6 +1149,13 @@ if (!globalThis.__piForgeSessionCrossTabRegistered) {
           // private-mode storage failure — fine
         }
       }
+      // Cross-tab counterpart to the cascade refetch in
+      // disposeSession: the server has rm -rf'd any pi-subagents
+      // child JSONLs under the deleted parent. The local
+      // removeSessionFromState above only knows about the parent
+      // id — without this, children stay in byProject in the
+      // receiving tab until its next mount.
+      void useSessionStore.getState().loadSessionsForProject(msg.projectId);
       return;
     }
     if (msg.type === "session_renamed") {

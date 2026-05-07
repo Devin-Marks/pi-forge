@@ -716,6 +716,23 @@ export async function deleteColdSession(
       if (match.parentSessionId === undefined) {
         const stem = basename(match.path, ".jsonl");
         const siblingDir = join(dirname(match.path), stem);
+        // Dispose any LIVE children before removing their JSONLs.
+        // `discoverSessionsOnDisk` populated `infos` with every child
+        // under this parent (their `parentSessionId` matches our
+        // `sessionId`). If a child was opened in the UI it now has a
+        // LiveSession entry in the registry; rm-ing its JSONL out from
+        // under it leaves a zombie session pointing at a deleted file
+        // and any SSE clients attached to it keep firing events that
+        // can't be persisted. Dispose in parallel — `disposeSession`
+        // awaits a per-session abort with a 5-second ceiling, so a
+        // sequential loop on N live children would block the delete
+        // request for up to 5N seconds.
+        const liveChildIds = infos
+          .filter((s) => s.parentSessionId === sessionId && registry.has(s.sessionId))
+          .map((s) => s.sessionId);
+        if (liveChildIds.length > 0) {
+          await Promise.all(liveChildIds.map((id) => disposeSession(id)));
+        }
         // force: true makes ENOENT silent; recursive: true clears the
         // run/runId/run-N tree the plugin nests under there. Failures
         // for any other reason (perms, EBUSY) are swallowed — the
