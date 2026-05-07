@@ -26,7 +26,7 @@
     "@xterm/xterm": "^5.5.0",
     "codemirror": "^6.0.1",
     "hash-wasm": "^4.12.0",
-    "lucide-react": "^0.503.0",
+    "lucide-react": "^1.14.0",
     "prism-react-renderer": "^2.4.1",
     "react": "^19.2.6",
     "react-diff-view": "^3.2.2",
