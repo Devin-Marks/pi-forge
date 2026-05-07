@@ -41,6 +41,18 @@ export const streamRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
+      // Diagnostic: stream-route entry. Pairs with subagent-discovery /
+      // resume-session-found logs in session-registry — seeing all
+      // three lines together for a click confirms the click reached
+      // the server, found the session, and attached the SSE.
+      process.stderr.write(
+        JSON.stringify({
+          level: "info",
+          time: new Date().toISOString(),
+          msg: "stream-route-hit",
+          sessionId: req.params.id,
+        }) + "\n",
+      );
       let live;
       try {
         live = await resumeSessionById(req.params.id);

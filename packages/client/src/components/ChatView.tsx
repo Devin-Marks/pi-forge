@@ -853,6 +853,7 @@ function ToolCallEntry({
   if (name === "subagent") {
     return (
       <SubagentInflightOrResult
+        argsText={argsText}
         input={argsObj}
         result={result}
         isError={isError}
@@ -1008,8 +1009,10 @@ function ToolResult({ message }: { message: AgentMessageLike }) {
 
   // pi-subagents: replace the generic tool card with a richer surface
   // listing each spawned sub-agent + a "open session" affordance.
+  // Standalone (orphan) toolResult — no paired toolCall, so we have no
+  // input args to show. argsText="" and the Input section won't render.
   if (toolName === "subagent") {
-    return <SubagentResultCard message={message} fallbackText={text} isError={isError} />;
+    return <SubagentResultCard message={message} argsText="" outputText={text} isError={isError} />;
   }
 
   // Generic tool result fallback.
@@ -1035,30 +1038,35 @@ function ToolResult({ message }: { message: AgentMessageLike }) {
  * back to a plain text block so we never lose information silently.
  */
 /**
- * Wrapper that picks the right sub-agent card variant based on
- * whether the tool has finished:
- *   - in-flight (no result yet) → "Sub-agent running…" card with the
- *     requested agent name + task pulled out of the input args
- *   - completed → the rich SubagentResultCard with per-result rows + Open buttons
- *
- * Used by ToolCallEntry (paired result) so the user sees a violet
- * sub-agent treatment for BOTH states — pre-result and post-result.
- * The standalone ToolResult branch reaches SubagentResultCard
- * directly since by the time it's rendered the result always exists.
+ * Wrapper that picks the right sub-agent card variant based on whether
+ * the tool has finished. In-flight (no result yet) renders a compact
+ * "Sub-agent running…" card; completed renders SubagentResultCard,
+ * which always carries Input + Output collapsibles so the user can
+ * inspect what was sent and what came back — same affordance the
+ * generic ToolCallEntry has.
  */
 function SubagentInflightOrResult({
+  argsText,
   input,
   result,
   isError,
   outputText,
 }: {
+  argsText: string;
   input: Record<string, unknown> | undefined;
   result: AgentMessageLike | undefined;
   isError: boolean;
   outputText: string;
 }) {
   if (result !== undefined) {
-    return <SubagentResultCard message={result} fallbackText={outputText} isError={isError} />;
+    return (
+      <SubagentResultCard
+        message={result}
+        argsText={argsText}
+        outputText={outputText}
+        isError={isError}
+      />
+    );
   }
   // In-flight: pull a friendly preview out of the SubagentParams shape
   // (single mode → input.agent / input.task; parallel/chain mode →
@@ -1079,13 +1087,13 @@ function SubagentInflightOrResult({
     else if (agent !== undefined) summary = agent;
   }
   return (
-    <div className="overflow-hidden rounded border border-amber-700/50 border-l-2 border-l-amber-400 bg-amber-950/15 text-xs">
+    <div className="overflow-hidden rounded border border-l-2 border-sky-700/50 border-l-sky-400 bg-sky-950/15 text-xs">
       <div className="flex items-center justify-between gap-2 px-2.5 py-1.5">
         <div className="flex min-w-0 items-center gap-1.5">
-          <Users size={11} className="shrink-0 text-amber-300" />
-          <span className="truncate font-medium text-amber-100">Sub-agent running…</span>
+          <Users size={11} className="shrink-0 text-sky-300" />
+          <span className="truncate font-medium text-sky-100">Sub-agent running…</span>
           {summary !== undefined && (
-            <span className="ml-1 truncate font-mono text-[11px] text-amber-200/70" title={summary}>
+            <span className="ml-1 truncate font-mono text-[11px] text-sky-200/70" title={summary}>
               {summary}
             </span>
           )}
@@ -1097,22 +1105,22 @@ function SubagentInflightOrResult({
 
 function SubagentResultCard({
   message,
-  fallbackText,
+  argsText,
+  outputText,
   isError,
 }: {
   message: AgentMessageLike;
-  fallbackText: string;
+  argsText: string;
+  outputText: string;
   isError: boolean;
 }) {
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
   const parsed = parseSubagentDetails(message.details);
   const isManagement = parsed.mode === "management";
-  const isUnknown = parsed.mode === "unknown";
   const count = parsed.results.length;
-  // Single-result cards expose the Open button up in the header so the
-  // user can see-and-jump in one row of vertical space. Multi-result
-  // (parallel/chain) gets a per-result Open button down in the rows
-  // since there's no single sessionId to point at from the header.
+  // Single-result cards expose the Open button in the header for
+  // one-click navigation. Multi-result (parallel/chain) gets per-row
+  // Open buttons since there's no single sessionId to point at.
   const singleSessionId =
     count === 1 && parsed.results[0]!.sessionId !== undefined
       ? parsed.results[0]!.sessionId
@@ -1125,24 +1133,24 @@ function SubagentResultCard({
         : isManagement
           ? "Sub-agent management"
           : "Sub-agent";
-  // Compact orange/amber treatment — single-line header with optional
-  // body. Uses border-l-2 accent + amber-700 border for a subtle but
-  // distinctive treatment that doesn't dominate the chat stream.
+
+  // Light-blue (sky) color treatment per request — distinctive but
+  // soft. Failures get a red border but keep the rest of the card
+  // intact (so the input + output sections are still inspectable
+  // when the call errored).
+  const borderColors = isError
+    ? "border-red-700/50 border-l-red-400 bg-red-950/15"
+    : "border-sky-700/50 border-l-sky-400 bg-sky-950/15";
+
   return (
-    <div
-      className={`overflow-hidden rounded border border-l-2 ${
-        isError
-          ? "border-red-700/50 border-l-red-400 bg-red-950/15"
-          : "border-amber-700/50 border-l-amber-400 bg-amber-950/15"
-      } text-xs`}
-    >
+    <div className={`overflow-hidden rounded border border-l-2 ${borderColors} text-xs`}>
       <div className="flex items-center justify-between gap-2 px-2.5 py-1.5">
         <div className="flex min-w-0 items-center gap-1.5">
-          <Users size={11} className="shrink-0 text-amber-300" />
-          <span className="truncate font-medium text-amber-100">{headline}</span>
+          <Users size={11} className="shrink-0 text-sky-300" />
+          <span className="truncate font-medium text-sky-100">{headline}</span>
           {parsed.context !== undefined && (
             <span
-              className="shrink-0 rounded bg-amber-900/40 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wider text-amber-200"
+              className="shrink-0 rounded bg-sky-900/40 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wider text-sky-200"
               title={parsed.context === "fork" ? "Forked from parent context" : "Fresh context"}
             >
               {parsed.context}
@@ -1154,12 +1162,20 @@ function SubagentResultCard({
             </span>
           )}
         </div>
-        {/* Header-right Open button when there's a single child to
-            navigate to. Icon-only with title-tip so it stays small. */}
         {singleSessionId !== undefined && (
           <button
-            onClick={() => setActiveSession(singleSessionId)}
-            className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-700/60 px-1.5 py-0.5 text-[10px] font-medium text-amber-200 hover:border-amber-500 hover:bg-amber-900/30 hover:text-amber-100"
+            onClick={() => {
+              // Console breadcrumb so we can see in DevTools whether
+              // the click handler fires at all when "Open doesn't
+              // navigate" is reported. Strip when sub-agents UX
+              // stabilises.
+              console.info("[subagent] Open clicked", {
+                sessionId: singleSessionId,
+                sessionFile: parsed.results[0]!.sessionFile,
+              });
+              setActiveSession(singleSessionId);
+            }}
+            className="inline-flex shrink-0 items-center gap-1 rounded border border-sky-700/60 px-1.5 py-0.5 text-[10px] font-medium text-sky-200 hover:border-sky-500 hover:bg-sky-900/30 hover:text-sky-100"
             title={`Open sub-agent session — ${singleSessionId}`}
           >
             <ExternalLink size={10} />
@@ -1167,13 +1183,9 @@ function SubagentResultCard({
           </button>
         )}
       </div>
-      {/* Body — only renders when there's something useful to show:
-          parallel/chain results (multiple), or management/unknown
-          mode's prose body. Single-result cards collapse fully to
-          the header-only treatment unless the result has a finalOutput
-          worth surfacing under a `<details>`. */}
+      {/* Multi-result body — one row per child with its own Open button. */}
       {count > 1 && (
-        <div className="space-y-1.5 border-t border-amber-900/30 px-2.5 py-2">
+        <div className="space-y-1.5 border-t border-sky-900/30 px-2.5 py-2">
           {parsed.results.map((r, i) => (
             <SubagentResultRow
               key={r.sessionId ?? `${i}-${r.agent}`}
@@ -1183,25 +1195,37 @@ function SubagentResultCard({
           ))}
         </div>
       )}
-      {count === 1 && parsed.results[0]!.finalOutput !== undefined && (
-        <details className="border-t border-amber-900/30 px-2.5 py-1.5">
-          <summary className="cursor-pointer text-[11px] text-neutral-500 hover:text-neutral-300">
-            output
+      {/* Input + Output collapsibles — same affordance the generic
+          ToolCallEntry has. Always present (when there's content),
+          collapsed by default, so the card stays compact but the user
+          can still see what was sent and what came back. Failures
+          surface here as Output content rather than disappearing. */}
+      {argsText.length > 0 && (
+        <details className="border-t border-sky-900/30">
+          <summary className="cursor-pointer px-2.5 py-1 text-[11px] text-neutral-500 hover:text-neutral-300">
+            Input
           </summary>
-          <pre className="mt-1 max-h-48 overflow-auto rounded bg-neutral-950 p-2 font-mono text-[11px] text-neutral-300">
-            {parsed.results[0]!.finalOutput}
+          <pre className="overflow-auto px-2.5 pb-2 font-mono text-[11px] text-neutral-400">
+            {argsText}
           </pre>
         </details>
       )}
-      {count === 0 && (isManagement || isUnknown) && fallbackText.length > 0 && (
-        // Management calls (`action: "list"` etc) and unrecognised
-        // payloads: render the raw text as readable body, NOT a
-        // monospace pre. The output is human-readable structured prose
-        // (e.g. "Executable agents:\n- name: description") and the pre
-        // treatment was making it disappear visually.
-        <div className="whitespace-pre-wrap border-t border-amber-900/30 px-2.5 py-2 text-[11px] leading-snug text-neutral-300">
-          {fallbackText}
-        </div>
+      {outputText.length > 0 && (
+        <details
+          // For management mode + errors the output IS the body, so open
+          // by default — otherwise a failed call or "list agents" call
+          // looks blank. Normal successful runs collapse the verbose
+          // sub-agent output by default so the chat stays scannable.
+          open={isError || (isManagement && count === 0)}
+          className="border-t border-sky-900/30"
+        >
+          <summary className="cursor-pointer px-2.5 py-1 text-[11px] text-neutral-500 hover:text-neutral-300">
+            Output
+          </summary>
+          <pre className="overflow-auto px-2.5 pb-2 font-mono text-[11px] text-neutral-300 whitespace-pre-wrap">
+            {outputText}
+          </pre>
+        </details>
       )}
     </div>
   );
@@ -1217,11 +1241,11 @@ function SubagentResultRow({
   const failed = result.exitCode !== 0;
   return (
     <div
-      className={`flex items-center justify-between gap-2 rounded border ${failed ? "border-red-700/40" : "border-amber-900/40"} bg-neutral-950/60 px-2 py-1.5`}
+      className={`flex items-center justify-between gap-2 rounded border ${failed ? "border-red-700/40" : "border-sky-900/40"} bg-neutral-950/60 px-2 py-1.5`}
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span className="font-mono text-[11px] font-medium text-amber-200">{result.agent}</span>
+          <span className="font-mono text-[11px] font-medium text-sky-200">{result.agent}</span>
           {failed && (
             <span className="text-[10px] font-medium text-red-400">exit {result.exitCode}</span>
           )}
@@ -1234,8 +1258,14 @@ function SubagentResultRow({
       </div>
       {result.sessionId !== undefined && (
         <button
-          onClick={() => onOpen(result.sessionId!)}
-          className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-700/60 px-1.5 py-0.5 text-[10px] font-medium text-amber-200 hover:border-amber-500 hover:bg-amber-900/30 hover:text-amber-100"
+          onClick={() => {
+            console.info("[subagent] Open clicked (multi-row)", {
+              sessionId: result.sessionId,
+              sessionFile: result.sessionFile,
+            });
+            onOpen(result.sessionId!);
+          }}
+          className="inline-flex shrink-0 items-center gap-1 rounded border border-sky-700/60 px-1.5 py-0.5 text-[10px] font-medium text-sky-200 hover:border-sky-500 hover:bg-sky-900/30 hover:text-sky-100"
           title={result.sessionFile ?? "Open sub-agent session"}
         >
           <ExternalLink size={10} />
