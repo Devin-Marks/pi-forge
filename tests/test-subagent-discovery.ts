@@ -237,7 +237,45 @@ async function main(): Promise<void> {
       `got parentSessionId=${realisticChildEntry?.parentSessionId} expected=${realisticParentId}`,
     );
 
-    // 7. FLAT layout (no runId subdir): some pi-subagents run modes
+    // 7a. DEEP layout (parallel/chain mode):
+    //     <basename>/<runId>/run-N/session.jsonl. Three dir levels
+    //     under the parent — observed in the wild on real
+    //     pi-subagents installs. Discovery has to walk past the runId
+    //     dir to find the actual session.jsonl.
+    const deepParentId = "deep-parent-" + randomUUID().slice(0, 6);
+    const deepBasename = "2026-05-07T14-00-00-000Z_" + deepParentId;
+    const deepParentPath = join(projectSessionDir, `${deepBasename}.jsonl`);
+    await writeChildSessionFile(deepParentPath, deepParentId, project.path);
+    const deepRunId = randomUUID().slice(0, 8);
+    const deepChildId = randomUUID();
+    const deepChildPath = join(
+      projectSessionDir,
+      deepBasename,
+      deepRunId,
+      "run-0",
+      `${deepChildId}.jsonl`,
+    );
+    await writeChildSessionFile(deepChildPath, deepChildId, project.path);
+    const reDeep = await registry.discoverSessionsOnDisk(project.id, project.path);
+    const deepChildEntry = reDeep.find((d) => d.sessionId === deepChildId);
+    assert(
+      "deep-layout child (basename/runId/run-N/session.jsonl) was discovered",
+      deepChildEntry !== undefined,
+      `child id=${deepChildId} not in ${reDeep.map((d) => d.sessionId).join(",")}`,
+    );
+    assert(
+      "deep-layout child's parentSessionId resolves via basename map",
+      deepChildEntry?.parentSessionId === deepParentId,
+      `got parentSessionId=${deepChildEntry?.parentSessionId} expected=${deepParentId}`,
+    );
+    assert(
+      "deep-layout child's runId reflects the full intermediate path",
+      deepChildEntry?.runId === `${deepRunId}/run-0` ||
+        deepChildEntry?.runId === `${deepRunId}\\run-0`,
+      `got runId=${deepChildEntry?.runId}`,
+    );
+
+    // 7b. FLAT layout (no runId subdir): some pi-subagents run modes
     // write children directly under <parentBasename>/, not under
     // <parentBasename>/<runId>/. Discovery must surface these too.
     const flatParentId = "flat-parent-" + randomUUID().slice(0, 6);

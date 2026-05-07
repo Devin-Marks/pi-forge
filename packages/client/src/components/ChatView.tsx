@@ -842,6 +842,25 @@ function ToolCallEntry({
   const editFn = name === "edit" && result !== undefined ? extractFilename(result) : undefined;
   const editStats = editDiff !== undefined ? countDiffLines(editDiff) : undefined;
 
+  // pi-subagents tool gets a dedicated rich card instead of the
+  // generic toolCall+result rendering. Short-circuit BEFORE the
+  // generic render path: the user's eye should land on the violet
+  // sub-agent card with its prominent Open button, not on a row of
+  // small "subagent" badges nested under "Input/Output" details.
+  // Pre-result (running) state still fires through here — the card
+  // surfaces the input args (which agent + task) so the user sees
+  // what's running.
+  if (name === "subagent") {
+    return (
+      <SubagentInflightOrResult
+        input={argsObj}
+        result={result}
+        isError={isError}
+        outputText={outputText}
+      />
+    );
+  }
+
   // Border tint reflects success/error/pending so the user can scan
   // a long thread without expanding every entry.
   const borderClass =
@@ -1015,6 +1034,71 @@ function ToolResult({ message }: { message: AgentMessageLike }) {
  * calls (`mode: "management"`) and details we couldn't parse fall
  * back to a plain text block so we never lose information silently.
  */
+/**
+ * Wrapper that picks the right sub-agent card variant based on
+ * whether the tool has finished:
+ *   - in-flight (no result yet) → "Sub-agent running…" card with the
+ *     requested agent name + task pulled out of the input args
+ *   - completed → the rich SubagentResultCard with per-result rows + Open buttons
+ *
+ * Used by ToolCallEntry (paired result) so the user sees a violet
+ * sub-agent treatment for BOTH states — pre-result and post-result.
+ * The standalone ToolResult branch reaches SubagentResultCard
+ * directly since by the time it's rendered the result always exists.
+ */
+function SubagentInflightOrResult({
+  input,
+  result,
+  isError,
+  outputText,
+}: {
+  input: Record<string, unknown> | undefined;
+  result: AgentMessageLike | undefined;
+  isError: boolean;
+  outputText: string;
+}) {
+  if (result !== undefined) {
+    return <SubagentResultCard message={result} fallbackText={outputText} isError={isError} />;
+  }
+  // In-flight: pull a friendly preview out of the SubagentParams shape
+  // (single mode → input.agent / input.task; parallel/chain mode →
+  // count of tasks; management mode → input.action). Best-effort —
+  // schema-bumps on the plugin side just degrade to "running" with
+  // no detail, never crash.
+  let summary: string | undefined;
+  if (input !== undefined) {
+    const agent = typeof input.agent === "string" ? input.agent : undefined;
+    const task = typeof input.task === "string" ? input.task : undefined;
+    const action = typeof input.action === "string" ? input.action : undefined;
+    const tasks = Array.isArray(input.tasks) ? input.tasks.length : undefined;
+    const chain = Array.isArray(input.chain) ? input.chain.length : undefined;
+    if (action !== undefined) summary = `action: ${action}`;
+    else if (tasks !== undefined) summary = `${tasks} parallel task${tasks === 1 ? "" : "s"}`;
+    else if (chain !== undefined) summary = `${chain}-step chain`;
+    else if (agent !== undefined && task !== undefined) summary = `${agent} — ${task}`;
+    else if (agent !== undefined) summary = agent;
+  }
+  return (
+    <div className="overflow-hidden rounded-lg border border-violet-800/50 border-l-4 border-l-violet-500 bg-violet-950/20 shadow-sm">
+      <div className="flex items-center justify-between gap-2 border-b border-violet-900/40 bg-violet-950/30 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <Users size={14} className="shrink-0 text-violet-300" />
+          <span className="truncate font-semibold text-violet-100">Sub-agent running…</span>
+        </div>
+        <span className="shrink-0 rounded bg-violet-900/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-violet-200">
+          in-flight
+        </span>
+      </div>
+      {summary !== undefined && (
+        <div className="px-3 py-2 text-xs text-neutral-300">
+          <span className="text-neutral-500">running:</span>{" "}
+          <span className="font-mono">{summary}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SubagentResultCard({
   message,
   fallbackText,

@@ -801,27 +801,29 @@ function basenameNoExt(filePath: string): string | undefined {
 }
 
 /**
- * Walk one level deeper than the project's session dir to surface
- * pi-subagents child sessions.
+ * Walk under each `<projectId>/<parentBasename>/` to surface
+ * pi-subagents child sessions, regardless of how deep the plugin
+ * nests them.
  *
- * Two layouts to support:
+ * The plugin's `getSubagentSessionRoot(parentSessionFile)` always
+ * returns `<dirname(parentSessionFile)>/<basename(parentSessionFile, ".jsonl")>`
+ * — a directory NAMED after the parent's full basename. WHAT goes
+ * underneath varies by plugin run mode; observed in the wild:
  *
- *   1. Nested with runId:    <dir>/<parentBasename>/<runId>/<child>.jsonl
- *   2. Flat under parent:    <dir>/<parentBasename>/<child>.jsonl
+ *   - <basename>/<child>.jsonl                       (flat — rare)
+ *   - <basename>/<runId>/<child>.jsonl               (single-mode)
+ *   - <basename>/<runId>/run-<N>/session.jsonl       (parallel/chain)
  *
- * The plugin's `getSubagentSessionRoot(parentSessionFile)` returns
- * `<dirname(parentSessionFile)>/<basename(parentSessionFile, ".jsonl")>`,
- * which collides with neither (it's a directory NAMED after the parent
- * basename). Whether a runId subdir exists depends on the plugin's run
- * mode — both shapes are observed in the wild.
+ * Rather than enumerating every layout, we recursively walk under
+ * `<basename>/` (capped at depth 4 for safety) and treat any
+ * directory containing `.jsonl` files as a candidate sessions dir.
+ * `runId` is reconstructed from the path segments between
+ * `<basename>` and the JSONL's containing dir.
  *
- * `basenameToParentId` maps the directory name back to the parent's
- * actual sessionId (since the dir name is the parent's full basename
- * including timestamp prefix, NOT the bare sessionId). When the dir
- * name doesn't map to a known parent (e.g. the parent JSONL was
- * deleted), we fall back to using the dir name verbatim so the
- * children still appear (the SessionList will treat them as orphans
- * and render them at top level).
+ * `basenameToParentId` maps the basename dir back to the parent's
+ * actual sessionId (since the dir name includes the timestamp prefix,
+ * NOT the bare sessionId). Without this mapping the sidebar grouping
+ * silently fails because the dir name and sessionId never compare equal.
  *
  * Errors from individual subdirs are swallowed — a corrupted child
  * session must not block the rest of the sidebar listing.
@@ -843,60 +845,34 @@ async function discoverSubagentChildSessions(
   for (const top of topEntries) {
     if (!top.isDirectory) continue;
     const dirName = top.name;
-    // Resolve the dir name to the parent's actual sessionId via the
-    // basename map. Fall back to the dir name when no match (the
-    // SessionList will render unmatched children as orphans at top
-    // level — never silently lost).
+    // Skip well-known sibling dirs the plugin creates at the same
+    // level for unrelated reasons (artifacts, etc.) — these aren't
+    // parent-named child roots.
+    if (dirName === "subagent-artifacts") continue;
+
     const parentSessionId = basenameToParentId.get(dirName) ?? dirName;
     const parentDir = join(dir, dirName);
 
-    // Layout 2 (flat): collect any .jsonl files directly under the
-    // parent dir before descending into runId subdirs.
-    let parentDirEntries: { name: string; isDirectory: boolean }[];
-    try {
-      const entries = await readdir(parentDir, { withFileTypes: true });
-      parentDirEntries = entries.map((d) => ({ name: d.name, isDirectory: d.isDirectory() }));
-    } catch {
-      continue;
-    }
-
-    const hasFlatJsonls = parentDirEntries.some((e) => !e.isDirectory && e.name.endsWith(".jsonl"));
-    if (hasFlatJsonls) {
-      // Flat layout: SessionManager.list reads .jsonl files directly
-      // in parentDir. No runId.
+    // Recursively find every dir containing .jsonl files under
+    // <parentDir>, capped at depth 4 (the deepest layout observed
+    // is <basename>/<runId>/run-N/session.jsonl, which is depth 3 —
+    // depth 4 leaves headroom for one more level the plugin might
+    // add in future versions). Depth cap also protects against
+    // symlink loops without needing a visited-set.
+    const sessionDirs = await collectJsonlDirs(parentDir, 0, 4);
+    for (const sd of sessionDirs) {
       let infos: SessionInfo[];
       try {
-        infos = await SessionManager.list(workspacePath, parentDir);
-      } catch {
-        infos = [];
-      }
-      for (const info of infos) {
-        const ds: DiscoveredSession = {
-          sessionId: info.id,
-          path: info.path,
-          cwd: info.cwd,
-          createdAt: info.created,
-          modifiedAt: info.modified,
-          messageCount: info.messageCount,
-          firstMessage: info.firstMessage,
-          parentSessionId,
-        };
-        if (info.name !== undefined) ds.name = info.name;
-        out.push(ds);
-      }
-    }
-
-    // Layout 1 (nested with runId): each subdirectory of parentDir is
-    // a runId, holding the actual child JSONLs.
-    const runDirNames = parentDirEntries.filter((e) => e.isDirectory).map((e) => e.name);
-    for (const runId of runDirNames) {
-      const runDir = join(parentDir, runId);
-      let infos: SessionInfo[];
-      try {
-        infos = await SessionManager.list(workspacePath, runDir);
+        infos = await SessionManager.list(workspacePath, sd);
       } catch {
         continue;
       }
+      // Reconstruct runId from path segments between parentDir and sd.
+      // Single segment → that's the runId. Multiple segments
+      // (e.g. <runId>/run-0) → join with '/' so the sidebar can show
+      // the full run identity in its title attribute.
+      const rel = sd.slice(parentDir.length).replace(/^[/\\]+/, "");
+      const runId = rel.length > 0 ? rel : undefined;
       for (const info of infos) {
         const ds: DiscoveredSession = {
           sessionId: info.id,
@@ -907,12 +883,40 @@ async function discoverSubagentChildSessions(
           messageCount: info.messageCount,
           firstMessage: info.firstMessage,
           parentSessionId,
-          runId,
         };
         if (info.name !== undefined) ds.name = info.name;
+        if (runId !== undefined) ds.runId = runId;
         out.push(ds);
       }
     }
+  }
+  return out;
+}
+
+/**
+ * Recursively find every directory under `root` (inclusive) that
+ * contains at least one `.jsonl` file. Bounded by `maxDepth` to
+ * cap the worst case and defend against symlink loops.
+ */
+async function collectJsonlDirs(root: string, depth: number, maxDepth: number): Promise<string[]> {
+  if (depth > maxDepth) return [];
+  let entries: { name: string; isDirectory: boolean; isFile: boolean }[];
+  try {
+    const list = await readdir(root, { withFileTypes: true });
+    entries = list.map((d) => ({
+      name: d.name,
+      isDirectory: d.isDirectory(),
+      isFile: d.isFile(),
+    }));
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  if (entries.some((e) => e.isFile && e.name.endsWith(".jsonl"))) out.push(root);
+  for (const e of entries) {
+    if (!e.isDirectory) continue;
+    const child = join(root, e.name);
+    out.push(...(await collectJsonlDirs(child, depth + 1, maxDepth)));
   }
   return out;
 }
