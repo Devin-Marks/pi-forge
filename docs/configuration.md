@@ -267,6 +267,40 @@ and `<projectPath>/.mcp.json` (project-scoped). Manage them from the
 [`mcp.md`](./mcp.md) for the field reference, transport options,
 auth model, and troubleshooting.
 
+## Pi plugins
+
+The pi CLI supports community plugins installed via
+`pi install npm:<package>`. Plugin sources land under
+`${PI_CONFIG_DIR}/packages/<name>` and register additional tools at
+session-creation time. Because `PI_CONFIG_DIR` (default `~/.pi/agent`)
+is bind-mounted into the container, host-side `pi install` automatically
+exposes the plugin to the container as well.
+
+### pi-subagents
+
+[`pi-subagents`](https://github.com/nicobailon/pi-subagents) adds a
+`subagent` tool that lets the agent delegate work to spawned child
+sessions, sequentially or in parallel. pi-forge surfaces it without
+extra config:
+
+- Child sessions are discovered on disk under the parent's directory
+  (`<sessionDir>/<projectId>/<basenameOfParentJsonl>/<runId>/run-N/session.jsonl`)
+  and rendered nested under their parent in the session sidebar.
+- The `subagent` tool result renders as a rich card with one row per
+  child + a one-click jump into each child session.
+- The project's session list refetches on every `subagent`
+  `tool_execution_end` so newly spawned children appear without a
+  manual refresh, and on parent dispose so cascade-deleted children
+  disappear.
+- Container-side, the plugin's `spawn("pi", ...)` works because
+  `/app/node_modules/.bin` is on PATH (the `pi` CLI ships as a bin
+  shim of `@mariozechner/pi-coding-agent`, which pi-forge already
+  depends on).
+
+To install: `pi install npm:pi-subagents` on the host. The plugin
+files travel into the container via the mounted `~/.pi/agent`; no
+in-container install step is needed.
+
 ## See also
 
 - [`README.md`](../README.md) — pi-forge env vars + Docker quickstart

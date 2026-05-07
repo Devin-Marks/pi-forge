@@ -85,6 +85,14 @@ details, follow the links in [Documentation](#documentation) below.
   scrubbed environment (no `JWT_SECRET`, `API_KEY`, provider keys) so a stuck
   agent can't `printenv` pi-forge secrets back into the transcript. Same
   posture as the integrated terminal and the `!` exec route.
+- **pi-subagents plugin support** — install the community
+  [`pi-subagents`](https://github.com/nicobailon/pi-subagents) plugin
+  (`pi install npm:pi-subagents`) and the agent gains a `subagent` tool for
+  delegating work to spawned child sessions, sequentially or in parallel.
+  pi-forge groups the children under their parent in the sidebar, renders the
+  tool result as a rich card with one-click jump into each child, refreshes the
+  list when new children appear, and cascade-deletes children when the parent
+  is removed. Works in the Docker image out of the box.
 
 ### Sessions & chat
 

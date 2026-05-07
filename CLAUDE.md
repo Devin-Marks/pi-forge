@@ -366,8 +366,16 @@ These are facts about the pi SDK that are easy to get wrong:
   directly. Extract it with `event.details?.diff` or similar — check the actual
   type definition in `node_modules/@mariozechner/pi-coding-agent/dist/` for the
   exact field name before using it.
-- Pi does NOT have native sub-agent support in the SDK. Do not try to implement
-  sub-agent session tracking — it is explicitly deferred.
+- Pi does NOT have native sub-agent support in the SDK — there is no
+  "child session created" event. Sub-agent integration is provided by the
+  community [`pi-subagents`](https://github.com/nicobailon/pi-subagents)
+  plugin and surfaced in pi-forge by: (a) discovering child JSONLs at
+  `<sessionDir>/<projectId>/<basename>/<runId>/run-N/session.jsonl` in
+  `discoverSessionsOnDisk`, (b) refetching the project session list on
+  `tool_execution_end` for `toolName === "subagent"` and on parent dispose
+  (`session-store.ts`), (c) cascade-deleting the parent's sibling subagent
+  dir in `deleteColdSession`. The plugin shells out to the `pi` CLI; the
+  Docker image puts it on PATH via `/app/node_modules/.bin`.
 - `session.fork()` creates a new session FILE. The new session ID is returned.
   The registry must then load this new session before it can be used.
 - `session.navigateTree()` operates IN-PLACE on the current session file. It does
@@ -690,9 +698,6 @@ test-terminal     PTY WebSocket + idle-reap
 
 ## Known Limitations & Deferred Work
 
-- **Sub-agent session dropdown** — pi does not natively expose sub-agent sessions
-  via the SDK. The `pi-subagents` community package exists but requires scraping
-  temp files rather than subscribing to SDK events. Deferred indefinitely.
 - **GitHub integration** — GitHub OAuth, PR creation, issue context. Deferred.
 - **Multi-agent parallel worktrees** — parallel agent runs against git worktrees.
   Not feasible with current pi SDK without significant custom work. Deferred.
