@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
 import { EMPTY_SESSIONS, useSessionStore } from "../store/session-store";
 import { useProjectStore } from "../store/project-store";
@@ -210,10 +210,17 @@ export function SessionList({ projectId }: Props) {
           </div>
         </div>
       )}
-      {topLevel.map((s) => {
+      {/*
+        Single-pass render: each parent row, immediately followed by
+        its children when the parent is expanded. flatMap returns
+        an array per parent — React unwraps it inline so the children
+        appear directly under their parent in DOM order, not as a
+        separate group at the bottom of the list.
+      */}
+      {topLevel.flatMap((s) => {
         const children = childrenByParent.get(s.sessionId) ?? [];
         const isExpanded = expandedParents.has(s.sessionId);
-        return (
+        const rows: ReactNode[] = [
           <SessionRow
             key={s.sessionId}
             session={s}
@@ -232,44 +239,34 @@ export function SessionList({ projectId }: Props) {
             onCommitRename={(id) => void commitRename(id)}
             onToggleExpanded={toggleExpanded}
             onAskDelete={(payload) => setDeleteDialog(payload)}
-          />
-        );
-        // Children render right below their parent when expanded. We
-        // can't return an array from inside the main map (React's key
-        // rules want flat children at the parent level), so the loop
-        // is split into two steps via a fragment-style flat-map below.
-      })}
-      {/*
-        Render children under each expanded parent. We do this in a
-        second pass so each parent + its children sit consecutively;
-        keeping the markup in a fragment instead of a nested
-        component preserves the same active/selected styling logic.
-      */}
-      {topLevel.flatMap((parent) => {
-        const children = childrenByParent.get(parent.sessionId);
-        if (children === undefined) return [];
-        if (!expandedParents.has(parent.sessionId)) return [];
-        return children.map((c) => (
-          <SessionRow
-            key={c.sessionId}
-            session={c}
-            isActive={c.sessionId === activeSessionId}
-            isSelected={selectedIds.has(c.sessionId)}
-            isRenaming={renamingId === c.sessionId}
-            renameDraft={renameDraft}
-            childCount={0}
-            isExpanded={false}
-            isChild={true}
-            onSelect={selectSession}
-            onToggleSelect={toggleSelected}
-            onStartRename={startRename}
-            onChangeRename={setRenameDraft}
-            onRenameKeyDown={onRenameKeyDown}
-            onCommitRename={(id) => void commitRename(id)}
-            onToggleExpanded={toggleExpanded}
-            onAskDelete={(payload) => setDeleteDialog(payload)}
-          />
-        ));
+          />,
+        ];
+        if (isExpanded) {
+          for (const c of children) {
+            rows.push(
+              <SessionRow
+                key={c.sessionId}
+                session={c}
+                isActive={c.sessionId === activeSessionId}
+                isSelected={selectedIds.has(c.sessionId)}
+                isRenaming={renamingId === c.sessionId}
+                renameDraft={renameDraft}
+                childCount={0}
+                isExpanded={false}
+                isChild={true}
+                onSelect={selectSession}
+                onToggleSelect={toggleSelected}
+                onStartRename={startRename}
+                onChangeRename={setRenameDraft}
+                onRenameKeyDown={onRenameKeyDown}
+                onCommitRename={(id) => void commitRename(id)}
+                onToggleExpanded={toggleExpanded}
+                onAskDelete={(payload) => setDeleteDialog(payload)}
+              />,
+            );
+          }
+        }
+        return rows;
       })}
       <ConfirmDialog
         open={deleteDialog !== undefined}
