@@ -7,6 +7,9 @@ dist/
 packages/*/dist/
 *.tgz
 
+# npm publish staging (assembled by scripts/build-publish-dir.mjs)
+publish/
+
 # TypeScript incremental build info
 *.tsbuildinfo
 

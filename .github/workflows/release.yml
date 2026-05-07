@@ -212,3 +212,74 @@ jobs:
           generate_release_notes: ${{ steps.notes.outputs.have_notes != 'true' }}
           prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: false
+
+  npm-publish:
+    name: Publish pi-forge to npm
+    needs: check-version
+    runs-on: ubuntu-latest
+    # Trusted Publisher (npm OIDC) is configured on the npm side to
+    # require this environment claim. The `production` GitHub
+    # Environment must exist under repo Settings → Environments — if
+    # it's missing the workflow fails with "Environment 'production'
+    # not found" before any step runs. Match this name to whatever
+    # was set in the trusted publisher config on npmjs.com.
+    environment: production
+    permissions:
+      # `id-token: write` is what `npm publish` uses to mint a sigstore
+      # OIDC token. With trusted publishers configured, npm exchanges
+      # that token for a short-lived publish credential — no long-lived
+      # NPM_TOKEN secret in the repo. Provenance attestation is the
+      # same mechanism, attached automatically when this permission +
+      # publishConfig.provenance are both set.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        # Setting registry-url switches the npm CLI's auth flow into
+        # the registry-aware mode required for OIDC. Without this,
+        # `npm publish` would silently use the default user-level
+        # config and fail authentication.
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build workspace
+        # Produces packages/server/dist/ + packages/client/dist/, the
+        # inputs to the publish-dir assembler.
+        run: npm run build
+
+      - name: Assemble publish/ staging dir
+        # Synthesizes publish/package.json (name=pi-forge, version
+        # from root, server's deps hoisted), copies built server +
+        # client artifacts, copies the bin shim and LICENSE.
+        run: npm run build:publish
+
+      - name: Verify staged version matches tag
+        # Belt-and-suspenders. check-version already verified all three
+        # source package.json files agree with the tag, but the synthetic
+        # publish/package.json is a NEW input — assert it independently
+        # so a bug in build-publish-dir.mjs can't ship a mislabeled
+        # tarball.
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          synth=$(node -p "require('./publish/package.json').version")
+          if [ "$synth" != "$tag" ]; then
+            echo "::error::publish/package.json version $synth does not match tag $tag" >&2
+            exit 1
+          fi
+          echo "publish/package.json version $synth ✓"
+
+      - name: Publish to npm
+        # publishConfig in the synthetic package.json sets access=public
+        # and provenance=true, so this is a one-line invocation. The
+        # OIDC dance happens automatically because of `id-token: write`
+        # and the trusted publisher config on the npm side.
+        working-directory: publish
+        run: npm publish
