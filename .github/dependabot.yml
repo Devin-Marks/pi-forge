@@ -1,0 +1,57 @@
+# Dependabot config for pi-forge.
+#
+# Three ecosystems, weekly cadence each. The npm entry covers root
+# plus every workspace under packages/* — Dependabot's npm support
+# auto-discovers workspace-managed packages, so a single root entry
+# is sufficient (no per-workspace duplication needed).
+#
+# The pi SDK trio (`@mariozechner/pi-coding-agent`,
+# `@mariozechner/pi-agent-core`, `@mariozechner/pi-ai`) is pinned to
+# exact versions and requires a manual breaking-change audit per
+# CLAUDE.md. We DO NOT ignore those packages here — Dependabot still
+# opens PRs for them, but the policy is "review carefully, never
+# auto-merge." The PR is a free notification mechanism even when the
+# bump itself isn't safe to land unsupervised.
+#
+# Stale generated dirs (publish/, workspace/) are git-ignored, so
+# Dependabot can't see them — no exclusions needed.
+
+version: 2
+updates:
+  # ----- npm (root + workspaces) -----
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+      include: "scope"
+
+  # ----- GitHub Actions (.github/workflows/*.yml) -----
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
+
+  # ----- Docker (docker/Dockerfile) -----
+  - package-ecosystem: "docker"
+    directory: "/docker"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(docker)"
+      include: "scope"
