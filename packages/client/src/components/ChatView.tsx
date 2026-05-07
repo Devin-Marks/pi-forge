@@ -1028,32 +1028,48 @@ function SubagentResultCard({
   const parsed = parseSubagentDetails(message.details);
   const isManagement = parsed.mode === "management";
   const isUnknown = parsed.mode === "unknown";
+  const count = parsed.results.length;
   const headline =
-    parsed.results.length === 1
-      ? `subagent → ${parsed.results[0]!.agent}`
-      : parsed.results.length > 1
-        ? `subagent → ${parsed.results.length} agents (${parsed.mode})`
+    count === 1
+      ? `Sub-agent: ${parsed.results[0]!.agent}`
+      : count > 1
+        ? `${count} sub-agents (${parsed.mode})`
         : isManagement
-          ? "subagent management"
-          : "subagent";
+          ? "Sub-agent management"
+          : "Sub-agent";
+  // Saturated violet treatment + thicker border so the card pops out
+  // of the chat stream — sub-agent runs are a different *kind* of
+  // event than a normal tool call, and the visual weight should
+  // reflect that. Border-l accent strip mirrors the gh PR-review
+  // surface for a "this matters" feel.
   return (
-    <details
-      open
-      className={`rounded border ${isError ? "border-red-700/40" : "border-purple-900/40"} bg-purple-950/10 text-xs`}
+    <div
+      className={`overflow-hidden rounded-lg border-l-4 ${
+        isError
+          ? "border-l-red-500 border border-red-700/40 bg-red-950/10"
+          : "border-l-violet-500 border border-violet-800/50 bg-violet-950/20"
+      } shadow-sm`}
     >
-      <summary className="cursor-pointer px-3 py-2 text-neutral-200">
-        <span className="inline-flex items-center gap-1.5">
-          <Users size={12} className="text-purple-400" />
-          <span className="font-medium">{headline}</span>
+      <div className="flex items-center justify-between gap-2 border-b border-violet-900/40 bg-violet-950/30 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <Users size={14} className="shrink-0 text-violet-300" />
+          <span className="truncate font-semibold text-violet-100">{headline}</span>
           {parsed.context !== undefined && (
-            <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-400">
+            <span
+              className="shrink-0 rounded bg-violet-900/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-violet-200"
+              title={parsed.context === "fork" ? "Forked from parent context" : "Fresh context"}
+            >
               {parsed.context}
             </span>
           )}
-          {isError && <span className="ml-1 text-red-400">error</span>}
-        </span>
-      </summary>
-      <div className="space-y-2 px-3 pb-3">
+        </div>
+        {isError && (
+          <span className="shrink-0 rounded bg-red-900/40 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-red-200">
+            error
+          </span>
+        )}
+      </div>
+      <div className="space-y-2 p-3">
         {parsed.results.map((r, i) => (
           <SubagentResultRow
             key={r.sessionId ?? `${i}-${r.agent}`}
@@ -1061,7 +1077,7 @@ function SubagentResultCard({
             onOpen={(sid) => setActiveSession(sid)}
           />
         ))}
-        {parsed.results.length === 0 && (isManagement || isUnknown) && (
+        {count === 0 && (isManagement || isUnknown) && (
           // Management calls + unrecognised payloads: keep the raw text
           // visible so the user / a future debugger can see the response.
           <pre className="overflow-auto rounded bg-neutral-950 p-2 font-mono text-[11px] text-neutral-400">
@@ -1069,7 +1085,7 @@ function SubagentResultCard({
           </pre>
         )}
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -1083,34 +1099,40 @@ function SubagentResultRow({
   const failed = result.exitCode !== 0;
   return (
     <div
-      className={`rounded border ${failed ? "border-red-700/40" : "border-neutral-800"} bg-neutral-950 px-2.5 py-2`}
+      className={`rounded border ${failed ? "border-red-700/40" : "border-violet-900/40"} bg-neutral-950/60 p-3`}
     >
-      <div className="flex items-start justify-between gap-2">
+      <div className="mb-2 flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-neutral-300">
-            <span className="font-mono text-purple-300">{result.agent}</span>
-            {failed && <span className="text-red-400">exit {result.exitCode}</span>}
+          <div className="flex items-baseline gap-2">
+            <span className="font-mono text-sm font-medium text-violet-200">{result.agent}</span>
+            {failed && (
+              <span className="text-[11px] font-medium text-red-400">exit {result.exitCode}</span>
+            )}
           </div>
           {result.task.length > 0 && (
-            <div className="mt-0.5 truncate text-neutral-500" title={result.task}>
+            <div className="mt-1 line-clamp-2 text-xs text-neutral-300" title={result.task}>
               {result.task}
             </div>
           )}
         </div>
-        {result.sessionId !== undefined && (
-          <button
-            onClick={() => onOpen(result.sessionId!)}
-            className="inline-flex shrink-0 items-center gap-1 rounded border border-neutral-700 px-2 py-1 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
-            title={result.sessionFile ?? "Open sub-agent session"}
-          >
-            <ExternalLink size={11} />
-            Open
-          </button>
-        )}
       </div>
+      {/* Primary CTA — full-width violet button so it reads as the
+          main action. Keyboard-accessible (button, not anchor) since
+          the navigation is purely client-side store mutation, not a
+          URL change. */}
+      {result.sessionId !== undefined && (
+        <button
+          onClick={() => onOpen(result.sessionId!)}
+          className="mb-1 flex w-full items-center justify-center gap-1.5 rounded bg-violet-700 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-violet-600 focus:outline-none focus:ring-2 focus:ring-violet-400"
+          title={result.sessionFile ?? "Open sub-agent session"}
+        >
+          <ExternalLink size={12} />
+          Open sub-agent session
+        </button>
+      )}
       {result.finalOutput !== undefined && (
-        <details className="mt-1.5">
-          <summary className="cursor-pointer text-[11px] text-neutral-500 hover:text-neutral-300">
+        <details className="mt-2">
+          <summary className="cursor-pointer text-[11px] text-neutral-400 hover:text-neutral-200">
             output
           </summary>
           <pre className="mt-1 max-h-48 overflow-auto rounded bg-neutral-900 p-2 font-mono text-[11px] text-neutral-300">

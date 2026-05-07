@@ -746,10 +746,12 @@ export async function disposeSession(sessionId: string): Promise<boolean> {
  * which parses each file's first-line header and a few message previews.
  *
  * In addition to the project's own top-level JSONLs, this also scans one
- * level deeper for **pi-subagents child sessions**, which the plugin
- * writes to `<sessionDir>/<parentId>/<runId>/*.jsonl`. Each child surfaces
- * with `parentSessionId` and `runId` set, which the sidebar uses to group
- * children under their parent in a chevron dropdown.
+ * level deeper for **pi-subagents child sessions**. The plugin's
+ * `getSubagentSessionRoot` helper names the child dir after the parent
+ * file's full basename (timestamp + id), so we look up the basename
+ * against the top-level session list to recover the actual parent
+ * sessionId — without that mapping the child would inherit the dir name
+ * verbatim and grouping in the sidebar would silently fail.
  *
  * Returns an empty array (not throws) when the per-project dir doesn't exist
  * yet — e.g. a project that has never had a session.
@@ -775,27 +777,51 @@ export async function discoverSessionsOnDisk(
     if (info.name !== undefined) ds.name = info.name;
     return ds;
   });
-  // Surface pi-subagents child sessions as first-class discovered
-  // sessions. The plugin writes children to
-  // `<sessionDir>/<parentId>/<runId>/*.jsonl`. We tag each with the
-  // parent id (the dir name above runId) and runId so the sidebar can
-  // group them.
-  const children = await discoverSubagentChildSessions(workspacePath, dir);
+  // Build a basename → sessionId map from the top-level scan so the
+  // child-discovery pass can resolve dir names like
+  // `2026-05-07T12-34-56-000Z_abc123` back to the parent's actual
+  // sessionId `abc123`. Without this, child grouping in the SessionList
+  // never matches because the dir name and the parent's sessionId differ.
+  const basenameToParentId = new Map<string, string>();
+  for (const info of infos) {
+    const base = basenameNoExt(info.path);
+    if (base !== undefined) basenameToParentId.set(base, info.id);
+  }
+  const children = await discoverSubagentChildSessions(workspacePath, dir, basenameToParentId);
   for (const child of children) out.push(child);
   return out;
 }
 
+/** `/path/to/2026-05-07_abc.jsonl` → `2026-05-07_abc`; undefined for any non-jsonl. */
+function basenameNoExt(filePath: string): string | undefined {
+  const lastSlash = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+  const base = lastSlash >= 0 ? filePath.slice(lastSlash + 1) : filePath;
+  if (!base.endsWith(".jsonl")) return undefined;
+  return base.slice(0, -".jsonl".length);
+}
+
 /**
  * Walk one level deeper than the project's session dir to surface
- * pi-subagents child sessions. Layout:
+ * pi-subagents child sessions.
  *
- *   <dir>/<parentSessionId>/<runId>/<childSessionId>.jsonl
+ * Two layouts to support:
  *
- * pi-subagents creates `<parentSessionId>` as a sibling DIRECTORY to
- * the parent's `.jsonl` (the plugin's `getSubagentSessionRoot` helper).
- * So we list `<dir>` and treat any directory whose name matches the
- * UUID-shape of an existing parent as a candidate child root, then
- * descend into per-`runId` subdirs for the actual child JSONLs.
+ *   1. Nested with runId:    <dir>/<parentBasename>/<runId>/<child>.jsonl
+ *   2. Flat under parent:    <dir>/<parentBasename>/<child>.jsonl
+ *
+ * The plugin's `getSubagentSessionRoot(parentSessionFile)` returns
+ * `<dirname(parentSessionFile)>/<basename(parentSessionFile, ".jsonl")>`,
+ * which collides with neither (it's a directory NAMED after the parent
+ * basename). Whether a runId subdir exists depends on the plugin's run
+ * mode — both shapes are observed in the wild.
+ *
+ * `basenameToParentId` maps the directory name back to the parent's
+ * actual sessionId (since the dir name is the parent's full basename
+ * including timestamp prefix, NOT the bare sessionId). When the dir
+ * name doesn't map to a known parent (e.g. the parent JSONL was
+ * deleted), we fall back to using the dir name verbatim so the
+ * children still appear (the SessionList will treat them as orphans
+ * and render them at top level).
  *
  * Errors from individual subdirs are swallowed — a corrupted child
  * session must not block the rest of the sidebar listing.
@@ -803,6 +829,7 @@ export async function discoverSessionsOnDisk(
 async function discoverSubagentChildSessions(
   workspacePath: string,
   dir: string,
+  basenameToParentId: Map<string, string>,
 ): Promise<DiscoveredSession[]> {
   const out: DiscoveredSession[] = [];
   let topEntries: { name: string; isDirectory: boolean }[];
@@ -815,21 +842,55 @@ async function discoverSubagentChildSessions(
   }
   for (const top of topEntries) {
     if (!top.isDirectory) continue;
-    const parentId = top.name;
-    const parentDir = join(dir, parentId);
-    let runDirs: string[];
+    const dirName = top.name;
+    // Resolve the dir name to the parent's actual sessionId via the
+    // basename map. Fall back to the dir name when no match (the
+    // SessionList will render unmatched children as orphans at top
+    // level — never silently lost).
+    const parentSessionId = basenameToParentId.get(dirName) ?? dirName;
+    const parentDir = join(dir, dirName);
+
+    // Layout 2 (flat): collect any .jsonl files directly under the
+    // parent dir before descending into runId subdirs.
+    let parentDirEntries: { name: string; isDirectory: boolean }[];
     try {
-      const runEntries = await readdir(parentDir, { withFileTypes: true });
-      runDirs = runEntries.filter((d) => d.isDirectory()).map((d) => d.name);
+      const entries = await readdir(parentDir, { withFileTypes: true });
+      parentDirEntries = entries.map((d) => ({ name: d.name, isDirectory: d.isDirectory() }));
     } catch {
       continue;
     }
-    for (const runId of runDirs) {
+
+    const hasFlatJsonls = parentDirEntries.some((e) => !e.isDirectory && e.name.endsWith(".jsonl"));
+    if (hasFlatJsonls) {
+      // Flat layout: SessionManager.list reads .jsonl files directly
+      // in parentDir. No runId.
+      let infos: SessionInfo[];
+      try {
+        infos = await SessionManager.list(workspacePath, parentDir);
+      } catch {
+        infos = [];
+      }
+      for (const info of infos) {
+        const ds: DiscoveredSession = {
+          sessionId: info.id,
+          path: info.path,
+          cwd: info.cwd,
+          createdAt: info.created,
+          modifiedAt: info.modified,
+          messageCount: info.messageCount,
+          firstMessage: info.firstMessage,
+          parentSessionId,
+        };
+        if (info.name !== undefined) ds.name = info.name;
+        out.push(ds);
+      }
+    }
+
+    // Layout 1 (nested with runId): each subdirectory of parentDir is
+    // a runId, holding the actual child JSONLs.
+    const runDirNames = parentDirEntries.filter((e) => e.isDirectory).map((e) => e.name);
+    for (const runId of runDirNames) {
       const runDir = join(parentDir, runId);
-      // SessionManager.list will read the JSONL headers. Pass the run
-      // dir so the SDK's existsSync guard is happy and so any future
-      // session files the manager creates inside this dir land in the
-      // right place.
       let infos: SessionInfo[];
       try {
         infos = await SessionManager.list(workspacePath, runDir);
@@ -845,7 +906,7 @@ async function discoverSubagentChildSessions(
           modifiedAt: info.modified,
           messageCount: info.messageCount,
           firstMessage: info.firstMessage,
-          parentSessionId: parentId,
+          parentSessionId,
           runId,
         };
         if (info.name !== undefined) ds.name = info.name;

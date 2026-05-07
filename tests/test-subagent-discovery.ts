@@ -200,6 +200,65 @@ async function main(): Promise<void> {
       resumed.sessionId === childA,
       `got ${resumed.sessionId}`,
     );
+
+    // 6. REALISTIC pi-subagents layout: the plugin's
+    // `getSubagentSessionRoot` names the child dir using the parent
+    // FILE's full basename (timestamp + id), not the bare parent id.
+    // The discovery has to map basename → parent's actual sessionId
+    // via the top-level scan, otherwise the child's `parentSessionId`
+    // ends up as the timestamped string and SessionList grouping
+    // silently fails. This is the regression that motivated the
+    // basenameToParentId map; without it, this assertion would tag
+    // the child with `2026-...-realistic-parent` instead of
+    // `realistic-parent`.
+    const realisticParentId = "realistic-parent-" + randomUUID().slice(0, 6);
+    const realisticBasename = "2026-05-07T12-34-56-000Z_" + realisticParentId;
+    const realisticParentPath = join(projectSessionDir, `${realisticBasename}.jsonl`);
+    await writeChildSessionFile(realisticParentPath, realisticParentId, project.path);
+    const realisticRunId = "run-" + randomUUID().slice(0, 6);
+    const realisticChildId = randomUUID();
+    const realisticChildPath = join(
+      projectSessionDir,
+      realisticBasename, // dir named after parent's full basename, NOT just the id
+      realisticRunId,
+      `${realisticChildId}.jsonl`,
+    );
+    await writeChildSessionFile(realisticChildPath, realisticChildId, project.path);
+    const rediscovered = await registry.discoverSessionsOnDisk(project.id, project.path);
+    const realisticChildEntry = rediscovered.find((d) => d.sessionId === realisticChildId);
+    assert(
+      "realistic-layout child was discovered",
+      realisticChildEntry !== undefined,
+      `child id=${realisticChildId} not in ${rediscovered.map((d) => d.sessionId).join(",")}`,
+    );
+    assert(
+      "realistic-layout child's parentSessionId resolves via basename map",
+      realisticChildEntry?.parentSessionId === realisticParentId,
+      `got parentSessionId=${realisticChildEntry?.parentSessionId} expected=${realisticParentId}`,
+    );
+
+    // 7. FLAT layout (no runId subdir): some pi-subagents run modes
+    // write children directly under <parentBasename>/, not under
+    // <parentBasename>/<runId>/. Discovery must surface these too.
+    const flatParentId = "flat-parent-" + randomUUID().slice(0, 6);
+    const flatBasename = "2026-05-07T13-00-00-000Z_" + flatParentId;
+    const flatParentPath = join(projectSessionDir, `${flatBasename}.jsonl`);
+    await writeChildSessionFile(flatParentPath, flatParentId, project.path);
+    const flatChildId = randomUUID();
+    const flatChildPath = join(projectSessionDir, flatBasename, `${flatChildId}.jsonl`);
+    await writeChildSessionFile(flatChildPath, flatChildId, project.path);
+    const reFlat = await registry.discoverSessionsOnDisk(project.id, project.path);
+    const flatChildEntry = reFlat.find((d) => d.sessionId === flatChildId);
+    assert(
+      "flat-layout child (no runId subdir) was discovered",
+      flatChildEntry !== undefined,
+      `child id=${flatChildId} not in ${reFlat.map((d) => d.sessionId).join(",")}`,
+    );
+    assert(
+      "flat-layout child's parentSessionId resolves and runId is undefined",
+      flatChildEntry?.parentSessionId === flatParentId && flatChildEntry?.runId === undefined,
+      `parentSessionId=${flatChildEntry?.parentSessionId} runId=${flatChildEntry?.runId}`,
+    );
   } finally {
     await registry.disposeAllSessions();
     // Clean every temp dir we created. Safe to ignore failures —
