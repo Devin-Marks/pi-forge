@@ -831,8 +831,22 @@ function Tree(props: TreeProps) {
   return (
     <li>
       <div
-        className={`group flex items-center gap-1 px-2 py-0.5 hover:bg-neutral-900 ${
-          isSelected ? "bg-emerald-900/20" : ""
+        // Selection styling: a saturated 2-px LEFT BORDER + tinted bg
+        // gives an unambiguous "this row is selected" cue that stays
+        // legible against the dark theme and survives hover. Earlier
+        // version was `bg-emerald-900/20` only (close to neutral-900
+        // at low alpha) plus a `hover:bg-neutral-900` that completely
+        // hid the selection on cursor-over. Border lives on every row
+        // (transparent when unselected) so toggling selection doesn't
+        // shift content by 2 px.
+        //
+        // Blue, not emerald, to disambiguate from the drop-target
+        // styling below — drop-target keeps its emerald ring so
+        // dragging onto a selected row is still obvious.
+        className={`group flex items-center gap-1 border-l-2 py-0.5 pr-2 ${
+          isSelected
+            ? "border-blue-400 bg-blue-500/15 hover:bg-blue-500/25"
+            : "border-transparent hover:bg-neutral-900"
         } ${isDropTarget ? "bg-emerald-900/30 ring-1 ring-emerald-700/50" : ""}`}
         style={{ paddingLeft: `${depth * 12 + 6}px` }}
         // Right-click → context menu. Skip while renaming so the input

@@ -368,12 +368,18 @@ function SessionRow(props: SessionRowProps) {
       : `session ${s.sessionId.slice(0, 6)}`);
   return (
     <div
-      className={`group flex items-center gap-1 rounded ${isChild ? "ml-4" : ""} px-2 py-0.5 text-xs ${
+      // Multiselect styling matches the file-tree's selection cue:
+      // saturated 2-px LEFT BORDER + tinted bg + hover that doesn't
+      // erase the selection. Border lives on every row (transparent
+      // when unselected) so toggling selection doesn't shift content
+      // by 2 px. Blue, not emerald, to disambiguate from any future
+      // success / drop affordances on these rows.
+      className={`group flex items-center gap-1 rounded border-l-2 ${isChild ? "ml-4" : ""} px-2 py-0.5 text-xs ${
         isSelected
-          ? "bg-emerald-900/20 text-neutral-100"
+          ? "border-blue-400 bg-blue-500/15 text-neutral-100 hover:bg-blue-500/25"
           : isActive
-            ? "bg-neutral-800 text-neutral-100"
-            : "text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
+            ? "border-transparent bg-neutral-800 text-neutral-100"
+            : "border-transparent text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
       }`}
     >
       {/* Chevron column. Only parents with children get an interactive
