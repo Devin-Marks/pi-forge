@@ -25,16 +25,13 @@ export function McpStatusBadge() {
   if (data.total === 0 && data.enabled) return null;
 
   const { enabled, connected, total } = data;
-  let dotClass = "bg-neutral-600";
-  if (!enabled) {
-    dotClass = "bg-neutral-600";
-  } else if (connected === total) {
-    dotClass = "bg-emerald-500";
-  } else if (connected === 0) {
-    dotClass = "bg-red-500";
-  } else {
-    dotClass = "bg-amber-400";
-  }
+  const dotClass = !enabled
+    ? "bg-neutral-600"
+    : connected === total
+      ? "bg-emerald-500"
+      : connected === 0
+        ? "bg-red-500"
+        : "bg-amber-400";
 
   const label = !enabled ? "MCP off" : `MCP ${connected}/${total}`;
   const title = !enabled
