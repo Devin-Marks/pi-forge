@@ -92,7 +92,19 @@ export default tseslint.config(
       "react-refresh": reactRefresh,
     },
     rules: {
-      ...reactHooks.configs.recommended.rules,
+      // Stick to the canonical hooks rules. v7's `recommended` set
+      // pulls in the React Compiler rule pack (set-state-in-effect,
+      // refs, purity, immutability, preserve-manual-memoization,
+      // static-components, error-boundaries, etc.) — those are
+      // aspirational checks for code that opts INTO the React
+      // Compiler. pi-forge doesn't, and many of the patterns those
+      // rules flag (refresh-on-state-change effects, ref mutations
+      // for plumbing like AbortControllers, intentional re-renders
+      // on websocket reconnect) are deliberate design choices in
+      // this codebase. Re-enable individually if a particular rule
+      // turns out to surface real bugs.
+      "react-hooks/rules-of-hooks": "error",
+      "react-hooks/exhaustive-deps": "warn",
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
       "@typescript-eslint/no-unused-vars": [
         "error",
