@@ -365,13 +365,27 @@ export async function listAllFiles(rootPath: string): Promise<string[]> {
   return out;
 }
 
+/**
+ * Recursive walk that emits BOTH files and directories. Directories
+ * are emitted with a trailing `/` so the chat input's `@` autocomplete
+ * (and any other consumer) can tell them apart at a glance — same
+ * convention as `ls -F`. Files have no trailing slash. The
+ * skip-list (`node_modules`, `.git`, etc.) still applies — those
+ * dirs aren't emitted nor descended into.
+ */
 async function walkFlat(dir: string, root: string, relPath: string, out: string[]): Promise<void> {
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
   for (const entry of entries) {
     const name = entry.name;
     if (entry.isDirectory()) {
       if (TREE_SKIP_DIRS.has(name)) continue;
-      await walkFlat(join(dir, name), root, relPath === "" ? name : `${relPath}/${name}`, out);
+      const dirRel = relPath === "" ? name : `${relPath}/${name}`;
+      // Emit the directory itself (with trailing `/`) so chat
+      // `@`-autocomplete can offer folder references that the LLM
+      // explores via its read/grep/find tools — see
+      // `expandFileReferences` for the directory-marker handling.
+      out.push(`${dirRel}/`);
+      await walkFlat(join(dir, name), root, dirRel, out);
     } else if (entry.isFile()) {
       out.push(relPath === "" ? name : `${relPath}/${name}`);
     }
@@ -414,22 +428,27 @@ function looksBinary(buf: Buffer): boolean {
 /**
  * Lightweight existence + safety + binary-sniff for `@<path>` chat
  * references. Doesn't read the whole file — just verifies the path is
- * safe, stats it, and peeks the first 8 KB for the binary heuristic.
+ * safe, stats it, and (for files) peeks the first 8 KB for the binary
+ * heuristic.
  *
  * Used by `expandFileReferences` so we can leave a literal `@<path>`
  * marker in the prompt (the model handles loading content via its
- * read tool) without burning the read on attestable text files of
- * any size.
+ * read/ls/find tools) without burning the read on attestable text
+ * files of any size.
  *
- * Throws the same error classes as `readFile` (PathOutsideRootError,
- * NotFoundError, NotAFileError) so the caller's existing error
- * handling applies.
+ * Returns a discriminated kind so `expandFileReferences` can branch
+ * on file-vs-directory. Directories no longer throw — they were
+ * previously rejected (`NotAFileError` → "path is a directory"
+ * error message), but the model already has tools for exploring
+ * directory contents, so passing the path through as a literal
+ * marker is more useful.
+ *
+ * Still throws PathOutsideRootError / NotFoundError for anything
+ * that isn't a regular file or directory under the root.
  */
-export interface ReferenceCheckResult {
-  path: string;
-  size: number;
-  binary: boolean;
-}
+export type ReferenceCheckResult =
+  | { kind: "file"; path: string; size: number; binary: boolean }
+  | { kind: "directory"; path: string };
 
 export async function checkFileReference(
   absPath: string,
@@ -438,6 +457,9 @@ export async function checkFileReference(
   const resolved = await verifyPathSafe(absPath, root);
   const st = await stat(resolved).catch(() => undefined);
   if (st === undefined) throw new NotFoundError(resolved);
+  if (st.isDirectory()) {
+    return { kind: "directory", path: resolved };
+  }
   if (!st.isFile()) throw new NotAFileError(resolved);
   // Real partial read — open the file and read just the first 8 KB
   // for the NUL-byte heuristic. Avoids slurping the whole file just
@@ -447,6 +469,7 @@ export async function checkFileReference(
     const buf = Buffer.alloc(8000);
     const { bytesRead } = await fh.read(buf, 0, 8000, 0);
     return {
+      kind: "file",
       path: resolved,
       size: st.size,
       binary: looksBinary(buf.subarray(0, bytesRead)),

@@ -24,14 +24,21 @@ import { checkFileReference, readFile } from "./file-manager.js";
  *     `@<path>`               — greedy non-whitespace; common case.
  *     `@"<path with spaces>"` — anything that isn't a `"` or newline.
  * - Resolved against the project's workspace root via file-manager's
- *   path-traversal-safe `checkFileReference`. Three outcomes:
- *     inline  → file ≤ INLINE_THRESHOLD; replace marker with a fenced
- *                code block. Language hint derived from extension.
- *     defer   → file > INLINE_THRESHOLD; leave the literal `@<path>`
- *                reference for the model to load on demand.
- *     error   → missing / outside root / directory / binary. Replace
- *                marker with `[@<path> not included: <reason>]` so
- *                neither user nor model is left guessing.
+ *   path-traversal-safe `checkFileReference`. Four outcomes:
+ *     inline    → file ≤ INLINE_THRESHOLD; replace marker with a
+ *                  fenced code block. Language hint derived from
+ *                  extension.
+ *     defer     → file > INLINE_THRESHOLD; leave the literal `@<path>`
+ *                  reference for the model to load on demand.
+ *     directory → path is a directory; preserve the marker normalized
+ *                  with a trailing `/` (e.g. `@src/components/`) so
+ *                  the model can ls/find/grep it via its tools. We
+ *                  intentionally do NOT bulk-embed directory contents
+ *                  — large dirs would blow the context window, and
+ *                  the model has cheap tools to explore on demand.
+ *     error     → missing / outside root / binary. Replace marker
+ *                  with `[@<path> not included: <reason>]` so neither
+ *                  user nor model is left guessing.
  *
  * Multiple markers in one prompt all process independently.
  */
@@ -100,15 +107,17 @@ export async function expandFileReferences(text: string, workspacePath: string):
   type Outcome =
     | { kind: "inline"; text: string }
     | { kind: "defer" }
+    | { kind: "directory" }
     | { kind: "error"; reason: string };
 
   const outcomes: Outcome[] = await Promise.all(
     matches.map(async (mm): Promise<Outcome> => {
       try {
         const abs = join(workspacePath, mm.path);
-        // Cheap up-front check (path safety + stat + 8 KB sniff) so we
-        // can decide inline-vs-defer without reading large files.
+        // Cheap up-front check (path safety + stat + 8 KB sniff for
+        // files) so we can decide outcome without reading large files.
         const check = await checkFileReference(abs, workspacePath);
+        if (check.kind === "directory") return { kind: "directory" };
         if (check.binary) return { kind: "error", reason: "binary file" };
         if (check.size > INLINE_THRESHOLD_BYTES) return { kind: "defer" };
         // Small enough to inline — read the whole file and emit a
@@ -132,8 +141,11 @@ export async function expandFileReferences(text: string, workspacePath: string):
         if (e.name === "PathOutsideRootError") {
           return { kind: "error", reason: "path is outside the project root" };
         }
+        // NotAFileError now only fires for non-regular non-directory
+        // entries (sockets, devices, etc.) — directories are handled
+        // explicitly via the directory outcome above.
         if (e.name === "NotAFileError") {
-          return { kind: "error", reason: "path is a directory, not a file" };
+          return { kind: "error", reason: "path is not a regular file or directory" };
         }
         return { kind: "error", reason: "unreadable" };
       }
@@ -158,6 +170,14 @@ export async function expandFileReferences(text: string, workspacePath: string):
       out = `${before}${marker}\n${outcome.text}\n${after}`;
     } else if (outcome.kind === "defer") {
       out = `${before}${marker}${after}`;
+    } else if (outcome.kind === "directory") {
+      // Normalize the directory marker to end with `/` so the model
+      // can tell file vs folder at a glance — same convention as
+      // `ls -F`. If the user already typed the trailing slash we
+      // keep their form; otherwise we append one.
+      const dirPath = mm.path.endsWith("/") ? mm.path : `${mm.path}/`;
+      const dirMarker = /\s/.test(dirPath) ? `@"${dirPath}"` : `@${dirPath}`;
+      out = `${before}${dirMarker}${after}`;
     } else {
       out = `${before}[${marker} not included: ${outcome.reason}]${after}`;
     }
