@@ -31,6 +31,25 @@ updates:
       prefix: "chore(deps)"
       prefix-development: "chore(deps-dev)"
       include: "scope"
+    ignore:
+      # Suppress @xterm/xterm major bumps until the satellite addon
+      # ecosystem catches up. As of writing, `@xterm/xterm@6` is
+      # stable but `@xterm/addon-fit` and `@xterm/addon-web-links`
+      # only have `0.12.0-beta.X` releases that match v6 — their
+      # current stable lines (0.10 / 0.11) peer-dep `@xterm/xterm@^5`.
+      # Auto-bumping xterm alone (as #49 did) leaves a peer-dep
+      # mismatch that soft-passes on existing lockfiles but breaks
+      # `npm ci` / Docker rebuilds with strict resolution.
+      #
+      # Re-evaluate periodically with:
+      #   npm view @xterm/addon-fit versions --json     | jq '. | map(select(test("^0\\.12\\.[0-9]+$")))'
+      #   npm view @xterm/addon-web-links versions --json | jq '. | map(select(test("^0\\.13\\.[0-9]+$")))'
+      # When both have a non-beta release, drop this rule and cut a
+      # coordinated `@xterm/*` upgrade PR (xterm + both addons in
+      # lockstep).
+      - dependency-name: "@xterm/xterm"
+        update-types:
+          - "version-update:semver-major"
 
   # ----- GitHub Actions (.github/workflows/*.yml) -----
   - package-ecosystem: "github-actions"
