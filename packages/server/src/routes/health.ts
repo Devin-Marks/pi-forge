@@ -9,21 +9,45 @@ import { config, passwordAuthEnabled } from "../config.js";
 /**
  * Read the server's own package.json once at module load. Used by the
  * /ui-config response so the browser can render an "About" footer
- * with the deployed version. Resolves relative to the compiled
- * server file (`packages/server/dist/routes/health.js`) — three
- * `../` to reach the package root regardless of whether this runs
- * from `dist/` (production) or `src/` (tsx watch dev mode).
+ * with the deployed version.
+ *
+ * The published artifact layouts to handle:
+ *   - In-repo dev (tsx watch from src/): code lives at
+ *     `packages/server/src/routes/health.ts`. Up-two = `packages/server/`.
+ *   - In-repo built (dist/): code lives at
+ *     `packages/server/dist/routes/health.js`. Up-two = `packages/server/`.
+ *   - Docker image (built): code lives at
+ *     `/app/packages/server/dist/routes/health.js`. Up-two =
+ *     `/app/packages/server/`.
+ *   - npm publish (flat): the synthetic publish dir flattens both
+ *     workspaces under `dist/`, so code lives at
+ *     `<install>/dist/server/routes/health.js`. Up-two would be
+ *     `<install>/dist/` — which has NO package.json. Up-three is
+ *     `<install>/` which has the synthetic `package.json` carrying
+ *     the right version.
+ *
+ * v1.1.4 shipped with only the up-two probe and surfaced "0.0.0" in
+ * the About panel for npm-installed users. We now try up-two first
+ * (preserves the workspace package.json's authority for in-repo and
+ * Docker), then up-three (catches the published flat layout). First
+ * resolvable hit wins; if neither hits, fall back to "0.0.0".
  */
 const SERVER_VERSION: string = (() => {
-  try {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const pkgPath = join(here, "..", "..", "package.json");
-    const raw = readFileSync(pkgPath, "utf8");
-    const parsed = JSON.parse(raw) as { version?: unknown };
-    return typeof parsed.version === "string" ? parsed.version : "0.0.0";
-  } catch {
-    return "0.0.0";
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(here, "..", "..", "package.json"), // workspace / Docker
+    join(here, "..", "..", "..", "package.json"), // npm publish (flat layout)
+  ];
+  for (const pkgPath of candidates) {
+    try {
+      const raw = readFileSync(pkgPath, "utf8");
+      const parsed = JSON.parse(raw) as { version?: unknown };
+      if (typeof parsed.version === "string") return parsed.version;
+    } catch {
+      // Try the next candidate.
+    }
   }
+  return "0.0.0";
 })();
 
 export const healthRoutes: FastifyPluginAsync = async (fastify) => {

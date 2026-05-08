@@ -49,6 +49,10 @@ diffs, all from one tab.
 
 ## Quick start
 
+Two install paths depending on how you want to run it.
+
+### Docker (recommended for ongoing use)
+
 ```bash
 git clone https://github.com/Devin-Marks/pi-forge.git
 cd pi-forge
@@ -56,12 +60,30 @@ cp docker/.env.example docker/.env       # edit auth + paths if you want
 cd docker && docker compose up -d --build
 ```
 
-Open <http://localhost:3000>. Add a project (point at a folder under
-`WORKSPACE_PATH`), drop a provider API key into Settings, and start a
-session.
+### npm (no Docker, runs from your shell)
 
-For non-Docker workflows, production deploys, Kubernetes, and configuration
-details, follow the links in [Documentation](#documentation) below.
+```bash
+# One-shot, ephemeral — npx caches and you can wipe with `rm -rf ~/.npm/_npx`:
+npx pi-forge
+
+# Or install globally:
+npm install -g pi-forge
+pi-forge
+```
+
+By default pi-forge listens on `http://localhost:3000`, reads provider config
+from `~/.pi/agent/` (shared with the host `pi` CLI if you have one), and
+stores its own state in `~/.pi-forge/`. Override with `PORT`, `PI_CONFIG_DIR`,
+`FORGE_DATA_DIR`, `WORKSPACE_PATH` env vars — see
+[`docs/configuration.md`](./docs/configuration.md).
+
+Either way: open the listed URL, add a project (point at a folder under
+`WORKSPACE_PATH`), drop a provider API key into Settings, and start a session.
+
+For source builds and a development setup, see
+[`CONTRIBUTING.md`](./CONTRIBUTING.md). For production deploys, Kubernetes,
+and the rest of the docs, follow the links in
+[Documentation](#documentation) below.
 
 ## Features
 
