@@ -14,6 +14,8 @@ the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.1.4] — 2026-05-08
+
 ### Fixed
 
 - **Diff scrollbar marks now stay pinned to the scrollbar.** The
