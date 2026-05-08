@@ -54,6 +54,114 @@ the README for the support window policy.
   dispose can wait up to 5 s on its own LLM-call abort) before
   unlinking. Test coverage added in `tests/test-subagent-discovery.ts`
   via a resume-then-cascade fixture.
+- **Terminal panel render crash on cold mount.** A stale
+  `packages/client/node_modules/@xterm/xterm@6` install was getting
+  picked over the hoisted `@xterm/xterm@5.5` at the root, while the
+  addons (`addon-fit`, `addon-web-links`) still expected v5's
+  `_viewport.scrollBarWidth` shape. First terminal mount threw
+  `e2.viewport is undefined` at the React error boundary. Lockfile
+  dedupe drops the workspace-local v6, leaving the hoisted v5.5 as
+  the single resolution.
+- **Dev-server crash on every TSX request.** `@vitejs/plugin-react@6`
+  peer-deps `vite ^8.0.0`, and v8 routes its React Refresh wrapper
+  through rolldown's new transform hook — which
+  `vite-plugin-pwa@0.21.x`'s dev middleware doesn't speak. Every
+  `/src/*.tsx` returned `Pre-transform error: Missing field
+  'moduleType'`. Production builds were unaffected (rollup, not
+  rolldown), so `npm run build` and `npm run test:ci` both passed;
+  only `npm run dev` was broken. Plugin reverted to `^4.7.0` and the
+  verification protocol in `notes/DEPENDABOT.md` now requires a
+  dev-server boot-and-fetch alongside check + build + test:ci for any
+  client-touching dep change.
+- **`react`/`react-dom` version-pair mismatch white-screen.** A
+  Dependabot solo bump of `react` 19.2.5 → 19.2.6 left `react-dom`
+  at 19.2.5 in the lockfile. React 19 enforces exact-version pairing
+  at runtime; production survived because the assertion is
+  `__DEV__`-gated and gets dead-code-eliminated by rollup, but
+  `npm run dev` threw "Incompatible React versions" on first paint.
+  Both packages are now pinned to 19.2.6 in lockstep.
+- **`release.yml` couldn't install npm@latest.** Node 22.22.2's
+  hostedtoolcache image ships a corrupted bundled npm — the
+  `promise-retry` module is missing from `@npmcli/arborist`'s
+  node_modules, so any `npm install -g npm@<anything>` crashes with
+  `MODULE_NOT_FOUND` before completing the upgrade. Confirmed
+  regression vs 22.22.1 (nodejs/node#62425, actions/runner-images#13883).
+  Pinned `node-version: 22.22.1` in `release.yml`'s npm-publish job;
+  revert to plain `22` once 22.22.3 ships with the fix from
+  nodejs/node#62463.
+
+### Changed
+
+- **Dependabot config now ignores satellite-lag traps.** Two ignore
+  rules added to `.github/dependabot.yml`:
+  (a) Docker `node` major bumps to non-LTS lines (23, 25, 27, ...) —
+  pi-forge tracks LTS only and shouldn't auto-bump to the unsupported
+  "current" Node line. Re-evaluate when 24 reaches Active LTS in
+  April 2027.
+  (b) `@xterm/xterm` major bumps — the addon ecosystem
+  (`@xterm/addon-fit`, `@xterm/addon-web-links`) only ships matching
+  v6-compatible releases as `0.12.0-beta.X`/`0.13.0-beta.X`;
+  auto-bumping xterm alone produces a peer-dep mismatch that
+  soft-passes on existing lockfiles but breaks fresh `npm ci`. Both
+  rules carry a comment with the recipe to re-evaluate them
+  periodically.
+- **GitHub Actions modernized.** Bumped `actions/checkout` 4 → 6,
+  `actions/download-artifact` 4 → 8, `actions/upload-artifact` 4 → 7,
+  `actions/upload-pages-artifact` 3 → 5, `actions/deploy-pages` 4 → 5,
+  `actions/setup-node` 4 → 6, `docker/build-push-action` 6 → 7,
+  `docker/login-action` 3 → 4, `docker/metadata-action` 5 → 6,
+  `softprops/action-gh-release` 2 → 3. All first-party actions
+  following backward-compatible deprecation cycles. Affects CI +
+  release workflows; no change to runtime behavior.
+- **Lint config pinned to canonical hooks rules.**
+  `eslint-plugin-react-hooks@7`'s `recommended` config introduced the
+  React Compiler rule pack (`set-state-in-effect`, `refs`, `purity`,
+  `preserve-manual-memoization`, `immutability`, `static-components`,
+  `error-boundaries`, etc.) — aspirational checks for code that opts
+  INTO the React Compiler. pi-forge doesn't, and the patterns those
+  rules flag are deliberate design choices. `eslint.config.js` now
+  pins to `react-hooks/rules-of-hooks` (error) and
+  `react-hooks/exhaustive-deps` (warn) explicitly. Adopting the
+  compiler rules would be a separate explicit decision.
+
+### Security
+
+- **Transitive lockfile updates** for security advisories landed via
+  Dependabot security PRs: `tar` + `@types/tar`, `ip-address` +
+  `express-rate-limit`, `basic-ftp` 5.3.0 → 5.3.1
+  (GHSA-rpmf-866q-6p89), `serialize-javascript` 6 → 7 +
+  `workbox-build` patch. All lockfile-only changes; no API surface
+  affected.
+
+### Dependencies
+
+- **Pi SDK trio bumped 0.73.0 → 0.73.1**
+  (`@mariozechner/pi-coding-agent`, `@mariozechner/pi-agent-core`,
+  `@mariozechner/pi-ai`). Patch-level; no breaking changes affecting
+  pi-forge. Pi-side fixes that pi-forge benefits from passively:
+  better handling of interleaved chat-completion deltas in
+  OpenAI-compatible streams (vLLM, LiteLLM), OpenAI Responses
+  reasoning text deltas for LM Studio, Codex Responses non-empty
+  system prompt + OAuth stderr fix, JSONC parsing for custom
+  `models.json` (forward-compat — pi-forge still writes strict JSON).
+  Heads-up: pi has begun migrating from `@mariozechner/*` to
+  `@earendil-works/*` org; doesn't affect this release but the next
+  major SDK bump may switch dep names.
+- **eslint v10 cluster.** Coordinated bump of the eslint family:
+  `eslint` 9 → 10, `@eslint/js` 9 → 10, `eslint-plugin-react-hooks`
+  5 → 7, `typescript-eslint` 8.31 → 8.59 (fold-in patch). pi-forge
+  already used flat config so the v10 migration was straightforward;
+  one new built-in (`no-useless-assignment`) caught a real
+  dead-assignment in `McpStatusBadge.tsx`, fixed by collapsing an
+  if/else chain to a ternary. Solo merging the family was impossible
+  — each PR's CI was red because it needed its siblings.
+- **Other dep bumps** (lockfile-only or dev-tool): `react` +
+  `react-dom` 19.2.5 → 19.2.6, `eslint-plugin-react-refresh` 0.4.26 →
+  0.5.2, `marked` 16 → 18 (dev), `globals` 16 → 17 (dev),
+  `lucide-react` 0.503 → 1.14. The Dependabot-proposed
+  `@vitejs/plugin-react` 4 → 6 + `vite-plugin-pwa` 0 → 1 cluster is
+  intentionally HELD for a future coordinated `vite v8` stack
+  upgrade — see ignore rules and the open #72/#74 PRs.
 
 ### Documentation
 
