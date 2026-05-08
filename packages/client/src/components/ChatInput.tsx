@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { AtSign, Image as ImageIcon, Paperclip, X } from "lucide-react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
+import { AtSign, Image as ImageIcon, Paperclip, RotateCcw, X } from "lucide-react";
 import { api, ApiError, type ProvidersListing } from "../lib/api-client";
 import { EMPTY_MESSAGES, useSessionStore, type AgentMessageLike } from "../store/session-store";
 import { useActiveProject } from "../store/project-store";
@@ -241,6 +248,95 @@ export function ChatInput({ sessionId }: Props) {
   // block at send time — see file-references.ts).
   const project = useActiveProject();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  /**
+   * User-chosen textarea height in pixels, driven by the drag handle
+   * that lives where the composer's top border used to be. `undefined`
+   * means "use the default `rows={3}` layout"; once the user drags,
+   * it becomes a concrete number that overrides via inline style.
+   *
+   * Persisted under a window-scoped localStorage key — per-session
+   * heights would just confuse (one preferred draft size beats N
+   * session-scoped sizes the user has to re-discover on every
+   * switch). Clamp on read so a stale absurd value gets corrected
+   * silently. Bounds: min 60 px (~2 rows), max 60 % viewport.
+   */
+  const HEIGHT_KEY = "pi-forge:chat-input-height";
+  const heightBounds = (): { min: number; max: number } => ({
+    min: 60,
+    max: Math.floor(window.innerHeight * 0.6),
+  });
+  const [textareaHeight, setTextareaHeight] = useState<number | undefined>(() => {
+    if (typeof window === "undefined") return undefined;
+    const raw = window.localStorage.getItem(HEIGHT_KEY);
+    if (raw === null) return undefined;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return undefined;
+    const { min, max } = heightBounds();
+    return Math.max(min, Math.min(max, parsed));
+  });
+
+  /**
+   * Pointer-driven drag handler for the divider above the composer.
+   * Drag UP = textarea grows; drag DOWN = shrinks. Persistence and
+   * pointer release happen at pointerup. We capture the pointer so
+   * the drag survives even if the cursor leaves the slim handle
+   * during a fast move.
+   *
+   * Why pointer events (not mousedown/mousemove): pointer capture +
+   * unified handling for touch/pen/mouse + we don't have to wire up
+   * a window-scoped move listener manually.
+   */
+  const startDividerDrag = (e: ReactPointerEvent<HTMLDivElement>): void => {
+    e.preventDefault();
+    const target = e.currentTarget;
+    target.setPointerCapture(e.pointerId);
+    const startY = e.clientY;
+    const startHeight = textareaRef.current?.getBoundingClientRect().height ?? 60;
+    const { min, max } = heightBounds();
+
+    const onMove = (ev: PointerEvent): void => {
+      // Inverted: dragging UP (clientY decreases) should grow the
+      // textarea, since the handle sits ABOVE the composer.
+      const delta = startY - ev.clientY;
+      const next = Math.max(min, Math.min(max, startHeight + delta));
+      setTextareaHeight(next);
+    };
+    const onUp = (ev: PointerEvent): void => {
+      target.removeEventListener("pointermove", onMove);
+      target.removeEventListener("pointerup", onUp);
+      target.removeEventListener("pointercancel", onUp);
+      try {
+        target.releasePointerCapture(ev.pointerId);
+      } catch {
+        // capture may already be released; ignore
+      }
+      // Persist whatever height the textarea actually has now —
+      // reads from the live element, not from React state, so a
+      // mid-drag re-render won't desync the saved value.
+      const live = textareaRef.current?.getBoundingClientRect().height;
+      if (live !== undefined && Number.isFinite(live)) {
+        window.localStorage.setItem(HEIGHT_KEY, String(Math.round(live)));
+      }
+    };
+    target.addEventListener("pointermove", onMove);
+    target.addEventListener("pointerup", onUp);
+    target.addEventListener("pointercancel", onUp);
+  };
+
+  /**
+   * Reset the composer to its default `rows={3}` size. Drops the
+   * inline-style override so the textarea picks up its CSS-derived
+   * default, and clears the persisted height so the next mount
+   * doesn't restore the old value. The button rendering this is
+   * conditional on `textareaHeight !== undefined`, so the affordance
+   * disappears once it's done its job — no clutter for the common
+   * "I never resized" case.
+   */
+  const resetTextareaHeight = (): void => {
+    setTextareaHeight(undefined);
+    window.localStorage.removeItem(HEIGHT_KEY);
+  };
   interface AcToken {
     /** index of the `@` in `text`. */
     start: number;
@@ -1077,8 +1173,27 @@ export function ChatInput({ sessionId }: Props) {
   };
 
   return (
-    <div className="border-t border-neutral-800 bg-neutral-950 px-6 py-3">
-      <div className="mx-auto max-w-3xl space-y-2">
+    <div className="bg-neutral-950">
+      {/*
+        Drag handle that lives where the composer's top border used to
+        be. Plain visual: a 1-px hairline matching the rest of the
+        chrome's border-neutral-800. On hover/active it brightens and
+        the cursor flips to row-resize so the affordance is
+        discoverable without taking up extra vertical space at rest.
+        The 5-px hit area extends above the visual line so users don't
+        have to pixel-hunt; `-translate-y` shifts the click region up
+        without growing the layout box.
+      */}
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize chat input"
+        onPointerDown={startDividerDrag}
+        className="group relative h-px cursor-row-resize bg-neutral-800 hover:bg-neutral-600 active:bg-neutral-500"
+      >
+        <div className="absolute inset-x-0 -top-1 h-2" />
+      </div>
+      <div className="mx-auto max-w-3xl space-y-2 px-6 py-3">
         <div className="flex flex-wrap items-center gap-2">
           <ModelPicker
             providers={providers}
@@ -1108,8 +1223,23 @@ export function ChatInput({ sessionId }: Props) {
               ))}
             </div>
           )}
-          {modelError !== undefined && (
-            <span className="ml-auto text-[11px] text-red-400">{modelError}</span>
+          {(modelError !== undefined || textareaHeight !== undefined) && (
+            <div className="ml-auto flex items-center gap-2">
+              {modelError !== undefined && (
+                <span className="text-[11px] text-red-400">{modelError}</span>
+              )}
+              {textareaHeight !== undefined && (
+                <button
+                  type="button"
+                  onClick={resetTextareaHeight}
+                  className="rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+                  title="Reset chat input height to default"
+                  aria-label="Reset chat input height to default"
+                >
+                  <RotateCcw size={12} />
+                </button>
+              )}
+            </div>
           )}
         </div>
         {error !== undefined && <p className="text-xs text-red-400">Error: {error}</p>}
@@ -1257,6 +1387,7 @@ export function ChatInput({ sessionId }: Props) {
                   : undefined
               }
               rows={3}
+              style={textareaHeight !== undefined ? { height: `${textareaHeight}px` } : undefined}
               className={`w-full resize-none rounded-md border bg-neutral-900 px-3 py-2 text-sm text-neutral-100 outline-none ${
                 bangMode === "local"
                   ? "border-amber-500 focus:border-amber-400"

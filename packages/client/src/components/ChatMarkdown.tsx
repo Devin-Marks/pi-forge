@@ -41,8 +41,14 @@ import { Highlight, themes as prismThemes } from "prism-react-renderer";
 import { useState, type HTMLAttributes, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+// KaTeX styles — pulled into the bundle by Vite. Without this, the math
+// nodes that rehype-katex emits land in the DOM with no fonts/spacing
+// applied and look like raw HTML.
+import "katex/dist/katex.min.css";
 
 /**
  * Small copy-to-clipboard control rendered in the top-right corner of
@@ -271,10 +277,15 @@ export function ChatMarkdown({ text, size = "sm", chatStyleBreaks = false }: Pro
   // pasted lists. See the prop docstring for the trade-off and why
   // it's user-only.
   const sizeClass = size === "xs" ? "text-xs" : "text-sm";
-  const plugins = chatStyleBreaks ? [remarkGfm, remarkBreaks] : [remarkGfm];
+  // remark-math parses `$inline$` and `$$block$$`; rehype-katex turns
+  // those nodes into rendered MathML+HTML using KaTeX. Order matters —
+  // remark-math must run before remark-breaks so a `$\rightarrow$` token
+  // lands as a math node rather than text containing a literal `\n` →
+  // `<br>` rewrite around the dollar signs.
+  const plugins = chatStyleBreaks ? [remarkGfm, remarkMath, remarkBreaks] : [remarkGfm, remarkMath];
   return (
     <div className={`${sizeClass} break-words [overflow-wrap:anywhere]`}>
-      <ReactMarkdown remarkPlugins={plugins} components={components}>
+      <ReactMarkdown remarkPlugins={plugins} rehypePlugins={[rehypeKatex]} components={components}>
         {text}
       </ReactMarkdown>
     </div>

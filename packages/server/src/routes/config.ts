@@ -159,6 +159,34 @@ const skillSchema = {
   },
 } as const;
 
+/**
+ * Surfaced verbatim from the SDK's `loadSkills` so the SkillsTab can
+ * tell the user *why* a file under `.pi/skills/` didn't load — most
+ * commonly a name collision when a top-level `<dir>/foo.md` skill
+ * lacks `name:` frontmatter and falls back to the parent dir name.
+ * Without this, those skills disappear silently and the user has no
+ * way to debug the authoring.
+ */
+const skillDiagnosticSchema = {
+  type: "object",
+  required: ["type", "message"],
+  properties: {
+    type: { type: "string", enum: ["warning", "error", "collision"] },
+    message: { type: "string" },
+    path: { type: "string" },
+    collision: {
+      type: "object",
+      required: ["resourceType", "name", "winnerPath", "loserPath"],
+      properties: {
+        resourceType: { type: "string" },
+        name: { type: "string" },
+        winnerPath: { type: "string" },
+        loserPath: { type: "string" },
+      },
+    },
+  },
+} as const;
+
 function internalError(reply: FastifyReply, err: unknown): FastifyReply {
   reply.log.error({ err }, "config route error");
   return reply.code(500).send({ error: "internal_error" });
@@ -374,7 +402,9 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
           "List skills discovered for a project. Skills come from two sources: " +
           "the global `~/.pi/agent/skills/` and the project-local `.pi/skills/`. " +
           "Each skill carries `enabled` reflecting whether it's listed in " +
-          "`settings.skills`. Required: `?projectId=`.",
+          "`settings.skills`. `diagnostics` surfaces SDK warnings for files " +
+          "the loader rejected (missing description, name collision, etc.) " +
+          "so the UI can render actionable errors. Required: `?projectId=`.",
         tags: ["config"],
         querystring: {
           type: "object",
@@ -384,8 +414,11 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
         response: {
           200: {
             type: "object",
-            required: ["skills"],
-            properties: { skills: { type: "array", items: skillSchema } },
+            required: ["skills", "diagnostics"],
+            properties: {
+              skills: { type: "array", items: skillSchema },
+              diagnostics: { type: "array", items: skillDiagnosticSchema },
+            },
           },
           404: errorSchema,
           500: errorSchema,
@@ -398,8 +431,8 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ error: "project_not_found" });
       }
       try {
-        const skills = await listSkills(project.path, project.id);
-        return { skills };
+        const { skills, diagnostics } = await listSkills(project.path, project.id);
+        return { skills, diagnostics };
       } catch (err) {
         return internalError(reply, err);
       }

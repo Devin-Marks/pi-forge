@@ -8,6 +8,7 @@ import {
   type McpServerStatus,
   type McpTransport,
   type ProvidersListing,
+  type SkillDiagnostic,
   type SkillSummary,
   type ToolListing,
 } from "../lib/api-client";
@@ -775,6 +776,15 @@ function SkillsTab({ onError }: { onError: (msg: string | undefined) => void }) 
   const project = useActiveProject();
   const projects = useProjectStore((s) => s.projects);
   const [skills, setSkills] = useState<SkillSummary[] | undefined>(undefined);
+  /**
+   * SDK-emitted warnings about skill files the loader rejected. The
+   * most common case is a name collision when a top-level
+   * `<dir>/foo.md` skill lacks `name:` frontmatter and falls back to
+   * the parent dir name "skills" — silently colliding with another
+   * file's identical fallback name. Without surfacing these the user
+   * sees an authored skill go missing with no clue why.
+   */
+  const [diagnostics, setDiagnostics] = useState<SkillDiagnostic[]>([]);
   /** All per-project overrides, keyed by projectId. Used for the
    *  cascade view inside each expanded skill row. */
   const [allOverrides, setAllOverrides] = useState<
@@ -787,11 +797,12 @@ function SkillsTab({ onError }: { onError: (msg: string | undefined) => void }) 
     if (project === undefined) return;
     onError(undefined);
     try {
-      const [{ skills: list }, overrides] = await Promise.all([
+      const [{ skills: list, diagnostics: diags }, overrides] = await Promise.all([
         api.listSkills(project.id),
         api.listSkillOverrides(),
       ]);
       setSkills(list);
+      setDiagnostics(diags);
       setAllOverrides(overrides.projects);
     } catch (err) {
       onError(`Failed to load skills: ${errorCode(err)}`);
@@ -877,6 +888,7 @@ function SkillsTab({ onError }: { onError: (msg: string | undefined) => void }) 
         Live sessions keep the skill set they booted with — start a new session to use a freshly
         enabled skill.
       </div>
+      {diagnostics.length > 0 && <SkillDiagnosticsBanner diagnostics={diagnostics} />}
       {skills.length === 0 && (
         <p className="text-xs italic text-neutral-500">No skills found for this project.</p>
       )}
@@ -989,6 +1001,56 @@ function SkillsTab({ onError }: { onError: (msg: string | undefined) => void }) 
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Renders SDK-emitted diagnostics — the loader's "I tried to load this
+ * file but rejected it" warnings. Most user-actionable case is a name
+ * collision: pi falls back to the parent dir name when no `name:` is
+ * in the file's frontmatter, so multiple top-level `<dir>/*.md` skills
+ * collide on the parent dir name and only the first one is loaded.
+ * Surface enough context for the user to find and fix the offending
+ * file without grepping through pi-mono source.
+ */
+function SkillDiagnosticsBanner({ diagnostics }: { diagnostics: SkillDiagnostic[] }) {
+  return (
+    <div className="space-y-1 rounded border border-red-700/40 bg-red-900/10 px-3 py-2 text-[11px] text-red-200">
+      <p className="font-medium">
+        {diagnostics.length} skill {diagnostics.length === 1 ? "file" : "files"} were not loaded:
+      </p>
+      <ul className="space-y-1.5">
+        {diagnostics.map((d, i) => (
+          <li key={i} className="border-l-2 border-red-700/60 pl-2">
+            <div className="text-red-100">
+              <span className="rounded bg-red-900/40 px-1 py-0.5 text-[10px] uppercase tracking-wider text-red-300">
+                {d.type}
+              </span>{" "}
+              {d.message}
+            </div>
+            {d.collision !== undefined && (
+              <div className="mt-0.5 font-mono text-[10px] text-red-300/80">
+                <div>
+                  loser:&nbsp;&nbsp;<span className="text-red-200">{d.collision.loserPath}</span>
+                </div>
+                <div>
+                  winner:&nbsp;<span className="text-red-200">{d.collision.winnerPath}</span>
+                </div>
+                <div className="mt-1 text-red-300/70">
+                  Add <code className="rounded bg-red-900/40 px-1">name: {`<unique>`}</code> to the
+                  loser&apos;s frontmatter, or move it to{" "}
+                  <code className="rounded bg-red-900/40 px-1">{`<unique>/SKILL.md`}</code> so the
+                  parent dir name disambiguates.
+                </div>
+              </div>
+            )}
+            {d.collision === undefined && d.path !== undefined && (
+              <div className="mt-0.5 font-mono text-[10px] text-red-300/80">{d.path}</div>
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
