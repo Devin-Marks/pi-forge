@@ -35,6 +35,6 @@
     "marked": "^18.0.3",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
-    "typescript-eslint": "^8.31.0"
+    "typescript-eslint": "^8.59.2"
   }
 }
