@@ -16,7 +16,7 @@
     "@fastify/swagger": "^9.5.0",
     "@fastify/swagger-ui": "^5.2.3",
     "@fastify/websocket": "^11.0.2",
-    "@mariozechner/pi-agent-core": "0.73.0",
+    "@mariozechner/pi-agent-core": "0.73.1",
     "@mariozechner/pi-ai": "0.73.0",
     "@mariozechner/pi-coding-agent": "0.73.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
