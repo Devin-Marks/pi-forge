@@ -27,7 +27,7 @@
  *     `settings.skills`.
  *   - GET /config/skills?projectId=<unknown> → 404 (project_not_found).
  */
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -279,11 +279,19 @@ async function main(): Promise<void> {
 
       const list = await jget(base, `/api/v1/config/skills?projectId=${projectId}`);
       assert("GET /config/skills → 200", list.status === 200);
-      const skills = (list.body as { skills: { name: string; enabled: boolean; source: string }[] })
-        .skills;
+      const listBody = list.body as {
+        skills: { name: string; enabled: boolean; source: string }[];
+        diagnostics: unknown[];
+      };
+      const skills = listBody.skills;
       const hello = skills.find((s) => s.name === "hello");
       assert("project-local 'hello' skill discovered", hello !== undefined);
       assert("  source is 'project'", hello?.source === "project");
+      assert(
+        "  diagnostics array is present (well-formed fixture → empty)",
+        Array.isArray(listBody.diagnostics) && listBody.diagnostics.length === 0,
+        JSON.stringify(listBody.diagnostics),
+      );
       // Skills are now ENABLED by default in the global state (the
       // model is "exclude by `!name` pattern"; absence of the pattern
       // means enabled). Disable the skill first so the subsequent
@@ -492,6 +500,53 @@ async function main(): Promise<void> {
         `/api/v1/config/skills?projectId=00000000-0000-0000-0000-000000000000`,
       );
       assert("GET /config/skills with unknown projectId → 404", unknownProject.status === 404);
+
+      // 7b. Diagnostics: a top-level `<dir>/foo.md` skill without `name:`
+      //     in its frontmatter falls back to the parent dir name "skills"
+      //     (per pi's loadSkillFromFile). When two skill files collide on
+      //     that fallback, the SDK silently drops the second one and emits
+      //     a "collision" diagnostic. Without surfacing diagnostics through
+      //     /config/skills, the user has no way to learn why their
+      //     project-local skill went missing — this assertion locks in the
+      //     diagnostic flow so the SkillsTab can show the error banner.
+      {
+        // Drop a top-level `.md` global skill (no `name:` → falls back to "skills").
+        await mkdir(join(configDir, "skills"), { recursive: true });
+        await writeFile(
+          join(configDir, "skills", "globalonly.md"),
+          "---\ndescription: Global skill that takes the 'skills' fallback name first.\n---\nbody\n",
+          "utf8",
+        );
+        // Drop a colliding top-level `.md` project skill.
+        await writeFile(
+          join(workspacePath, ".pi", "skills", "projectonly.md"),
+          "---\ndescription: Project skill that should win once authoring is fixed.\n---\nbody\n",
+          "utf8",
+        );
+
+        const withCollision = await jget(base, `/api/v1/config/skills?projectId=${projectId}`);
+        assert("GET /config/skills with collision fixture → 200", withCollision.status === 200);
+        const body = withCollision.body as {
+          diagnostics?: { type: string; collision?: { winnerPath: string; loserPath: string } }[];
+        };
+        const collision = body.diagnostics?.find((d) => d.type === "collision");
+        assert(
+          "  diagnostics surfaces the collision",
+          collision !== undefined,
+          JSON.stringify(body.diagnostics),
+        );
+        assert(
+          "  collision names both winner and loser file paths",
+          typeof collision?.collision?.winnerPath === "string" &&
+            typeof collision?.collision?.loserPath === "string",
+          JSON.stringify(collision?.collision),
+        );
+
+        // Tidy up so unrelated assertions later in the suite (e.g. the
+        // export/import test downstream) don't see these stray files.
+        await unlink(join(configDir, "skills", "globalonly.md"));
+        await unlink(join(workspacePath, ".pi", "skills", "projectonly.md"));
+      }
     }
 
     // 8. atomic write proof: models.json updated mid-test should produce a

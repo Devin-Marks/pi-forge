@@ -190,6 +190,31 @@ export interface SkillOverridesResponse {
 }
 
 /**
+ * SDK-emitted diagnostic for a skill file the loader rejected.
+ * Surfaced through `GET /config/skills` so the SkillsTab can show
+ * the user *why* a file under `.pi/skills/` didn't load. The most
+ * common case is `type: "collision"` when a top-level `<dir>/foo.md`
+ * lacks `name:` frontmatter and falls back to the parent dir name,
+ * colliding with another file's identical fallback.
+ */
+export interface SkillDiagnostic {
+  type: "warning" | "error" | "collision";
+  message: string;
+  path?: string;
+  collision?: {
+    resourceType: string;
+    name: string;
+    winnerPath: string;
+    loserPath: string;
+  };
+}
+
+export interface SkillsListResponse {
+  skills: SkillSummary[];
+  diagnostics: SkillDiagnostic[];
+}
+
+/**
  * Unified tool listing returned by `GET /api/v1/config/tools`.
  * Two families:
  *   - `builtin` — pi's seven shipped coding tools (read, bash, edit,

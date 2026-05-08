@@ -18,6 +18,7 @@ import {
   type UiConfigResponse,
   type UnifiedSession,
   type SessionSummary,
+  type SkillDiagnostic,
   type SkillSummary,
   type ToolListing,
   type ToolOverridesResponse,
@@ -289,41 +290,84 @@ function vAccepted(value: unknown, status: number): { accepted: true } {
   return { accepted: true };
 }
 
+function vSkillSummary(s: unknown, status: number): SkillSummary {
+  if (
+    !isObject(s) ||
+    typeof s.name !== "string" ||
+    typeof s.description !== "string" ||
+    (s.source !== "global" && s.source !== "project" && s.source !== "extension") ||
+    typeof s.filePath !== "string" ||
+    typeof s.enabled !== "boolean" ||
+    typeof s.effective !== "boolean" ||
+    typeof s.disableModelInvocation !== "boolean"
+  ) {
+    fail(status, "expected SkillSummary");
+  }
+  const summary: SkillSummary = {
+    name: s.name,
+    description: s.description,
+    source: s.source,
+    filePath: s.filePath,
+    enabled: s.enabled,
+    effective: s.effective,
+    disableModelInvocation: s.disableModelInvocation,
+  };
+  if (typeof s.extensionPath === "string") {
+    summary.extensionPath = s.extensionPath;
+  }
+  if (s.projectOverride === "enabled" || s.projectOverride === "disabled") {
+    summary.projectOverride = s.projectOverride;
+  }
+  return summary;
+}
+
 function vSkillsList(value: unknown, status: number): { skills: SkillSummary[] } {
   if (!isObject(value) || !Array.isArray(value.skills)) {
     fail(status, "expected { skills: SkillSummary[] }");
   }
-  return {
-    skills: value.skills.map((s): SkillSummary => {
-      if (
-        !isObject(s) ||
-        typeof s.name !== "string" ||
-        typeof s.description !== "string" ||
-        (s.source !== "global" && s.source !== "project" && s.source !== "extension") ||
-        typeof s.filePath !== "string" ||
-        typeof s.enabled !== "boolean" ||
-        typeof s.effective !== "boolean" ||
-        typeof s.disableModelInvocation !== "boolean"
-      ) {
-        fail(status, "expected SkillSummary");
-      }
-      const summary: SkillSummary = {
-        name: s.name,
-        description: s.description,
-        source: s.source,
-        filePath: s.filePath,
-        enabled: s.enabled,
-        effective: s.effective,
-        disableModelInvocation: s.disableModelInvocation,
+  return { skills: value.skills.map((s) => vSkillSummary(s, status)) };
+}
+
+function vSkillsListWithDiagnostics(
+  value: unknown,
+  status: number,
+): { skills: SkillSummary[]; diagnostics: SkillDiagnostic[] } {
+  if (!isObject(value) || !Array.isArray(value.skills) || !Array.isArray(value.diagnostics)) {
+    fail(status, "expected { skills: SkillSummary[], diagnostics: SkillDiagnostic[] }");
+  }
+  const diagnostics: SkillDiagnostic[] = [];
+  for (const d of value.diagnostics) {
+    if (
+      !isObject(d) ||
+      (d.type !== "warning" && d.type !== "error" && d.type !== "collision") ||
+      typeof d.message !== "string"
+    ) {
+      // Tolerate malformed entries — drop rather than reject the whole
+      // response; a stale skill diagnostic shape shouldn't break the
+      // SkillsTab from rendering the (correct) skills list.
+      continue;
+    }
+    const out: SkillDiagnostic = { type: d.type, message: d.message };
+    if (typeof d.path === "string") out.path = d.path;
+    if (
+      isObject(d.collision) &&
+      typeof d.collision.resourceType === "string" &&
+      typeof d.collision.name === "string" &&
+      typeof d.collision.winnerPath === "string" &&
+      typeof d.collision.loserPath === "string"
+    ) {
+      out.collision = {
+        resourceType: d.collision.resourceType,
+        name: d.collision.name,
+        winnerPath: d.collision.winnerPath,
+        loserPath: d.collision.loserPath,
       };
-      if (typeof s.extensionPath === "string") {
-        summary.extensionPath = s.extensionPath;
-      }
-      if (s.projectOverride === "enabled" || s.projectOverride === "disabled") {
-        summary.projectOverride = s.projectOverride;
-      }
-      return summary;
-    }),
+    }
+    diagnostics.push(out);
+  }
+  return {
+    skills: value.skills.map((s) => vSkillSummary(s, status)),
+    diagnostics,
   };
 }
 
@@ -1185,7 +1229,10 @@ export const api = {
   listMcpTools: (projectId: string) =>
     request(`/api/v1/mcp/tools?projectId=${encodeURIComponent(projectId)}`, vMcpTools),
   listSkills: (projectId: string) =>
-    request(`/api/v1/config/skills?projectId=${encodeURIComponent(projectId)}`, vSkillsList),
+    request(
+      `/api/v1/config/skills?projectId=${encodeURIComponent(projectId)}`,
+      vSkillsListWithDiagnostics,
+    ),
   /** Cascade view: every per-project override across every project. */
   listSkillOverrides: () => request(`/api/v1/config/skills/overrides`, vSkillOverrides),
   /**

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import {
   AuthStorage,
   ModelRegistry,
+  type ResourceDiagnostic,
   type Skill,
   loadSkills,
 } from "@earendil-works/pi-coding-agent";
@@ -414,10 +415,24 @@ export interface SkillSummary {
   disableModelInvocation: boolean;
 }
 
+/**
+ * Skills + the diagnostics the SDK emitted while discovering them.
+ * Diagnostics surface the cases where a skill file exists on disk but
+ * didn't make it into `skills` — most commonly a name collision between
+ * a top-level `<dir>/foo.md` skill (which falls back to the parent dir
+ * name "skills" if it has no `name:` frontmatter) and another file with
+ * the same fallback name. Without surfacing these, the user sees a
+ * missing skill with no clue why; the loader silently dropped it.
+ */
+export interface SkillsListResult {
+  skills: SkillSummary[];
+  diagnostics: ResourceDiagnostic[];
+}
+
 export async function listSkills(
   workspacePath: string,
   projectId?: string,
-): Promise<SkillSummary[]> {
+): Promise<SkillsListResult> {
   // Pi packages can contribute skill directories or files via
   // `package.json#pi.skills`, resolved by DefaultPackageManager.
   // discoverExtensionResources returns those resolved paths so
@@ -445,9 +460,12 @@ export async function listSkills(
   for (const s of extResources.skillPaths) {
     skillPathToPackage.set(s.skillPath, s.packageSource);
   }
-  return result.skills.map((s) =>
-    skillSummary(s, workspacePath, globalDisabled, overrides, projectId, skillPathToPackage),
-  );
+  return {
+    skills: result.skills.map((s) =>
+      skillSummary(s, workspacePath, globalDisabled, overrides, projectId, skillPathToPackage),
+    ),
+    diagnostics: result.diagnostics,
+  };
 }
 
 function skillSummary(
@@ -551,7 +569,7 @@ export async function setSkillEnabled(
   opts?: { scope?: "global" | "project"; projectId?: string },
 ): Promise<SkillSummary[]> {
   const all = await listSkills(workspacePath, opts?.projectId);
-  if (!all.some((s) => s.name === name)) throw new SkillNotFoundError(name);
+  if (!all.skills.some((s) => s.name === name)) throw new SkillNotFoundError(name);
   const scope = opts?.scope ?? "global";
   if (scope === "project") {
     if (opts?.projectId === undefined) {
@@ -564,7 +582,7 @@ export async function setSkillEnabled(
     const state: SkillOverrideState | undefined =
       enabled === true ? "enabled" : enabled === false ? "disabled" : undefined;
     await setProjectSkillOverride(opts.projectId, name, state);
-    return listSkills(workspacePath, opts.projectId);
+    return (await listSkills(workspacePath, opts.projectId)).skills;
   }
   // global scope (existing behaviour)
   if (enabled === undefined) {
@@ -599,7 +617,7 @@ export async function setSkillEnabled(
     const next: SettingsJson = { ...settings, skills: filtered };
     await atomicWriteJson(SETTINGS_FILE(), next);
   });
-  return listSkills(workspacePath, opts?.projectId);
+  return (await listSkills(workspacePath, opts?.projectId)).skills;
 }
 
 /**
