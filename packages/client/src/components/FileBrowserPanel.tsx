@@ -136,10 +136,9 @@ export function FileBrowserPanel() {
   };
 
   // Open the create dialog scoped to a specific folder. Used by the
-  // context-menu "Add file" / "Add folder" entries on a folder row, so
-  // the new entry lands inside the right-clicked directory rather
-  // than at the project root. Auto-expands the parent so the new
-  // entry is visible after `loadTree` refreshes the tree.
+  // per-row + buttons so the new file/folder lands inside the hovered
+  // directory rather than at the project root. Auto-expands the parent
+  // so the new entry becomes visible after loadTree refreshes the tree.
   const requestCreateInFolder = (
     parentAbsPath: string,
     parentRelPath: string,
@@ -521,6 +520,9 @@ export function FileBrowserPanel() {
             onRenameCommit={(absPath) => void commitRename(absPath)}
             onRenameStart={startRename}
             onDelete={(absPath, name, isDir) => requestDelete(absPath, name, isDir)}
+            onCreate={(parentAbsPath, parentRelPath, entryKind) =>
+              requestCreateInFolder(parentAbsPath, parentRelPath, entryKind)
+            }
             onUpload={(absPath) => onPickUpload(absPath)}
             onDownload={(absPath) => void downloadEntry(absPath)}
             dropTarget={dropTarget}
@@ -790,6 +792,13 @@ interface TreeProps {
   onRenameCommit: (absPath: string) => void;
   onRenameStart: (absPath: string, name: string) => void;
   onDelete: (absPath: string, name: string, isDir: boolean) => void;
+  /**
+   * Open the create-entry dialog scoped to this directory. parentRelPath
+   * is the tree-relative key (used to auto-expand the folder so the new
+   * entry materializes in view); parentAbsPath is what the file store
+   * needs to resolve the destination on the server.
+   */
+  onCreate: (parentAbsPath: string, parentRelPath: string, entryKind: "file" | "folder") => void;
   /** Click-to-upload into this directory; click-fired from a hover icon. */
   onUpload: (absPath: string) => void;
   /** Click-to-download (file: verbatim; directory: tar.gz). */
@@ -957,16 +966,38 @@ function Tree(props: TreeProps) {
         {!isRenaming && (
           <div className="hidden items-center gap-0.5 group-hover:flex">
             {isDir && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  props.onUpload(absPath);
-                }}
-                className="rounded p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
-                title="Upload into this folder"
-              >
-                <Upload size={11} />
-              </button>
+              <>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    props.onCreate(absPath, node.path, "file");
+                  }}
+                  className="rounded p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+                  title="New file in this folder"
+                >
+                  <FilePlus2 size={11} />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    props.onCreate(absPath, node.path, "folder");
+                  }}
+                  className="rounded p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+                  title="New subfolder in this folder"
+                >
+                  <FolderPlus size={11} />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    props.onUpload(absPath);
+                  }}
+                  className="rounded p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+                  title="Upload into this folder"
+                >
+                  <Upload size={11} />
+                </button>
+              </>
             )}
             <button
               onClick={(e) => {
@@ -1027,9 +1058,9 @@ function joinPath(root: string, rel: string): string {
 /**
  * Derive the parent's display path for the create-dialog title/label.
  * Toolbar-triggered creates have parentAbsPath === project root and
- * read as "(relative to project root)"; context-menu creates on a
- * folder get the project-relative form so users see exactly where
- * the new entry will land.
+ * read as "(relative to project root)"; per-folder + buttons get the
+ * project-relative form so users see exactly where the new entry will
+ * land.
  */
 function parentDisplay(parentAbsPath: string, projectPath: string): string | undefined {
   if (parentAbsPath === projectPath) return undefined;
