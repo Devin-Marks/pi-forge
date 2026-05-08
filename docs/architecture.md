@@ -68,10 +68,10 @@ pi-forge is the bridge:
 │                                                                      │
 │         ┌────────────────────────────────────────────────────────┐   │
 │         │ embedded:                                              │   │
-│         │   @mariozechner/pi-coding-agent (AgentSession,         │   │
+│         │   @earendil-works/pi-coding-agent (AgentSession,         │   │
 │         │   SessionManager, AuthStorage, ModelRegistry)          │   │
-│         │   @mariozechner/pi-agent-core (Agent, AgentMessage)    │   │
-│         │   @mariozechner/pi-ai (provider abstraction)           │   │
+│         │   @earendil-works/pi-agent-core (Agent, AgentMessage)    │   │
+│         │   @earendil-works/pi-ai (provider abstraction)           │   │
 │         └────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────┘
          │ filesystem

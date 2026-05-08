@@ -68,7 +68,7 @@ const controllers = new Map<string, AbortController>();
  * (UserMessage, AssistantMessage with content blocks, ToolResultMessage,
  * BashExecutionMessage, etc.) and the chat view rendering matches on
  * `role`/`type` shapes at runtime. A typed import from
- * `@mariozechner/pi-agent-core` would couple the client bundle to the SDK
+ * `@earendil-works/pi-agent-core` would couple the client bundle to the SDK
  * version and bloat it; the runtime check at the renderer boundary is
  * cheaper.
  */

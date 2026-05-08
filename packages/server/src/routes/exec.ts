@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { FastifyPluginAsync } from "fastify";
-import type { BashOperations } from "@mariozechner/pi-coding-agent";
+import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import { errorSchema } from "./_schemas.js";
 import { getSession } from "../session-registry.js";
 import { scrubbedEnv } from "../pty-manager.js";

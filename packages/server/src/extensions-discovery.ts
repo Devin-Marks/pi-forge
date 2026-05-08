@@ -40,7 +40,7 @@ import {
   discoverAndLoadExtensions,
   DefaultPackageManager,
   SettingsManager,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { config } from "./config.js";
 
 export interface ExtensionToolInfo {

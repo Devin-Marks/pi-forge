@@ -44,7 +44,7 @@ import {
   DefaultResourceLoader,
   type ResourceLoader,
   SettingsManager,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { config } from "./config.js";
 import { getProjectDisabledSkillNames } from "./skill-overrides.js";
 
