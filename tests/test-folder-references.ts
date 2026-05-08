@@ -161,6 +161,78 @@ async function main(): Promise<void> {
         `got: ${all.join(",")}`,
       );
     }
+
+    // ---- aggregate-inline budget ----
+    //
+    // Six files at 100 KB each — every file is individually under the
+    // 128 KB per-file cap, but together they're 600 KB > 512 KB
+    // aggregate budget. Walk should inline the first 5 (smallest-first;
+    // identical sizes here so any 5 win) and defer the 6th.
+    {
+      const budgetWorkspace = await mkdtemp(join(tmpdir(), "pi-forge-budget-"));
+      try {
+        const oneHundredK = "x".repeat(100 * 1024);
+        for (let i = 1; i <= 6; i += 1) {
+          await writeFile(join(budgetWorkspace, `f${i}.txt`), oneHundredK);
+        }
+        const out = await fr.expandFileReferences(
+          "review @f1.txt @f2.txt @f3.txt @f4.txt @f5.txt @f6.txt please",
+          budgetWorkspace,
+        );
+        // Count how many fenced "file: fN.txt" headers appear — that's
+        // the count of inlined files. Bare markers (no fenced block)
+        // are deferred.
+        const inlinedCount = (out.match(/file: f\d\.txt/g) ?? []).length;
+        assert(
+          "5 of 6 100 KB files inline (sums to 500 KB ≤ 512 KB budget)",
+          inlinedCount === 5,
+          `got ${inlinedCount} inlined`,
+        );
+        // The deferred file appears as a bare `@fN.txt` marker without
+        // a following fenced block.
+        assert(
+          "1 of 6 100 KB files defers (running budget exhausted)",
+          // Six markers in the input. Five became `@fN.txt\n```...```\n`
+          // (marker + fence). One stayed as the bare marker. Total bare
+          // markers in output should be 1 — count by matching the
+          // marker NOT followed by a fence.
+          (out.match(/@f\d\.txt(?!\n```)/g) ?? []).length === 1,
+          `got: ${JSON.stringify(out.slice(0, 200))}…`,
+        );
+      } finally {
+        await rm(budgetWorkspace, { recursive: true, force: true }).catch(() => undefined);
+      }
+    }
+
+    // Smallest-first ordering: in a mixed-size prompt that exceeds the
+    // budget, the SMALLEST files should be the ones that inline. Three
+    // files: 1 KB, 1 KB, 600 KB. Per-file cap is 128 KB so the 600 KB
+    // file ALREADY defers (deferLarge, not budget-driven). Both 1 KB
+    // files fit comfortably and inline.
+    {
+      const orderWorkspace = await mkdtemp(join(tmpdir(), "pi-forge-budget-order-"));
+      try {
+        await writeFile(join(orderWorkspace, "tiny1.txt"), "x".repeat(1024));
+        await writeFile(join(orderWorkspace, "tiny2.txt"), "x".repeat(1024));
+        await writeFile(join(orderWorkspace, "huge.txt"), "x".repeat(600 * 1024));
+        const out = await fr.expandFileReferences(
+          "see @huge.txt @tiny1.txt @tiny2.txt",
+          orderWorkspace,
+        );
+        assert(
+          "tiny files inline regardless of position in the prompt",
+          out.includes("file: tiny1.txt") && out.includes("file: tiny2.txt"),
+          `got: ${JSON.stringify(out.slice(0, 200))}…`,
+        );
+        assert(
+          "huge file (>per-file cap) defers — bare marker, no fenced block",
+          /@huge\.txt(?!\n```)/.test(out),
+          `got: ${JSON.stringify(out.slice(0, 200))}…`,
+        );
+      } finally {
+        await rm(orderWorkspace, { recursive: true, force: true }).catch(() => undefined);
+      }
+    }
   } finally {
     await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
   }
