@@ -40,6 +40,7 @@ const PUBLISH_DIR = resolve(REPO_ROOT, "publish");
 const SERVER_DIST = resolve(REPO_ROOT, "packages/server/dist");
 const CLIENT_DIST = resolve(REPO_ROOT, "packages/client/dist");
 const BIN_SRC = resolve(REPO_ROOT, "bin/pi-forge.mjs");
+const POSTINSTALL_SRC = resolve(REPO_ROOT, "bin/fix-pty-perms.mjs");
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
@@ -51,6 +52,7 @@ async function main() {
     ["server dist", SERVER_DIST],
     ["client dist", CLIENT_DIST],
     ["bin shim", BIN_SRC],
+    ["postinstall script", POSTINSTALL_SRC],
   ]) {
     if (!existsSync(path)) {
       console.error(
@@ -74,9 +76,10 @@ async function main() {
   await cp(SERVER_DIST, resolve(PUBLISH_DIR, "dist/server"), { recursive: true });
   await cp(CLIENT_DIST, resolve(PUBLISH_DIR, "dist/client"), { recursive: true });
 
-  // 4. Bin shim
+  // 4. Bin shim + postinstall fix-pty-perms script
   await mkdir(resolve(PUBLISH_DIR, "bin"), { recursive: true });
   await copyFile(BIN_SRC, resolve(PUBLISH_DIR, "bin/pi-forge.mjs"));
+  await copyFile(POSTINSTALL_SRC, resolve(PUBLISH_DIR, "bin/fix-pty-perms.mjs"));
 
   // 5. Synthetic package.json
   // Hoist the server's runtime deps verbatim — the server is the only
@@ -106,6 +109,14 @@ async function main() {
     files: ["bin/", "dist/", "README.md", "LICENSE"],
     // Same node target as the server workspace + CI matrix.
     engines: { node: ">=20" },
+    // node-pty's tarball ships `prebuilds/<platform>/spawn-helper`
+    // without a reliable executable bit (the upstream postinstall
+    // only fixes `build/Release/`, not `prebuilds/`). Without an
+    // exec bit, every PTY spawn fails with `posix_spawnp failed.`
+    // Our postinstall walks every prebuild and chmod +x's the
+    // spawn-helper. Idempotent + failure-tolerant — see
+    // bin/fix-pty-perms.mjs for the full story.
+    scripts: { postinstall: "node bin/fix-pty-perms.mjs" },
     dependencies: serverPkg.dependencies,
     // `publishConfig.provenance: true` makes `npm publish` attach a
     // sigstore-signed provenance attestation tying this version to the
