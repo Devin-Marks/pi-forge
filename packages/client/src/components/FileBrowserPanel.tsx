@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+  type ReactNode,
+} from "react";
 import {
   AtSign,
   ChevronDown,
@@ -25,7 +32,7 @@ import { ConfirmDialog, PromptDialog } from "./Modal";
  * provider — keeps the dialog primitives purely declarative.
  */
 type DialogState =
-  | { kind: "create"; entryKind: "file" | "folder" }
+  | { kind: "create"; entryKind: "file" | "folder"; parentAbsPath: string }
   | { kind: "delete"; absPath: string; name: string; isDir: boolean; recursive: boolean }
   | { kind: "deleteMany"; paths: string[] }
   | undefined;
@@ -72,9 +79,22 @@ export function FileBrowserPanel() {
   const uploadTargetRef = useRef<string | undefined>(undefined);
   const uploadFiles = useFileStore((s) => s.uploadFiles);
   // Right-click context menu — hoisted above the early-return below so
-  // hook ordering stays stable across renders.
+  // hook ordering stays stable across renders. `kind` discriminates the
+  // three entry points: a file row, a folder row, or empty area in the
+  // tree's scroll container (which targets the project root).
   const [contextMenu, setContextMenu] = useState<
-    { x: number; y: number; absPath: string; isDir: boolean } | undefined
+    | {
+        x: number;
+        y: number;
+        kind: "file" | "folder" | "empty";
+        absPath: string;
+        /** basename of the row, used by rename / delete copy. Empty for kind=empty. */
+        name: string;
+        /** Tree-relative path (`node.path`) used by create-in-folder to
+         *  auto-expand the parent. Empty string = project root. */
+        relPath: string;
+      }
+    | undefined
   >(undefined);
   const requestChatInsert = useUiStore((s) => s.requestChatInsert);
   // Selected paths for the multiselect / bulk-delete affordance.
@@ -96,19 +116,37 @@ export function FileBrowserPanel() {
     );
   }
 
-  const submitCreate = async (entryKind: "file" | "folder", name: string): Promise<void> => {
+  const submitCreate = async (
+    entryKind: "file" | "folder",
+    parentAbsPath: string,
+    name: string,
+  ): Promise<void> => {
     setDialog(undefined);
     try {
       if (entryKind === "file") {
-        const path = await createFile(project.id, project.path, name);
+        const path = await createFile(project.id, parentAbsPath, name);
         // Open the new file immediately so the user can start editing.
         await openFile(project.id, path);
       } else {
-        await createFolder(project.id, project.path, name);
+        await createFolder(project.id, parentAbsPath, name);
       }
     } catch {
       // Error already in store; banner renders below.
     }
+  };
+
+  // Open the create dialog scoped to a specific folder. Used by the
+  // context-menu "Add file" / "Add folder" entries on a folder row, so
+  // the new entry lands inside the right-clicked directory rather
+  // than at the project root. Auto-expands the parent so the new
+  // entry is visible after `loadTree` refreshes the tree.
+  const requestCreateInFolder = (
+    parentAbsPath: string,
+    parentRelPath: string,
+    entryKind: "file" | "folder",
+  ): void => {
+    setExpanded((e) => ({ ...e, [parentRelPath]: true }));
+    setDialog({ kind: "create", entryKind, parentAbsPath });
   };
 
   const startRename = (absPath: string, currentName: string): void => {
@@ -189,10 +227,38 @@ export function FileBrowserPanel() {
 
   // Right-click context menu for file rows. State (`contextMenu`) is
   // hoisted above the early-return up top; the handlers below own the
-  // open/close + per-item dispatch.
-  const openContextMenu = (e: React.MouseEvent, absPath: string, isDir: boolean): void => {
+  // open/close + per-item dispatch. `stopPropagation` prevents the
+  // empty-area handler on the scroll container from firing too — only
+  // ONE menu opens per right-click, with the most specific target winning.
+  const openContextMenu = (
+    e: React.MouseEvent,
+    info: { absPath: string; isDir: boolean; name: string; relPath: string },
+  ): void => {
     e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY, absPath, isDir });
+    e.stopPropagation();
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      kind: info.isDir ? "folder" : "file",
+      absPath: info.absPath,
+      name: info.name,
+      relPath: info.relPath,
+    });
+  };
+
+  // Right-click in the tree's empty area (below the last row) opens
+  // a slim menu rooted at the project. Useful when a project has no
+  // top-level folders to right-click ON yet.
+  const openEmptyContextMenu = (e: React.MouseEvent): void => {
+    e.preventDefault();
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      kind: "empty",
+      absPath: project.path,
+      name: "",
+      relPath: "",
+    });
   };
 
   const addAsChatContext = (absPath: string): void => {
@@ -337,14 +403,18 @@ export function FileBrowserPanel() {
         </span>
         <div className="flex gap-1">
           <button
-            onClick={() => setDialog({ kind: "create", entryKind: "file" })}
+            onClick={() =>
+              setDialog({ kind: "create", entryKind: "file", parentAbsPath: project.path })
+            }
             className="rounded p-1 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
             title="New file"
           >
             <FilePlus2 size={14} />
           </button>
           <button
-            onClick={() => setDialog({ kind: "create", entryKind: "folder" })}
+            onClick={() =>
+              setDialog({ kind: "create", entryKind: "folder", parentAbsPath: project.path })
+            }
             className="rounded p-1 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
             title="New folder"
           >
@@ -415,6 +485,11 @@ export function FileBrowserPanel() {
       )}
       <div
         className="flex-1 overflow-y-auto py-1"
+        // Empty-area context menu — only fires when the right-click
+        // didn't land on a tree row (rows stopPropagation in their own
+        // openContextMenu). Useful for empty projects or below-last-row
+        // gaps where there's no row to right-click on.
+        onContextMenu={openEmptyContextMenu}
         // Empty-area drop = move/upload to the project root. dragover
         // MUST preventDefault to enable the drop. We accept either an
         // in-app drag (custom mime) or a native OS file drag (`Files`).
@@ -462,19 +537,11 @@ export function FileBrowserPanel() {
         onClose={() => setDialog(undefined)}
         onSubmit={(name) => {
           if (dialog?.kind !== "create") return;
-          void submitCreate(dialog.entryKind, name);
+          void submitCreate(dialog.entryKind, dialog.parentAbsPath, name);
         }}
-        title={
-          dialog?.kind === "create" && dialog.entryKind === "folder" ? "New folder" : "New file"
-        }
-        label={
-          dialog?.kind === "create" && dialog.entryKind === "folder"
-            ? "Folder name (relative to project root)"
-            : "File name (relative to project root)"
-        }
-        placeholder={
-          dialog?.kind === "create" && dialog.entryKind === "folder" ? "src/utils" : "src/index.ts"
-        }
+        title={createDialogTitle(dialog, project.path)}
+        label={createDialogLabel(dialog, project.path)}
+        placeholder={createDialogPlaceholder(dialog)}
         primaryLabel="Create"
       />
       <ConfirmDialog
@@ -521,9 +588,21 @@ export function FileBrowserPanel() {
         <FileContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          isDir={contextMenu.isDir}
+          kind={contextMenu.kind}
           onClose={() => setContextMenu(undefined)}
           onAddAsContext={() => addAsChatContext(contextMenu.absPath)}
+          {...(contextMenu.kind !== "empty" && {
+            onRename: () => startRename(contextMenu.absPath, contextMenu.name),
+            onDelete: () =>
+              requestDelete(contextMenu.absPath, contextMenu.name, contextMenu.kind === "folder"),
+            onDownload: () => void downloadEntry(contextMenu.absPath),
+          })}
+          {...(contextMenu.kind !== "file" && {
+            onAddFile: () =>
+              requestCreateInFolder(contextMenu.absPath, contextMenu.relPath, "file"),
+            onAddFolder: () =>
+              requestCreateInFolder(contextMenu.absPath, contextMenu.relPath, "folder"),
+          })}
         />
       )}
     </div>
@@ -532,23 +611,43 @@ export function FileBrowserPanel() {
 
 /**
  * Floating context menu rendered at viewport coordinates. Closes on
- * any outside click, on Esc, or when a menu item runs. Items that
- * don't apply to the current target (e.g. add-as-context for a
- * directory) render disabled rather than disappearing — keeps the
- * menu's shape predictable across right-clicks.
+ * any outside click, on Esc, or when a menu item runs. Three target
+ * kinds drive different action sets:
+ *
+ *  - `file`   — Add as @ context, Rename, Delete, Download
+ *  - `folder` — Rename, Delete, Download, Add file, Add folder
+ *  - `empty`  — Add file, Add folder (rooted at the project)
+ *
+ * Items that don't apply to the current kind have their handler set
+ * to `undefined` by the parent — this component just doesn't render
+ * those rows. (Older revision rendered them disabled; that produced a
+ * cluttered menu where most items were greyed out, especially for the
+ * empty-area target. Hiding inapplicable rows reads better.)
  */
 function FileContextMenu(props: {
   x: number;
   y: number;
-  isDir: boolean;
+  kind: "file" | "folder" | "empty";
   onClose: () => void;
   onAddAsContext: () => void;
+  onRename?: () => void;
+  onDelete?: () => void;
+  onDownload?: () => void;
+  onAddFile?: () => void;
+  onAddFolder?: () => void;
 }) {
+  // Memo-stable close ref so the effect's dep array doesn't churn on
+  // every parent render — earlier `[props]` dep meant the outside-click
+  // listener tore down + re-attached on every render of the parent
+  // (which happened on file-tree refreshes, store updates, etc.). The
+  // teardown window made outside-click closing flaky.
+  const closeRef = useRef(props.onClose);
+  closeRef.current = props.onClose;
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") props.onClose();
+      if (e.key === "Escape") closeRef.current();
     };
-    const onMouseDown = (): void => props.onClose();
+    const onMouseDown = (): void => closeRef.current();
     window.addEventListener("keydown", onKey);
     // mousedown fires before the click handler on the menu items, so
     // capture-phase + same-tick close would race. Listen on the next
@@ -559,28 +658,122 @@ function FileContextMenu(props: {
       window.removeEventListener("mousedown", onMouseDown);
       clearTimeout(t);
     };
-  }, [props]);
+  }, []);
+
+  // Run the action then close. Wrapping every callback this way keeps
+  // the per-item JSX terse and makes the close-on-action contract
+  // local to the menu rather than expecting every parent handler to
+  // call onClose itself.
+  const run = (fn: (() => void) | undefined): (() => void) | undefined => {
+    if (fn === undefined) return undefined;
+    return () => {
+      fn();
+      props.onClose();
+    };
+  };
+  // Both files and folders can be `@` references — files inline their
+  // content, folders defer to the model (which lists / greps via tools).
+  // Empty area has no path to attach.
+  const addAsContext = props.kind !== "empty" ? run(props.onAddAsContext) : undefined;
+  const rename = run(props.onRename);
+  const del = run(props.onDelete);
+  const download = run(props.onDownload);
+  const addFile = run(props.onAddFile);
+  const addFolder = run(props.onAddFolder);
+
   return (
     <div
       className="fixed z-50 min-w-[200px] overflow-hidden rounded-md border border-neutral-700 bg-neutral-900 shadow-lg"
       style={{ left: props.x, top: props.y }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <button
-        type="button"
-        disabled={props.isDir}
-        onClick={props.onAddAsContext}
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:text-neutral-600 disabled:hover:bg-transparent"
-        title={
-          props.isDir
-            ? "Directory references aren't supported — pick a single file"
-            : "Append @<path> to the chat input so the file's content is sent with the next prompt"
-        }
-      >
-        <AtSign size={12} />
-        Add as @ context
-      </button>
+      {addAsContext !== undefined && (
+        <ContextMenuItem
+          onClick={addAsContext}
+          icon={<AtSign size={12} />}
+          label="Add as @ context"
+          title={
+            props.kind === "folder"
+              ? "Append @<path>/ to the chat input so the model can ls / grep this folder"
+              : "Append @<path> to the chat input so the file's content is sent with the next prompt"
+          }
+        />
+      )}
+      {addFile !== undefined && (
+        <ContextMenuItem
+          onClick={addFile}
+          icon={<FilePlus2 size={12} />}
+          label="Add file"
+          title={
+            props.kind === "folder"
+              ? "Create a new file inside this folder"
+              : "Create a new file at the project root"
+          }
+        />
+      )}
+      {addFolder !== undefined && (
+        <ContextMenuItem
+          onClick={addFolder}
+          icon={<FolderPlus size={12} />}
+          label="Add folder"
+          title={
+            props.kind === "folder"
+              ? "Create a new subfolder inside this folder"
+              : "Create a new folder at the project root"
+          }
+        />
+      )}
+      {rename !== undefined && (
+        <ContextMenuItem
+          onClick={rename}
+          icon={<Pencil size={12} />}
+          label="Rename"
+          title="Rename this file or folder"
+        />
+      )}
+      {download !== undefined && (
+        <ContextMenuItem
+          onClick={download}
+          icon={<Download size={12} />}
+          label="Download"
+          title={props.kind === "folder" ? "Download folder as .tar.gz" : "Download this file"}
+        />
+      )}
+      {del !== undefined && (
+        <ContextMenuItem
+          onClick={del}
+          icon={<Trash2 size={12} />}
+          label="Delete"
+          title="Delete this file or folder"
+          tone="danger"
+        />
+      )}
     </div>
+  );
+}
+
+function ContextMenuItem(props: {
+  onClick: () => void;
+  icon: ReactNode;
+  label: string;
+  title: string;
+  tone?: "danger";
+}) {
+  const danger = props.tone === "danger";
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      title={props.title}
+      className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${
+        danger
+          ? "text-red-300 hover:bg-red-900/30 hover:text-red-100"
+          : "text-neutral-200 hover:bg-neutral-800"
+      }`}
+    >
+      {props.icon}
+      {props.label}
+    </button>
   );
 }
 
@@ -606,7 +799,10 @@ interface TreeProps {
   onDropTargetChange: (path: string | undefined) => void;
   onDrop: (e: DragEvent<HTMLElement>, targetDirAbsPath: string) => void;
   /** Right-click handler — opens the per-row context menu. */
-  onContextMenu: (e: React.MouseEvent, absPath: string, isDir: boolean) => void;
+  onContextMenu: (
+    e: React.MouseEvent,
+    info: { absPath: string; isDir: boolean; name: string; relPath: string },
+  ) => void;
   /** Set of absolute paths currently selected (for bulk actions). */
   selectedPaths: Set<string>;
   /** Toggle one path in the selection set. */
@@ -635,13 +831,37 @@ function Tree(props: TreeProps) {
   return (
     <li>
       <div
-        className={`group flex items-center gap-1 px-2 py-0.5 hover:bg-neutral-900 ${
-          isSelected ? "bg-emerald-900/20" : ""
+        // Selection styling: a saturated 2-px LEFT BORDER + tinted bg
+        // gives an unambiguous "this row is selected" cue that stays
+        // legible against the dark theme and survives hover. Earlier
+        // version was `bg-emerald-900/20` only (close to neutral-900
+        // at low alpha) plus a `hover:bg-neutral-900` that completely
+        // hid the selection on cursor-over. Border lives on every row
+        // (transparent when unselected) so toggling selection doesn't
+        // shift content by 2 px.
+        //
+        // Blue, not emerald, to disambiguate from the drop-target
+        // styling below — drop-target keeps its emerald ring so
+        // dragging onto a selected row is still obvious.
+        className={`group flex items-center gap-1 border-l-2 py-0.5 pr-2 ${
+          isSelected
+            ? "border-blue-400 bg-blue-500/15 hover:bg-blue-500/25"
+            : "border-transparent hover:bg-neutral-900"
         } ${isDropTarget ? "bg-emerald-900/30 ring-1 ring-emerald-700/50" : ""}`}
         style={{ paddingLeft: `${depth * 12 + 6}px` }}
         // Right-click → context menu. Skip while renaming so the input
         // keeps its native context menu (paste, etc.).
-        onContextMenu={isRenaming ? undefined : (e) => props.onContextMenu(e, absPath, isDir)}
+        onContextMenu={
+          isRenaming
+            ? undefined
+            : (e) =>
+                props.onContextMenu(e, {
+                  absPath,
+                  isDir,
+                  name: node.name,
+                  relPath: node.path,
+                })
+        }
         // Drag source: every row is draggable except while inline
         // renaming (the input owns pointer events then).
         draggable={!isRenaming}
@@ -802,6 +1022,40 @@ function Tree(props: TreeProps) {
 function joinPath(root: string, rel: string): string {
   if (rel === "") return root;
   return `${root}/${rel.replaceAll("\\", "/")}`;
+}
+
+/**
+ * Derive the parent's display path for the create-dialog title/label.
+ * Toolbar-triggered creates have parentAbsPath === project root and
+ * read as "(relative to project root)"; context-menu creates on a
+ * folder get the project-relative form so users see exactly where
+ * the new entry will land.
+ */
+function parentDisplay(parentAbsPath: string, projectPath: string): string | undefined {
+  if (parentAbsPath === projectPath) return undefined;
+  if (parentAbsPath.startsWith(`${projectPath}/`)) {
+    return parentAbsPath.slice(projectPath.length + 1);
+  }
+  return parentAbsPath;
+}
+
+function createDialogTitle(dialog: DialogState, projectPath: string): string {
+  if (dialog?.kind !== "create") return "";
+  const rel = parentDisplay(dialog.parentAbsPath, projectPath);
+  const noun = dialog.entryKind === "folder" ? "folder" : "file";
+  return rel === undefined ? `New ${noun}` : `New ${noun} in ${rel}/`;
+}
+
+function createDialogLabel(dialog: DialogState, projectPath: string): string {
+  if (dialog?.kind !== "create") return "";
+  const rel = parentDisplay(dialog.parentAbsPath, projectPath);
+  const noun = dialog.entryKind === "folder" ? "Folder name" : "File name";
+  return rel === undefined ? `${noun} (relative to project root)` : `${noun} (in ${rel}/)`;
+}
+
+function createDialogPlaceholder(dialog: DialogState): string {
+  if (dialog?.kind !== "create") return "";
+  return dialog.entryKind === "folder" ? "utils" : "index.ts";
 }
 
 function formatBytes(n: number): string {

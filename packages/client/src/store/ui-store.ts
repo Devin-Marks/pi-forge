@@ -51,23 +51,44 @@ interface UiState {
    *  decides spacing based on its current contents). */
   requestChatInsert: (text: string) => void;
   clearChatInsertRequest: () => void;
+  /**
+   * Monotonic counters feeding the `seq` field on cross-component
+   * requests. These NEVER reset on `clear*` — that's the whole point.
+   *
+   * Why they exist: an earlier version derived the next seq as
+   * `prev = currentRequest?.seq ?? 0; next = prev + 1`. After a
+   * consumer cleared the request slot to `undefined`, that read
+   * snapped back to 0, so the second request also got `seq = 1` and
+   * the consumer's `lastSeenSeq` ratchet (also at 1) silently
+   * dropped it. Symptom: "Add as @ context sometimes doesn't work."
+   * The ratchet now lives on the producer side and survives clears.
+   *
+   * Underscore prefix is convention for "internal state — don't read
+   * from components." Per-channel counters (rather than a single
+   * shared one) keep each consumer's local lastSeen monotonic
+   * without surprising jumps when an unrelated channel fires.
+   */
+  _settingsSeq: number;
+  _chatInsertSeq: number;
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
   settingsRequest: undefined,
+  _settingsSeq: 0,
   openSettings: (tab) => {
-    const prev = get().settingsRequest?.seq ?? 0;
-    const req: SettingsRequest = { seq: prev + 1 };
+    const seq = get()._settingsSeq + 1;
+    const req: SettingsRequest = { seq };
     if (tab !== undefined) req.tab = tab;
-    set({ settingsRequest: req });
+    set({ _settingsSeq: seq, settingsRequest: req });
   },
   clearSettingsRequest: () => {
     set({ settingsRequest: undefined });
   },
   chatInsertRequest: undefined,
+  _chatInsertSeq: 0,
   requestChatInsert: (text) => {
-    const prev = get().chatInsertRequest?.seq ?? 0;
-    set({ chatInsertRequest: { text, seq: prev + 1 } });
+    const seq = get()._chatInsertSeq + 1;
+    set({ _chatInsertSeq: seq, chatInsertRequest: { text, seq } });
   },
   clearChatInsertRequest: () => {
     set({ chatInsertRequest: undefined });
