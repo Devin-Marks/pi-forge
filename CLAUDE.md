@@ -10,7 +10,7 @@ conventions, critical rules, and known gotchas.
 ## What This Project Is
 
 pi-forge is a browser UI for the pi coding agent (github.com/badlogic/pi-mono).
-It is an HTTP server that embeds the `@mariozechner/pi-coding-agent` SDK and exposes
+It is an HTTP server that embeds the `@earendil-works/pi-coding-agent` SDK and exposes
 it to a browser over REST + Server-Sent Events.
 
 It is NOT a reimplementation of the agent, tools, session logic, or LLM communication.
@@ -317,9 +317,9 @@ reflects the public access. Forgetting either is a security/spec bug.
 
 | Package | Purpose |
 |---|---|
-| `@mariozechner/pi-coding-agent` | `AgentSession`, `createAgentSession`, `SessionManager`, `AuthStorage`, `ModelRegistry` |
-| `@mariozechner/pi-agent-core` | `Agent`, `AgentSessionEvent` union type, `AgentMessage` types |
-| `@mariozechner/pi-ai` | `getModel`, provider abstraction |
+| `@earendil-works/pi-coding-agent` | `AgentSession`, `createAgentSession`, `SessionManager`, `AuthStorage`, `ModelRegistry` |
+| `@earendil-works/pi-agent-core` | `Agent`, `AgentSessionEvent` union type, `AgentMessage` types |
+| `@earendil-works/pi-ai` | `getModel`, provider abstraction |
 | `fastify` | HTTP server |
 | `@fastify/static` | Serve built client files in production |
 | `@fastify/cors` | CORS for dev (disabled in prod) |
@@ -364,7 +364,7 @@ These are facts about the pi SDK that are easy to get wrong:
   to get metadata without loading the full file.
 - `ToolResultMessage.details` for `edit` tool calls contains the unified diff string
   directly. Extract it with `event.details?.diff` or similar — check the actual
-  type definition in `node_modules/@mariozechner/pi-coding-agent/dist/` for the
+  type definition in `node_modules/@earendil-works/pi-coding-agent/dist/` for the
   exact field name before using it.
 - Pi does NOT have native sub-agent support in the SDK — there is no
   "child session created" event. Sub-agent integration is provided by the

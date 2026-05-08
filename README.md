@@ -200,7 +200,7 @@ For project conventions and the agent-facing architecture notes, see
 
 ## Versions
 
-pi-forge tracks the [`@mariozechner/pi-coding-agent`](https://www.npmjs.com/package/@mariozechner/pi-coding-agent)
+pi-forge tracks the [`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
 SDK closely. Each pi-forge release pins an exact patch version of the
 pi SDK trio (`pi-coding-agent`, `pi-agent-core`, `pi-ai`) — no
 caret/tilde — so a transparent SDK upgrade can't surprise an existing

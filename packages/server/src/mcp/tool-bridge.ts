@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 
 /**
  * Translate a single MCP tool advertised by a connected MCP server

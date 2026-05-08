@@ -294,7 +294,7 @@ extra config:
   disappear.
 - Container-side, the plugin's `spawn("pi", ...)` works because
   `/app/node_modules/.bin` is on PATH (the `pi` CLI ships as a bin
-  shim of `@mariozechner/pi-coding-agent`, which pi-forge already
+  shim of `@earendil-works/pi-coding-agent`, which pi-forge already
   depends on).
 
 To install: `pi install npm:pi-subagents` on the host. The plugin

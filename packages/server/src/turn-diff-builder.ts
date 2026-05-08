@@ -1,6 +1,6 @@
 import { stat, readFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { runGitRaw } from "./git-runner.js";
 
 /**
@@ -102,7 +102,7 @@ export function collectTurnTouches(
   }
 
   // Build callId → ToolCallInfo from assistant messages first.
-  // The SDK's `ToolCall` block (defined in `@mariozechner/pi-ai`'s
+  // The SDK's `ToolCall` block (defined in `@earendil-works/pi-ai`'s
   // types.d.ts) uses `arguments` for the input object — NOT `input`.
   // We accept either field as a defensive measure: `arguments` is
   // canonical, `input` is the historical naming some other SDKs use

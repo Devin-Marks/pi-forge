@@ -1,8 +1,13 @@
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { AuthStorage, ModelRegistry, type Skill, loadSkills } from "@mariozechner/pi-coding-agent";
-import type { Api, Model } from "@mariozechner/pi-ai";
+import {
+  AuthStorage,
+  ModelRegistry,
+  type Skill,
+  loadSkills,
+} from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { config } from "./config.js";
 import { makeLock } from "./concurrency.js";
 import { discoverExtensionResources } from "./extensions-discovery.js";

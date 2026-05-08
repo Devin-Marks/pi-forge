@@ -7,7 +7,7 @@ import {
   SessionManager,
   SettingsManager,
   type SessionInfo,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { buildForgeResourceLoader } from "./agent-resource-loader.js";
 import { config } from "./config.js";
 import { makeDedupe, makeLock } from "./concurrency.js";
@@ -15,7 +15,7 @@ import { effectiveSkillsForProject } from "./config-manager.js";
 import { readProjects } from "./project-manager.js";
 import { filterEnabledTools, readToolOverrides } from "./tool-overrides.js";
 import { discoverExtensionResources } from "./extensions-discovery.js";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   customToolsForProject as mcpCustomToolsForProject,
   ensureProjectLoaded as mcpEnsureProjectLoaded,
@@ -147,7 +147,7 @@ const registry = new Map<string, LiveSession>();
 /**
  * Built-in pi tools we activate on every session. Pi's SDK ships
  * seven `read | bash | edit | write | grep | find | ls` (see
- * `node_modules/@mariozechner/pi-coding-agent/dist/core/tools/index.d.ts`),
+ * `node_modules/@earendil-works/pi-coding-agent/dist/core/tools/index.d.ts`),
  * but only the first four are activated when `tools` is left
  * undefined. We enable all seven so the agent gets first-class
  * filesystem-read affordances (grep / find / ls) instead of
