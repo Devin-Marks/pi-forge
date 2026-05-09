@@ -73,10 +73,25 @@ interface RunningServer {
   port: number;
   child: ChildProcess;
   base: string;
+  /** Absolute path the server is using as its FORGE_DATA_DIR. Exposed
+   *  so callers that want to reuse the same on-disk state across two
+   *  boots (password-hash, jwt-secret) can pass it back into a fresh
+   *  startServer({ ... }, { dataDir }). */
+  dataDir: string;
   stop: () => Promise<void>;
 }
 
-async function startServer(env: Record<string, string | undefined>): Promise<RunningServer> {
+interface StartServerOpts {
+  /** Reuse a pre-existing data dir (e.g. to test what happens after a
+   *  previous boot persisted a password-hash + jwt-secret to disk).
+   *  When omitted, a fresh mkdtemp dir is created and stop() removes it. */
+  dataDir?: string;
+}
+
+async function startServer(
+  env: Record<string, string | undefined>,
+  opts: StartServerOpts = {},
+): Promise<RunningServer> {
   const port = await pickFreePort();
   // Force per-spawn isolation of the data dir. The default
   // (~/.pi-forge) leaks any password-hash / jwt-secret / projects.json
@@ -85,8 +100,11 @@ async function startServer(env: Record<string, string | undefined>): Promise<Run
   // assume no on-disk hash exists, but `authEnabled()` reads
   // existsSync(passwordHashFile) and returns true even when neither
   // env var is set. mkdtemp gives each spawn a clean slate; the
-  // cleanup runs in stop().
-  const dataDir = await mkdtemp(join(tmpdir(), "pi-forge-test-auth-"));
+  // cleanup runs in stop() unless the caller supplied their own dir
+  // (in which case we leave cleanup to them so a follow-up boot can
+  // share the same on-disk state).
+  const ownsDataDir = opts.dataDir === undefined;
+  const dataDir = opts.dataDir ?? (await mkdtemp(join(tmpdir(), "pi-forge-test-auth-")));
   const workspacePath = join(dataDir, "workspace");
   const child = spawn(process.execPath, [serverEntry], {
     cwd: repoRoot,
@@ -112,7 +130,9 @@ async function startServer(env: Record<string, string | undefined>): Promise<Run
         setTimeout(() => child.kill("SIGKILL"), 1500).unref();
       });
     }
-    await rm(dataDir, { recursive: true, force: true }).catch(() => undefined);
+    if (ownsDataDir) {
+      await rm(dataDir, { recursive: true, force: true }).catch(() => undefined);
+    }
   };
 
   try {
@@ -121,7 +141,7 @@ async function startServer(env: Record<string, string | undefined>): Promise<Run
     await stop();
     throw err;
   }
-  return { port, child, base, stop };
+  return { port, child, base, dataDir, stop };
 }
 
 async function jsonPost(
@@ -258,10 +278,110 @@ async function scenarioAuthDisabled(): Promise<void> {
   }
 }
 
+/**
+ * Scenario D — persisted password-hash but NO env credentials.
+ *
+ * Models the real-world deployment shape that surfaced the bug we're
+ * regression-testing here: an operator boots once with `UI_PASSWORD`
+ * set, the user changes their password through the UI (which writes
+ * a scrypt hash to `${FORGE_DATA_DIR}/password-hash`), and then on
+ * subsequent boots the operator drops `UI_PASSWORD` from env (it's
+ * no longer the canonical credential — the hash file is). Pre-fix,
+ * the second boot left `JWT_SECRET = undefined` because it was only
+ * loaded when `UI_PASSWORD !== undefined`, and login 500'd trying to
+ * sign a JWT with `undefined`. Post-fix: `JWT_SECRET` is also loaded
+ * when the hash file exists, so login signs cleanly.
+ */
+async function scenarioPersistedHashOnly(): Promise<void> {
+  console.log("\n[scenario D] persisted password-hash, no env UI_PASSWORD/JWT_SECRET");
+  const initialPassword = "initial-pw";
+  const rotatedPassword = "rotated-pw";
+
+  // Scenario-owned data dir so both boots share the same on-disk state
+  // (hash file + jwt-secret persist across the restart). startServer
+  // would otherwise mkdtemp its own and rm it in stop(), wiping the
+  // hash file before boot 2 can read it.
+  const dataDir = await mkdtemp(join(tmpdir(), "pi-forge-test-auth-D-"));
+
+  // Boot 1: bring up with env-supplied password, log in, change to a
+  // new password (which persists the hash + jwt-secret to disk).
+  const srv1 = await startServer(
+    {
+      UI_PASSWORD: initialPassword,
+      JWT_SECRET: undefined,
+      API_KEY: undefined,
+      REQUIRE_PASSWORD_CHANGE: "false",
+    },
+    { dataDir },
+  );
+  try {
+    const login = await jsonPost(`${srv1.base}/api/v1/auth/login`, { password: initialPassword });
+    assert("[setup] initial login succeeds", login.status === 200);
+    const issued = (await login.json()) as { token: string };
+    const change = await jsonPost(
+      `${srv1.base}/api/v1/auth/change-password`,
+      { currentPassword: initialPassword, newPassword: rotatedPassword },
+      { Authorization: `Bearer ${issued.token}` },
+    );
+    assert("[setup] change-password succeeds", change.status === 200);
+  } finally {
+    await srv1.stop();
+  }
+
+  // Boot 2: same data dir, NO env credentials. Pre-fix this would
+  // come up with JWT_SECRET=undefined and login would 500. Post-fix
+  // the hash file's existence triggers JWT_SECRET load.
+  const srv2 = await startServer(
+    {
+      UI_PASSWORD: undefined,
+      JWT_SECRET: undefined,
+      API_KEY: undefined,
+      REQUIRE_PASSWORD_CHANGE: "false",
+    },
+    { dataDir },
+  );
+  try {
+    const status = await fetch(`${srv2.base}/api/v1/auth/status`);
+    const statusBody = (await status.json()) as { authEnabled: boolean };
+    assert(
+      "auth/status reports authEnabled=true (hash file alone enables it)",
+      statusBody.authEnabled === true,
+    );
+
+    const wrong = await jsonPost(`${srv2.base}/api/v1/auth/login`, {
+      password: "definitely-wrong",
+    });
+    assert("login with wrong password → 401 (not 500)", wrong.status === 401);
+
+    const right = await jsonPost(`${srv2.base}/api/v1/auth/login`, { password: rotatedPassword });
+    assert(
+      "login with rotated password → 200 (the regression: pre-fix this was 500)",
+      right.status === 200,
+    );
+    const issued = (await right.json()) as { token: string };
+    assert(
+      "re-issued token is non-empty",
+      typeof issued.token === "string" && issued.token.length > 0,
+    );
+
+    const probe = await fetch(`${srv2.base}/api/v1/__protected_probe`, {
+      headers: { Authorization: `Bearer ${issued.token}` },
+    });
+    assert(
+      "probe with the re-issued JWT passes auth (404 from not-found, not 401)",
+      probe.status === 404,
+    );
+  } finally {
+    await srv2.stop();
+    await rm(dataDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 async function main(): Promise<void> {
   await scenarioPasswordAndJwt();
   await scenarioApiKeyOnly();
   await scenarioAuthDisabled();
+  await scenarioPersistedHashOnly();
 
   if (failures > 0) {
     console.log(`\n[test-auth] FAIL — ${failures} assertion(s) failed`);
