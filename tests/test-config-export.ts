@@ -67,7 +67,11 @@ async function postMultipart(
   body: Buffer,
 ): Promise<JsonResponse> {
   const fd = new FormData();
-  fd.append(field, new Blob([body], { type: contentType }), filename);
+  // @types/node 25 parameterizes Buffer over ArrayBufferLike, which
+  // includes SharedArrayBuffer and is no longer assignable to Blob's
+  // BlobPart. Wrap in a fresh Uint8Array (backed by a plain ArrayBuffer)
+  // before constructing the Blob.
+  fd.append(field, new Blob([new Uint8Array(body)], { type: contentType }), filename);
   const res = await fetch(`${base}${path}`, { method: "POST", body: fd });
   const text = await res.text();
   return {
