@@ -98,6 +98,7 @@ const CLIENT_DIST_PATH = resolve(
 const UI_PASSWORD = readEnv("UI_PASSWORD");
 const API_KEY = readEnv("API_KEY");
 const CORS_ORIGIN = readEnv("CORS_ORIGIN");
+const PASSWORD_HASH_FILE = join(FORGE_DATA_DIR, "password-hash");
 
 /**
  * Load a JWT signing key from `${FORGE_DATA_DIR}/jwt-secret`, or
@@ -106,8 +107,13 @@ const CORS_ORIGIN = readEnv("CORS_ORIGIN");
  * in K8s and Docker), reused across restarts so issued tokens stay
  * valid. Setting `JWT_SECRET` env explicitly skips this entirely.
  *
- * Only invoked when `UI_PASSWORD` is set — if browser auth isn't on,
- * we don't need a secret at all.
+ * Invoked when ANY browser-auth credential is in play: an env-supplied
+ * `UI_PASSWORD`, or a previously-persisted password-hash file (the
+ * latter survives env rotation, the same way jwt-secret does).
+ * Without this, a deployment that booted with `UI_PASSWORD` once and
+ * then dropped it after the user changed their password would be left
+ * with a hash on disk but no signing key — login would 500 trying to
+ * sign a JWT with `undefined`.
  */
 function loadOrGenerateJwtSecret(dataDir: string): string {
   const path = join(dataDir, "jwt-secret");
@@ -132,7 +138,9 @@ function loadOrGenerateJwtSecret(dataDir: string): string {
 
 const JWT_SECRET =
   readEnv("JWT_SECRET") ??
-  (UI_PASSWORD !== undefined ? loadOrGenerateJwtSecret(FORGE_DATA_DIR) : undefined);
+  (UI_PASSWORD !== undefined || existsSync(PASSWORD_HASH_FILE)
+    ? loadOrGenerateJwtSecret(FORGE_DATA_DIR)
+    : undefined);
 
 export const config = Object.freeze({
   port: readInt("PORT", 3000),
@@ -252,7 +260,7 @@ export const config = Object.freeze({
      */
     requirePasswordChange: readBool("REQUIRE_PASSWORD_CHANGE", false),
     /** Where the persisted scrypt hash lives — see auth.ts. */
-    passwordHashFile: join(FORGE_DATA_DIR, "password-hash"),
+    passwordHashFile: PASSWORD_HASH_FILE,
   }),
   /**
    * Per-route rate limits applied to the cost-heavy / disk-heavy / CPU-heavy
