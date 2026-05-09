@@ -15,6 +15,8 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.1.5] — 2026-05-08
+
 ### Added
 
 - **Right-click context menu in the file tree, with full action sets per
