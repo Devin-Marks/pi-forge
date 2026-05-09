@@ -56,10 +56,11 @@ services:
       # UI_PASSWORD is the INITIAL password; once changed via the UI
       # the scrypt hash at ${FORGE_DATA_DIR}/password-hash takes
       # over and this env value is ignored. REQUIRE_PASSWORD_CHANGE
-      # (default true) forces the user to pick a new password on
-      # first login when only UI_PASSWORD is set.
+      # (default false) opt-in flag for sealed-secret deployments —
+      # set to true when UI_PASSWORD comes from helm/vault and the
+      # operator should rotate it on first login.
       - UI_PASSWORD=${UI_PASSWORD:-}
-      - REQUIRE_PASSWORD_CHANGE=${REQUIRE_PASSWORD_CHANGE:-true}
+      - REQUIRE_PASSWORD_CHANGE=${REQUIRE_PASSWORD_CHANGE:-false}
       - JWT_SECRET=${JWT_SECRET:-}
       - API_KEY=${API_KEY:-}
       # Logging + reverse-proxy hint.

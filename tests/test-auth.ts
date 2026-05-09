@@ -146,10 +146,10 @@ async function scenarioPasswordAndJwt(): Promise<void> {
     API_KEY: undefined,
     RATE_LIMIT_LOGIN_MAX: "3",
     RATE_LIMIT_LOGIN_WINDOW_MS: "60000",
-    // The default `requirePasswordChange=true` issues an initial-login
-    // token scoped to POST /auth/change-password only. This scenario
-    // tests that a *normal* JWT passes auth and reaches routes —
-    // change-password flow is its own concern and isn't exercised here.
+    // Pinned explicitly even though `false` is now the default — keeps
+    // this scenario's intent visible (we want a *normal* JWT, not the
+    // change-password-scoped initial-login token). The change-password
+    // flow is its own concern and isn't exercised here.
     REQUIRE_PASSWORD_CHANGE: "false",
   });
   try {

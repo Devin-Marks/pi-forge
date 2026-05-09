@@ -11,12 +11,43 @@ pi-forge's runtime behavior is shaped by **two** layers of configuration:
    `/api/v1/config/*` routes. See [Pi SDK config files](#pi-sdk-config-files)
    below.
 
+## CLI flags
+
+Every server env var below has an equivalent kebab-case flag on the
+`pi-forge` command. **Flags win when both are set** — `pi-forge --port
+4000` overrides `PORT=3000` in the environment. When no flag is given,
+the existing env value persists. The flag table is exhaustive — anything
+you'd set with `FOO_BAR=value` you can pass as `--foo-bar value`.
+
+```bash
+pi-forge --help              # full grouped flag list
+pi-forge --port 4000 --workspace-path ~/Code
+pi-forge --no-expose-docs --minimal-ui
+```
+
+**Sensitive flags** (`--ui-password`, `--api-key`, `--jwt-secret`)
+accept `@<path>` to read the value from a file instead of argv (avoids
+shell history / `ps` leakage):
+
+```bash
+pi-forge --api-key @/run/secrets/api-key
+```
+
+**Boolean flags** accept `true|false|on|off|1|0|yes|no`. Bare `--flag`
+means `true`; `--no-flag` means `false`.
+
+The single source of truth is
+[`packages/server/src/cli.ts`](../packages/server/src/cli.ts) — adding a
+new env var means adding one row to the `FLAGS` table there, which
+auto-derives the parser, the `process.env` writes, and the `--help`
+output.
+
 ## Environment variables
 
 | Variable | Default | Notes |
 |---|---|---|
 | `PORT` | `3000` | Fastify listen port. |
-| `HOST` | `0.0.0.0` | Bind address. |
+| `HOST` | `127.0.0.1` | Bind address. Defaults to loopback so a fresh install can't accidentally expose the agent's `bash`/`edit` tools to anyone on the same network. Set to `0.0.0.0` to expose to the LAN or to make Docker port-forwarding work (the shipped Dockerfile already does this). |
 | `LOG_LEVEL` | `info` | Pino log level. |
 | `WORKSPACE_PATH` | `~/.pi-forge/workspace` | Where project code lives. Docker image overrides to `/workspace` (mounted from host). Point at an existing dir (e.g. `~/Code`) to reuse code you already have on disk. |
 | `PI_CONFIG_DIR` | `~/.pi/agent` | Pi SDK config dir (auth.json, models.json, settings.json — owned by the SDK). The Docker image overrides this to `/home/pi/.pi/agent` (mounted from the host's `~/.pi/agent`). |
@@ -25,7 +56,7 @@ pi-forge's runtime behavior is shaped by **two** layers of configuration:
 | `SERVE_CLIENT` | `true` | Set to `false` to skip static-serving (useful when running the dev Vite server in front of the API). |
 | `SESSION_DIR` | `${WORKSPACE_PATH}/.pi/sessions` | JSONL session storage. |
 | `UI_PASSWORD` | (unset) | If set, enables browser JWT auth. `JWT_SECRET` is auto-generated on first boot if not supplied. After the user changes it via the UI, a scrypt hash is persisted to `${FORGE_DATA_DIR}/password-hash` and this env var is ignored on subsequent logins. |
-| `REQUIRE_PASSWORD_CHANGE` | `true` | When the user logs in with the env-supplied `UI_PASSWORD` and no on-disk hash exists yet, the issued token is scoped to `POST /auth/change-password` and the UI forces the user to pick a new password before continuing. Set to `false` to keep the env-supplied password as-is (useful when `UI_PASSWORD` is itself sourced from a sealed secret you rotate out-of-band). |
+| `REQUIRE_PASSWORD_CHANGE` | `false` | When `true` and the user logs in with the env-supplied `UI_PASSWORD` and no on-disk hash exists yet, the issued token is scoped to `POST /auth/change-password` and the UI forces the user to pick a new password before continuing. Defaults to `false` because pi-forge is single-tenant and a user setting their own `--ui-password` does so deliberately — forcing them to change it is friction without a real win. Set to `true` for deployments where `UI_PASSWORD` comes from a sealed secret (helm, docker-compose `.env`, vault) and should be rotated by the operator on first login. |
 | `JWT_SECRET` | (unset, auto-generated) | HS256 signing key. **Optional** — when `UI_PASSWORD` is set and `JWT_SECRET` is not, the server generates one and persists it to `${FORGE_DATA_DIR}/jwt-secret` (mode 0600). The data dir is already a PVC / bind-mount in K8s and Docker, so tokens survive restarts with no extra wiring. Set this env var to override (e.g. `openssl rand -hex 32`). Delete the file to rotate. |
 | `API_KEY` | (unset) | Static bearer token for programmatic access. |
 | `JWT_EXPIRES_IN_SECONDS` | `604800` | JWT lifetime (default 7 d). |

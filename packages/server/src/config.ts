@@ -136,12 +136,14 @@ const JWT_SECRET =
 
 export const config = Object.freeze({
   port: readInt("PORT", 3000),
-  // HOST default depends on NODE_ENV. Production binds 0.0.0.0 (Docker
-  // image's normal mode); dev binds 127.0.0.1 so a `npm run dev` on a
-  // laptop doesn't silently expose the agent's shell + filesystem to
-  // anyone on the same WiFi/VLAN. Operators who want LAN access in dev
-  // can set HOST=0.0.0.0 explicitly.
-  host: readEnv("HOST") ?? (process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1"),
+  // HOST defaults to 127.0.0.1 in every mode. Binding loopback by
+  // default protects against silently exposing the agent's shell +
+  // filesystem to anyone on the same WiFi/VLAN/bridge — an opt-in,
+  // not an opt-out. Operators who want LAN access (or container-host
+  // port-forwarding to work) set `HOST=0.0.0.0` explicitly. The
+  // shipped Docker image does this in its Dockerfile so the
+  // documented `docker compose up` flow keeps working out of the box.
+  host: readEnv("HOST") ?? "127.0.0.1",
   logLevel: readEnv("LOG_LEVEL") ?? "info",
   isTest: (readEnv("NODE_ENV") ?? "") === "test",
   trustProxy: readBool("TRUST_PROXY", false),
@@ -239,11 +241,16 @@ export const config = Object.freeze({
      * is hashed and persisted to `${FORGE_DATA_DIR}/password-hash`,
      * and subsequent logins ignore the env value.
      *
-     * Defaults to true so deployments that bake an initial password
-     * into env (helm secret, docker-compose .env) don't accidentally
-     * leave that credential as the long-lived one.
+     * Defaults to false: pi-forge is single-tenant and the user
+     * setting `--ui-password` / `UI_PASSWORD` does so deliberately,
+     * so forcing them to immediately pick a different password is
+     * friction without a meaningful threat-model win. Deployments
+     * that bake an initial sealed-secret password into env (helm,
+     * docker-compose .env) and want the operator to swap it after
+     * first login can opt back in with `--require-password-change`
+     * (or `REQUIRE_PASSWORD_CHANGE=true`).
      */
-    requirePasswordChange: readBool("REQUIRE_PASSWORD_CHANGE", true),
+    requirePasswordChange: readBool("REQUIRE_PASSWORD_CHANGE", false),
     /** Where the persisted scrypt hash lives — see auth.ts. */
     passwordHashFile: join(FORGE_DATA_DIR, "password-hash"),
   }),

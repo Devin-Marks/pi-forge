@@ -168,20 +168,30 @@ Open <http://localhost:3000> and pick a workspace folder.
 
 ## Configuration
 
-All knobs are environment variables. Sensible defaults — set only what
-you need.
+Every knob is settable as a \`--flag\` on the \`pi-forge\` command OR as
+an environment variable. **Flags win when both are set.** Run
+\`pi-forge --help\` for the full grouped list.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| \`PORT\` | \`3000\` | HTTP listen port |
-| \`WORKSPACE_PATH\` | \`~/.pi-forge/workspace\` | Where project code lives |
-| \`PI_CONFIG_DIR\` | \`~/.pi/agent\` | Pi SDK config (auth, models, settings) |
-| \`FORGE_DATA_DIR\` | \`~/.pi-forge\` | pi-forge state (project list) |
-| \`UI_PASSWORD\` | (unset) | Enables browser login if set |
-| \`API_KEY\` | (unset) | Enables \`Authorization: Bearer\` for programmatic use |
+\`\`\`bash
+pi-forge --port 4000 --workspace-path ~/Code
+pi-forge --api-key @/run/secrets/api-key --no-expose-docs
+\`\`\`
 
-If both \`UI_PASSWORD\` and \`API_KEY\` are unset, auth is disabled. For
-production, set at minimum \`API_KEY\`.
+The most common knobs:
+
+| Flag | Env var | Default | Purpose |
+|---|---|---|---|
+| \`--port\` | \`PORT\` | \`3000\` | HTTP listen port |
+| \`--workspace-path\` | \`WORKSPACE_PATH\` | \`~/.pi-forge/workspace\` | Where project code lives |
+| \`--pi-config-dir\` | \`PI_CONFIG_DIR\` | \`~/.pi/agent\` | Pi SDK config (auth, models, settings) |
+| \`--forge-data-dir\` | \`FORGE_DATA_DIR\` | \`~/.pi-forge\` | pi-forge state (project list) |
+| \`--ui-password\` | \`UI_PASSWORD\` | (unset) | Enables browser login if set |
+| \`--api-key\` | \`API_KEY\` | (unset) | Enables \`Authorization: Bearer\` for programmatic use |
+
+\`--ui-password\`, \`--api-key\`, and \`--jwt-secret\` accept \`@<path>\` to
+read the value from a file (avoids shell history leakage). If both
+\`--ui-password\` and \`--api-key\` are unset, auth is disabled — for
+production, set at minimum \`--api-key\`.
 
 ## Programmatic API
 
