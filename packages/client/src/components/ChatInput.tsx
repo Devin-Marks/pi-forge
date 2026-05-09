@@ -364,6 +364,59 @@ export function ChatInput({ sessionId }: Props) {
   const slashOpen = text.startsWith("/") && !text.includes("\n");
   const slashQuery = slashOpen ? (text.slice(1).split(/\s/)[0] ?? "") : "";
 
+  /**
+   * Pi prompt templates available for the active project, surfaced in
+   * the slash-command palette as `/<promptname>` entries. The pi SDK's
+   * `session.prompt()` expands the template at send time (defaults to
+   * `expandPromptTemplates: true`), so we don't expand client-side or
+   * server-side — the palette is purely a discovery + filling-in
+   * affordance. Selecting a prompt entry inserts `/<promptname> ` into
+   * the input (with trailing space) so the user can append args
+   * before pressing Enter.
+   *
+   * Refetched on project change. Errors silently swallow — a
+   * prompts-fetch failure shouldn't block the input from working;
+   * the user just sees the standard slash-command catalog without
+   * project prompts.
+   */
+  const [availablePrompts, setAvailablePrompts] = useState<
+    { name: string; description: string; argumentHint?: string }[]
+  >([]);
+  useEffect(() => {
+    if (project === undefined) {
+      setAvailablePrompts([]);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .listPrompts(project.id)
+      .then((res) => {
+        if (cancelled) return;
+        // Only surface prompts that are actually enabled for this
+        // project — matches what `session.prompt()` will be able to
+        // expand at send time.
+        setAvailablePrompts(
+          res.prompts
+            .filter((p) => p.effective)
+            .map((p) => {
+              const out: { name: string; description: string; argumentHint?: string } = {
+                name: p.name,
+                description: p.description,
+              };
+              if (p.argumentHint !== undefined) out.argumentHint = p.argumentHint;
+              return out;
+            }),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setAvailablePrompts([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
+
   // Bang-prefix mode for the visual treatment around the textarea.
   // `!!` runs bash local-only (output stays out of LLM context); `!`
   // runs bash AND feeds the output into the next turn. Both only fire
@@ -467,8 +520,43 @@ export function ChatInput({ sessionId }: Props) {
         },
       },
     ];
+    // Append pi prompt templates after the built-in commands. The
+    // SDK's `session.prompt()` expands `/<promptname> args` to the
+    // template body at send time (`expandPromptTemplates: true` by
+    // default in pi). Selecting one here just inserts the `/<name> `
+    // into the input; the user fills in args, presses Enter, and pi
+    // expands before forwarding to the model.
+    for (const p of availablePrompts) {
+      const description =
+        p.argumentHint !== undefined ? `${p.description} — args: ${p.argumentHint}` : p.description;
+      commands.push({
+        name: `/${p.name}`,
+        description,
+        available: !isStreaming,
+        run: () => {
+          // Insert `/<name> ` (trailing space) into the input — user
+          // appends arg(s) and presses Enter.
+          const insert = `/${p.name} `;
+          setText(insert);
+          requestAnimationFrame(() => {
+            const ta = textareaRef.current;
+            if (ta === null) return;
+            ta.focus();
+            ta.setSelectionRange(insert.length, insert.length);
+          });
+        },
+      });
+    }
     return commands;
-  }, [isStreaming, sessionId, abortSession, reloadMessages, openSettings, minimalUi]);
+  }, [
+    isStreaming,
+    sessionId,
+    abortSession,
+    reloadMessages,
+    openSettings,
+    minimalUi,
+    availablePrompts,
+  ]);
 
   const slashFiltered = useMemo(() => {
     const q = slashQuery.toLowerCase();

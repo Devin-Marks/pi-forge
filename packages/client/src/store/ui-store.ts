@@ -14,7 +14,7 @@ import { create } from "zustand";
  * state belongs here too.
  */
 
-export type SettingsTab = "providers" | "agent" | "mcp" | "skills" | "appearance";
+export type SettingsTab = "providers" | "agent" | "mcp" | "skills" | "prompts" | "appearance";
 
 interface SettingsRequest {
   /** Optional tab to switch to on open. Undefined = leave the

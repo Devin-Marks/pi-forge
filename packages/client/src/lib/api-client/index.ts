@@ -18,6 +18,7 @@ import {
   type UiConfigResponse,
   type UnifiedSession,
   type SessionSummary,
+  type PromptSummary,
   type SkillDiagnostic,
   type SkillSummary,
   type ToolListing,
@@ -391,6 +392,88 @@ function vSkillOverrides(
   }
   return { projects: out };
 }
+
+function vPromptSummary(p: unknown, status: number): PromptSummary {
+  if (
+    !isObject(p) ||
+    typeof p.name !== "string" ||
+    typeof p.description !== "string" ||
+    (p.source !== "global" && p.source !== "project") ||
+    typeof p.filePath !== "string" ||
+    typeof p.enabled !== "boolean" ||
+    typeof p.effective !== "boolean"
+  ) {
+    fail(status, "expected PromptSummary");
+  }
+  const summary: PromptSummary = {
+    name: p.name,
+    description: p.description,
+    source: p.source,
+    filePath: p.filePath,
+    enabled: p.enabled,
+    effective: p.effective,
+  };
+  if (typeof p.argumentHint === "string") summary.argumentHint = p.argumentHint;
+  if (p.projectOverride === "enabled" || p.projectOverride === "disabled") {
+    summary.projectOverride = p.projectOverride;
+  }
+  return summary;
+}
+
+function vPromptsList(value: unknown, status: number): { prompts: PromptSummary[] } {
+  if (!isObject(value) || !Array.isArray(value.prompts)) {
+    fail(status, "expected { prompts: PromptSummary[] }");
+  }
+  return { prompts: value.prompts.map((p) => vPromptSummary(p, status)) };
+}
+
+function vPromptsListWithDiagnostics(
+  value: unknown,
+  status: number,
+): { prompts: PromptSummary[]; diagnostics: SkillDiagnostic[] } {
+  if (!isObject(value) || !Array.isArray(value.prompts) || !Array.isArray(value.diagnostics)) {
+    fail(status, "expected { prompts: PromptSummary[], diagnostics: SkillDiagnostic[] }");
+  }
+  // Same diagnostic shape as skills — see vSkillsListWithDiagnostics
+  // for the per-entry tolerance rationale.
+  const diagnostics: SkillDiagnostic[] = [];
+  for (const d of value.diagnostics) {
+    if (
+      !isObject(d) ||
+      (d.type !== "warning" && d.type !== "error" && d.type !== "collision") ||
+      typeof d.message !== "string"
+    ) {
+      continue;
+    }
+    const out: SkillDiagnostic = { type: d.type, message: d.message };
+    if (typeof d.path === "string") out.path = d.path;
+    if (
+      isObject(d.collision) &&
+      typeof d.collision.resourceType === "string" &&
+      typeof d.collision.name === "string" &&
+      typeof d.collision.winnerPath === "string" &&
+      typeof d.collision.loserPath === "string"
+    ) {
+      out.collision = {
+        resourceType: d.collision.resourceType,
+        name: d.collision.name,
+        winnerPath: d.collision.winnerPath,
+        loserPath: d.collision.loserPath,
+      };
+    }
+    diagnostics.push(out);
+  }
+  return {
+    prompts: value.prompts.map((p) => vPromptSummary(p, status)),
+    diagnostics,
+  };
+}
+
+// `vPromptOverrides` shape is identical to `vSkillOverrides` (same
+// `{ projects: { <pid>: { enable, disable } } }` envelope), so reuse
+// the existing validator. Aliased as a separate name in the api object
+// below for clarity at call sites.
+const vPromptOverrides = vSkillOverrides;
 
 function vProvidersListing(value: unknown, status: number): ProvidersListing {
   if (!isObject(value) || !Array.isArray(value.providers)) {
@@ -1257,6 +1340,35 @@ export const api = {
     request(
       `/api/v1/config/skills/${encodeURIComponent(name)}/enabled?projectId=${encodeURIComponent(projectId)}`,
       vSkillsList,
+      { method: "DELETE" },
+    ),
+
+  // ---------------- prompts ----------------
+  // Mirror of the skills surface above — see those for parameter
+  // semantics and the tri-state `scope` rationale. Today the slash-
+  // command palette in ChatInput drives invocation; the Settings →
+  // Prompts tab uses these to render the management UI.
+  listPrompts: (projectId: string) =>
+    request(
+      `/api/v1/config/prompts?projectId=${encodeURIComponent(projectId)}`,
+      vPromptsListWithDiagnostics,
+    ),
+  listPromptOverrides: () => request(`/api/v1/config/prompts/overrides`, vPromptOverrides),
+  setPromptEnabled: (
+    projectId: string,
+    name: string,
+    enabled: boolean,
+    scope: "global" | "project" = "global",
+  ) =>
+    request(
+      `/api/v1/config/prompts/${encodeURIComponent(name)}/enabled?projectId=${encodeURIComponent(projectId)}`,
+      vPromptsList,
+      { method: "PUT", body: { enabled, scope } },
+    ),
+  clearPromptProjectOverride: (projectId: string, name: string) =>
+    request(
+      `/api/v1/config/prompts/${encodeURIComponent(name)}/enabled?projectId=${encodeURIComponent(projectId)}`,
+      vPromptsList,
       { method: "DELETE" },
     ),
 

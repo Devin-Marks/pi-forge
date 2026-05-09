@@ -214,6 +214,39 @@ export interface SkillsListResponse {
   diagnostics: SkillDiagnostic[];
 }
 
+// ---------------- Prompts ----------------
+//
+// Mirrors the Skills shapes above. Pi prompts have no
+// package-contributed source today — every prompt is global or
+// project — so `source` enum is narrower than skills' (no
+// "extension"). `argumentHint` carries the optional bash-style
+// usage hint from the prompt's frontmatter so the slash-command
+// palette can render it.
+
+export type PromptOverrideState = "enabled" | "disabled";
+
+export interface PromptSummary {
+  name: string;
+  description: string;
+  argumentHint?: string;
+  source: "global" | "project";
+  filePath: string;
+  enabled: boolean;
+  projectOverride?: PromptOverrideState;
+  effective: boolean;
+}
+
+export interface PromptOverridesResponse {
+  projects: Record<string, { enable: string[]; disable: string[] }>;
+}
+
+export interface PromptsListResponse {
+  prompts: PromptSummary[];
+  /** Always `[]` from the server today (prompts SDK doesn't surface
+   *  collisions); kept on the shape for parallelism with skills. */
+  diagnostics: SkillDiagnostic[];
+}
+
 /**
  * Unified tool listing returned by `GET /api/v1/config/tools`.
  * Two families:

@@ -13,6 +13,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { config } from "./config.js";
 import { clearProjectOverrides as clearProjectSkillOverrides } from "./skill-overrides.js";
+import { clearProjectPromptOverrides } from "./prompt-overrides.js";
 
 /**
  * Project ids are always `randomUUID()` output. Mirrors the same
@@ -258,6 +259,9 @@ export async function deleteProject(
   // cascade view; it's harmless to read but pointless to keep.
   await clearProjectSkillOverrides(id).catch((err: unknown) => {
     warn({ err, id }, "skill-overrides cleanup failed");
+  });
+  await clearProjectPromptOverrides(id).catch((err: unknown) => {
+    warn({ err, id }, "prompt-overrides cleanup failed");
   });
   if (opts.cascadeSessionDir === true) {
     // Wipe the project's session directory. Best-effort — a missing

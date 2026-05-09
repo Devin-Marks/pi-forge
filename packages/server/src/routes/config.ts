@@ -1,13 +1,17 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import {
   AuthProviderNotFoundError,
-  liveProvidersListing,
+  getAllPromptOverrides,
   getAllSkillOverrides,
+  liveProvidersListing,
+  listPrompts,
   listSkills,
+  PromptNotFoundError,
   readAuthSummary,
   readModelsJsonRedacted,
   readSettings,
   removeApiKey,
+  setPromptEnabled,
   setSkillEnabled,
   SkillNotFoundError,
   updateSettings,
@@ -184,6 +188,28 @@ const skillDiagnosticSchema = {
         loserPath: { type: "string" },
       },
     },
+  },
+} as const;
+
+/**
+ * Mirrors `skillSchema`. No `extensionPath` (no package-contributed
+ * prompts source today; see `listPrompts` doc-comment) and no
+ * `disableModelInvocation` (skills-only concept). `argumentHint`
+ * surfaces the optional bash-style usage hint from the prompt's
+ * frontmatter so the slash-command palette can render it.
+ */
+const promptSchema = {
+  type: "object",
+  required: ["name", "description", "source", "filePath", "enabled", "effective"],
+  properties: {
+    name: { type: "string" },
+    description: { type: "string" },
+    argumentHint: { type: "string" },
+    source: { type: "string", enum: ["global", "project"] },
+    filePath: { type: "string" },
+    enabled: { type: "boolean" },
+    projectOverride: { type: "string", enum: ["enabled", "disabled"] },
+    effective: { type: "boolean" },
   },
 } as const;
 
@@ -601,6 +627,221 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
       } catch (err) {
         if (err instanceof SkillNotFoundError) {
           return reply.code(404).send({ error: "skill_not_found" });
+        }
+        return internalError(reply, err);
+      }
+    },
+  );
+
+  // ---------------------- prompts ----------------------
+  // Mirrors the skills routes end-to-end (list / overrides cascade /
+  // PUT enabled / DELETE override). Same tri-state per-project
+  // semantics; see the skills section above for the shape rationale.
+  // The pi SDK exposes prompts via `DefaultResourceLoader.getPrompts()`
+  // — see `listPrompts` in `config-manager.ts` for how we discover them
+  // and inject pattern overrides through the SettingsManager.
+  fastify.get<{ Querystring: { projectId: string } }>(
+    "/config/prompts",
+    {
+      schema: {
+        description:
+          "List prompt templates discovered for a project. Sources: global " +
+          "`~/.pi/agent/prompts/` and project-local `.pi/prompts/`. Each " +
+          "prompt carries `enabled` reflecting whether it's listed in " +
+          "`settings.prompts`. `diagnostics` mirrors the skills shape " +
+          "(currently always empty — the SDK doesn't surface prompt " +
+          "collisions today). Required: `?projectId=`.",
+        tags: ["config"],
+        querystring: {
+          type: "object",
+          required: ["projectId"],
+          properties: { projectId: { type: "string" } },
+        },
+        response: {
+          200: {
+            type: "object",
+            required: ["prompts", "diagnostics"],
+            properties: {
+              prompts: { type: "array", items: promptSchema },
+              diagnostics: { type: "array", items: skillDiagnosticSchema },
+            },
+          },
+          404: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const project = await getProject(req.query.projectId);
+      if (project === undefined) {
+        return reply.code(404).send({ error: "project_not_found" });
+      }
+      try {
+        const { prompts, diagnostics } = await listPrompts(project.path, project.id);
+        return { prompts, diagnostics };
+      } catch (err) {
+        return internalError(reply, err);
+      }
+    },
+  );
+
+  fastify.get(
+    "/config/prompts/overrides",
+    {
+      schema: {
+        description:
+          "All per-project prompt overrides across all projects. Same " +
+          "shape as `/config/skills/overrides`. Returns " +
+          "`{ projects: { <projectId>: { enable: [...], disable: [...] } } }`. " +
+          "Absent project keys mean 'no overrides defined' (the project " +
+          "inherits everything from global).",
+        tags: ["config"],
+        response: {
+          200: {
+            type: "object",
+            required: ["projects"],
+            properties: {
+              projects: {
+                type: "object",
+                additionalProperties: {
+                  type: "object",
+                  required: ["enable", "disable"],
+                  properties: {
+                    enable: { type: "array", items: { type: "string" } },
+                    disable: { type: "array", items: { type: "string" } },
+                  },
+                },
+              },
+            },
+          },
+          500: errorSchema,
+        },
+      },
+    },
+    async (_req, reply) => {
+      try {
+        return await getAllPromptOverrides();
+      } catch (err) {
+        return internalError(reply, err);
+      }
+    },
+  );
+
+  fastify.put<{
+    Params: { name: string };
+    Querystring: { projectId: string };
+    Body: { enabled: boolean; scope?: "global" | "project" };
+  }>(
+    "/config/prompts/:name/enabled",
+    {
+      schema: {
+        description:
+          "Toggle a prompt's enabled state. Default scope=`global` mutates " +
+          "pi's `settings.prompts`. scope=`project` writes to the pi-forge-" +
+          "private overrides file at `${FORGE_DATA_DIR}/prompts-overrides.json` " +
+          "for the project named in `?projectId=`. Same tri-state semantics " +
+          "as `/config/skills/:name/enabled`. Prompt changes apply on the " +
+          "NEXT session created in the affected project — live sessions " +
+          "keep the prompt set they booted with.",
+        tags: ["config"],
+        params: {
+          type: "object",
+          required: ["name"],
+          properties: { name: { type: "string", minLength: 1 } },
+        },
+        querystring: {
+          type: "object",
+          required: ["projectId"],
+          properties: { projectId: { type: "string" } },
+        },
+        body: {
+          type: "object",
+          required: ["enabled"],
+          additionalProperties: false,
+          properties: {
+            enabled: { type: "boolean" },
+            scope: { type: "string", enum: ["global", "project"] },
+          },
+        },
+        response: {
+          200: {
+            type: "object",
+            required: ["prompts"],
+            properties: { prompts: { type: "array", items: promptSchema } },
+          },
+          404: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const project = await getProject(req.query.projectId);
+      if (project === undefined) {
+        return reply.code(404).send({ error: "project_not_found" });
+      }
+      try {
+        const scope = req.body.scope ?? "global";
+        const prompts = await setPromptEnabled(req.params.name, req.body.enabled, project.path, {
+          scope,
+          projectId: project.id,
+        });
+        return { prompts };
+      } catch (err) {
+        if (err instanceof PromptNotFoundError) {
+          return reply.code(404).send({ error: "prompt_not_found" });
+        }
+        return internalError(reply, err);
+      }
+    },
+  );
+
+  fastify.delete<{
+    Params: { name: string };
+    Querystring: { projectId: string };
+  }>(
+    "/config/prompts/:name/enabled",
+    {
+      schema: {
+        description:
+          "Clear a prompt's PROJECT override (= return it to inherit from " +
+          "global). Does not affect pi's settings.prompts. Use the PUT " +
+          "endpoint to change global state.",
+        tags: ["config"],
+        params: {
+          type: "object",
+          required: ["name"],
+          properties: { name: { type: "string", minLength: 1 } },
+        },
+        querystring: {
+          type: "object",
+          required: ["projectId"],
+          properties: { projectId: { type: "string" } },
+        },
+        response: {
+          200: {
+            type: "object",
+            required: ["prompts"],
+            properties: { prompts: { type: "array", items: promptSchema } },
+          },
+          404: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const project = await getProject(req.query.projectId);
+      if (project === undefined) {
+        return reply.code(404).send({ error: "project_not_found" });
+      }
+      try {
+        const prompts = await setPromptEnabled(req.params.name, undefined, project.path, {
+          scope: "project",
+          projectId: project.id,
+        });
+        return { prompts };
+      } catch (err) {
+        if (err instanceof PromptNotFoundError) {
+          return reply.code(404).send({ error: "prompt_not_found" });
         }
         return internalError(reply, err);
       }
