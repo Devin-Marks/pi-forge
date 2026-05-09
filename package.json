@@ -35,7 +35,7 @@
     "prettier": "^3.5.3",
     "marked": "^18.0.3",
     "tsx": "^4.19.4",
-    "typescript": "^5.8.3",
+    "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.2"
   }
 }
