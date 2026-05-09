@@ -83,6 +83,10 @@ pi-forge/
 npm install          # Install all workspace deps (run from root)
 npm run build        # Compile server TS + Vite client build
 npm run dev          # Start both: server (tsx watch) + client (vite dev server)
+npm run dev:remote   # Same as `dev` but binds both to 0.0.0.0 (LAN-accessible).
+                     # Set UI_PASSWORD or API_KEY before exposing — auth is OFF
+                     # by default in dev. macOS will prompt to allow incoming
+                     # connections on first run.
 npm run check        # tsc typecheck + eslint + prettier (requires npm run build first)
 npm run test:ci      # Loop every tests/test-*.ts (skips test-docker; ~40 s)
 npm run test         # Same loop, no skip list (run before tagging a release)
