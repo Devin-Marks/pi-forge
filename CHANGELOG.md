@@ -7,12 +7,155 @@ details.)
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Pi SDK trio (`@mariozechner/pi-coding-agent`, `@mariozechner/pi-agent-core`,
-`@mariozechner/pi-ai`) is pinned to exact versions; any breaking SDK absorption
-is called out in its own release notes section. See the "Versions" section of
-the README for the support window policy.
+Pi SDK trio (`@earendil-works/pi-coding-agent`, `@earendil-works/pi-agent-core`,
+`@earendil-works/pi-ai` — formerly under the `@mariozechner/*` scope through
+v1.1.4; see the v1.1.5 entry for the scope migration) is pinned to exact
+versions; any breaking SDK absorption is called out in its own release notes
+section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
+
+## [1.1.5] — 2026-05-08
+
+### Added
+
+- **Right-click context menu in the file tree, with full action sets per
+  target.** File rows: Add as @ context, Add file, Add folder, Rename,
+  Download, Delete. Folder rows: same set (folders are valid `@`-references
+  too — the model uses ls/grep on them via its tools, with the trailing-
+  slash convention disambiguating files from directories). Empty area
+  (below the last row): Add file, Add folder. The previous menu had a
+  single entry ("Add as @ context") and the empty area surfaced the
+  browser's native context menu. Item set is conditional on target kind —
+  inapplicable items don't render rather than rendering greyed out.
+- **+ buttons for file/folder creation directly on folder rows.** Hover a
+  folder in the file tree and the action group now includes
+  `FilePlus2`/`FolderPlus` icons that open a create dialog scoped to that
+  folder. The dialog title/label/placeholder reflect the parent path
+  (`(in src/utils/)` instead of `(relative to project root)`) so users see
+  exactly where the new entry will land before confirming. Toolbar
+  buttons keep their existing project-root-anchored behaviour.
+- **Folder `@`-references in chat.** `@<path>` markers resolving to a
+  directory now preserve the marker as `@<path>/` (trailing slash
+  appended; `ls -F` convention) so the model can ls/find/grep the folder
+  via its tools. Previously rejected as `[@<path> not included: path is
+  a directory, not a file]`. Quoted form (`@"docs with spaces/"`) handled
+  too. The chat input's `@`-autocomplete surfaces folders in the
+  popover automatically — same `/files/complete` endpoint, no client
+  change needed.
+- **Aggregate-byte budget on `@`-reference inlining.** Previously every
+  `@<path>` got an independent per-file decision (inline if ≤ 128 KB,
+  defer otherwise) with NOTHING tracking the running total across all
+  markers in a single prompt. A user `@`-ing 50 files at 100 KB each
+  pushed ~5 MB / 1.25M tokens into one prompt and blew the context
+  window. New: classify each marker, sort eligible-for-inline candidates
+  ascending by size, walk a 512 KB running budget; survivors inline and
+  the rest fall back to defer. Smallest-first walk maximises useful
+  inlines (a 2 KB `package.json` + 90 KB README both fit; the 50th
+  mid-sized file is the one that defers, not whichever happened to be
+  parsed first). Per-file 128 KB cap unchanged — aggregate cap is
+  additive.
+- **LaTeX math rendering in chat.** `$\rightarrow$` used to render as
+  literal text — the markdown renderer (react-markdown 10 + remark-gfm)
+  had no math plugin. Wires KaTeX in via remark-math + rehype-katex; both
+  `$inline$` and `$$block$$` math now render properly. Bundle grew
+  ~280 KB (KaTeX fonts/CSS).
+- **Resizable chat composer via drag divider.** The static hairline
+  `border-t` above the composer became a real drag handle. Pointer-
+  capture-driven (touch/pen/mouse all work) with the textarea height
+  persisted to localStorage and clamped to `[60 px, 60% of viewport]`.
+  A `RotateCcw` reset button appears in the existing model-picker chip
+  row only when the height has been customized — clicking it restores
+  the default `rows={3}` layout. Composer stays `resize-none`; the
+  divider is the only resize affordance.
+
+### Fixed
+
+- **`Add as @ context` from the file-browser context menu sometimes
+  silently dropped.** Root cause was a seq-counter desync in
+  `ui-store.ts`: `requestChatInsert` derived its next seq from the
+  current request slot (`prev = chatInsertRequest?.seq ?? 0`), which
+  reset to 0 every time the consumer cleared the slot. After the first
+  successful insert the consumer's `lastChatInsertSeqRef` ratchet (=1)
+  silently dropped subsequent requests because they too came in at
+  seq=1. Fixed by moving the counter to producer-side ratcheting state
+  fields (`_settingsSeq`, `_chatInsertSeq`) that NEVER reset on clear.
+  Same bug applied to `settingsRequest` (manifested as `/settings`
+  sometimes not opening the panel after the first time) and is fixed
+  by the same change.
+- **Project-scope skills authored at `<project>/.pi/skills/foo.md`
+  silently failed to load.** Pi's `loadSkillFromFile` derives a skill
+  name as `frontmatter.name || basename(dirname(filePath))` — the
+  fallback is the PARENT DIR NAME, not the file basename. So
+  `<project>/.pi/skills/foo.md` (no `name:` in frontmatter) loads as
+  `name: "skills"` and collides with any other top-level `<dir>/*.md`
+  that hits the same fallback; the SDK keeps the first one and silently
+  emits a `type: "collision"` diagnostic for the loser. pi-forge was
+  discarding `result.diagnostics` from `loadSkills`. Now surfaced
+  through `GET /config/skills` and rendered in the SkillsTab as a red
+  banner showing both winner and loser file paths plus an actionable
+  hint ("add `name: <unique>` to the loser's frontmatter, or move it
+  to `<unique>/SKILL.md`").
+- **About panel showed `0.0.0` on npm-installed pi-forge.** `health.ts`'s
+  `SERVER_VERSION` walks up exactly two levels from `routes/health.js`
+  to find package.json — works for the in-repo + Docker layouts but the
+  npm-publish synthetic flat layout puts the code at
+  `<install>/dist/server/routes/health.js` where up-two has no
+  package.json. Now tries up-two first (workspace + Docker authority)
+  then up-three (publish flat layout); first resolvable hit wins.
+- **README missing the npm install path.** v1.1.2 added npm
+  distribution but Quick start only documented Docker. Added
+  `npx pi-forge` / `npm i -g pi-forge` paths alongside Docker, plus a
+  cross-link to `docs/configuration.md` for env var overrides. Source-
+  build instructions stay in `CONTRIBUTING.md`; README just links to it.
+- **Multiselect highlighting on file tree + session sidebar was nearly
+  invisible.** Selected rows used `bg-emerald-900/20` (20% opacity over
+  neutral-950) plus a `hover:bg-neutral-900` rule that completely hid
+  the selection on cursor-over. Now: 2-px saturated LEFT BORDER
+  (`border-blue-400`) + `bg-blue-500/15` + `hover:bg-blue-500/25` so
+  selection stays legible. Border lives on every row (transparent when
+  unselected) so toggling selection doesn't shift content by 2 px.
+  Blue, not emerald, to disambiguate from the file-tree's emerald drop-
+  target ring.
+
+### Dependencies
+
+- **Pi SDK trio migrated to `@earendil-works/*` scope.** Upstream
+  renamed: `@mariozechner/pi-{coding-agent,agent-core,ai}@0.73.1` →
+  `@earendil-works/pi-{coding-agent,agent-core,ai}@0.74.0`. The 0.74.0
+  release is a clean rename — upstream commit log shows
+  "chore: migrate pi packages to earendil works scope" plus internal
+  tooling. No API changes affecting pi-forge's integration surface.
+  Mechanical sed replacement of import paths and doc references across
+  16 source / doc files. Eliminates 4 of the deprecation warnings in
+  `notes/DEPREC.md`.
+- **Vite stack upgraded to v8.** `vite ^6.3.3 → ^8.0.11` (skip major
+  v7), `@vitejs/plugin-react ^4.7.0 → ^6.0.1`,
+  `vite-plugin-pwa ^0.21.1 → ^1.3.0`,
+  `@tailwindcss/vite + tailwindcss ^4.1.4 → ^4.3.0`. Drop-in upgrade —
+  zero code changes. Vite v8 ships rolldown as the default bundler:
+  production build dropped from ~1.78 s to **463 ms**, dev server boots
+  in **108 ms**. `npm dedupe` collapsed the duplicate vite installs
+  introduced by hoisting (lockfile shrank by ~275 lines). Closes
+  dependabot PRs #72 and #74.
+- `fast-xml-builder 1.1.5 → 1.2.0` (transitive bump; picks up 1.1.6 +
+  1.1.7 security fixes for comment / attribute-value handling).
+- CI: `actions/configure-pages 5 → 6`, `docker/setup-buildx-action 3 → 4`
+  (both Node 24 runtime upgrades; bare action calls so the v4 "Remove
+  deprecated inputs/outputs" change has no effect on our usage).
+
+### Packaging
+
+- **Terminal no longer fails to spawn on the npm-installed
+  pi-forge.** The npm tarball ships `node-pty`'s prebuilt
+  `spawn-helper` at `0644` (no exec bit), which makes every PTY spawn
+  fail with `posix_spawnp failed`. Upstream node-pty's postinstall
+  handles the from-source build path but not the prebuilt path, so the
+  bug shipped with every install. Added a `scripts.postinstall` in the
+  synthetic publish package.json that walks
+  `node_modules/node-pty/prebuilds/*/spawn-helper` and chmods +x.
+  Idempotent and failure-tolerant. Lands invisibly for the v1.1.5
+  release; v1.1.4 users still need the manual `chmod +x` workaround.
 
 ## [1.1.4] — 2026-05-08
 
