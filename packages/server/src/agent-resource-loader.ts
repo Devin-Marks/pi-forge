@@ -47,6 +47,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { config } from "./config.js";
 import { getProjectDisabledSkillNames } from "./skill-overrides.js";
+import { getProjectDisabledPromptNames } from "./prompt-overrides.js";
 
 /**
  * Plain string (not a backtick template) so what's stored is exactly
@@ -96,24 +97,43 @@ export async function buildForgeResourceLoader(
   projectId?: string,
 ): Promise<ResourceLoader> {
   const appendSystemPrompt = config.agentSecretHygieneRule ? [FORGE_SECRET_HYGIENE_RULE] : [];
-  const disabledSkills =
-    projectId !== undefined ? await getProjectDisabledSkillNames(projectId) : new Set<string>();
+  const [disabledSkills, disabledPrompts] =
+    projectId !== undefined
+      ? await Promise.all([
+          getProjectDisabledSkillNames(projectId),
+          getProjectDisabledPromptNames(projectId),
+        ])
+      : [new Set<string>(), new Set<string>()];
   const baseOptions = {
     cwd,
     agentDir,
     settingsManager,
     appendSystemPrompt,
   };
-  const loader =
-    disabledSkills.size > 0
-      ? new DefaultResourceLoader({
-          ...baseOptions,
-          skillsOverride: ({ skills, diagnostics }) => ({
-            skills: skills.filter((s) => !disabledSkills.has(s.name)),
-            diagnostics,
-          }),
-        })
-      : new DefaultResourceLoader(baseOptions);
+  // Both override hooks are installed conditionally on whether the
+  // active project has any explicit disables. Pi's pattern system
+  // covers auto-discovered resources via `effectiveSkillsForProject` /
+  // `effectivePromptsForProject` (injected through the SettingsManager
+  // monkey-patch in session-registry.ts); these `*sOverride` callbacks
+  // backstop everything the SDK loaded — including the (currently
+  // hypothetical for prompts) package-contributed entries that
+  // `DefaultPackageManager` registers as `enabled: true` regardless of
+  // patterns. Same rationale as the original skills-only code path —
+  // see `skill-overrides.getProjectDisabledSkillNames` doc-comment.
+  const loaderOptions: ConstructorParameters<typeof DefaultResourceLoader>[0] = baseOptions;
+  if (disabledSkills.size > 0) {
+    loaderOptions.skillsOverride = ({ skills, diagnostics }) => ({
+      skills: skills.filter((s) => !disabledSkills.has(s.name)),
+      diagnostics,
+    });
+  }
+  if (disabledPrompts.size > 0) {
+    loaderOptions.promptsOverride = ({ prompts, diagnostics }) => ({
+      prompts: prompts.filter((p) => !disabledPrompts.has(p.name)),
+      diagnostics,
+    });
+  }
+  const loader = new DefaultResourceLoader(loaderOptions);
   await loader.reload();
   return loader;
 }

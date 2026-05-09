@@ -359,10 +359,67 @@ export function ChatInput({ sessionId }: Props) {
   const openSettings = useUiStore((s) => s.openSettings);
   const chatInsertRequest = useUiStore((s) => s.chatInsertRequest);
   const clearChatInsertRequest = useUiStore((s) => s.clearChatInsertRequest);
+  // Bumped by Settings → Prompts after every toggle so the slash
+  // palette refetches without requiring a project switch or full
+  // reload. Included in the prompts-fetch effect's deps.
+  const promptsRefreshTrigger = useUiStore((s) => s.promptsRefreshTrigger);
   const lastChatInsertSeqRef = useRef(0);
   const [slashSelectedIdx, setSlashSelectedIdx] = useState(0);
   const slashOpen = text.startsWith("/") && !text.includes("\n");
   const slashQuery = slashOpen ? (text.slice(1).split(/\s/)[0] ?? "") : "";
+
+  /**
+   * Pi prompt templates available for the active project, surfaced in
+   * the slash-command palette as `/<promptname>` entries. The pi SDK's
+   * `session.prompt()` expands the template at send time (defaults to
+   * `expandPromptTemplates: true`), so we don't expand client-side or
+   * server-side — the palette is purely a discovery + filling-in
+   * affordance. Selecting a prompt entry inserts `/<promptname> ` into
+   * the input (with trailing space) so the user can append args
+   * before pressing Enter.
+   *
+   * Refetched on project change. Errors silently swallow — a
+   * prompts-fetch failure shouldn't block the input from working;
+   * the user just sees the standard slash-command catalog without
+   * project prompts.
+   */
+  const [availablePrompts, setAvailablePrompts] = useState<
+    { name: string; description: string; argumentHint?: string }[]
+  >([]);
+  useEffect(() => {
+    if (project === undefined) {
+      setAvailablePrompts([]);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .listPrompts(project.id)
+      .then((res) => {
+        if (cancelled) return;
+        // Only surface prompts that are actually enabled for this
+        // project — matches what `session.prompt()` will be able to
+        // expand at send time.
+        setAvailablePrompts(
+          res.prompts
+            .filter((p) => p.effective)
+            .map((p) => {
+              const out: { name: string; description: string; argumentHint?: string } = {
+                name: p.name,
+                description: p.description,
+              };
+              if (p.argumentHint !== undefined) out.argumentHint = p.argumentHint;
+              return out;
+            }),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setAvailablePrompts([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id, promptsRefreshTrigger]);
 
   // Bang-prefix mode for the visual treatment around the textarea.
   // `!!` runs bash local-only (output stays out of LLM context); `!`
@@ -467,14 +524,69 @@ export function ChatInput({ sessionId }: Props) {
         },
       },
     ];
+    // Append pi prompt templates after the built-in commands. The
+    // SDK's `session.prompt()` expands `/<promptname> args` to the
+    // template body at send time (`expandPromptTemplates: true` by
+    // default in pi). Selecting one here just inserts the `/<name> `
+    // into the input; the user fills in args, presses Enter, and pi
+    // expands before forwarding to the model.
+    for (const p of availablePrompts) {
+      const description =
+        p.argumentHint !== undefined ? `${p.description} — args: ${p.argumentHint}` : p.description;
+      commands.push({
+        name: `/${p.name}`,
+        description,
+        available: !isStreaming,
+        run: () => {
+          // Insert `/<name> ` (trailing space) into the input — user
+          // appends arg(s) and presses Enter.
+          const insert = `/${p.name} `;
+          setText(insert);
+          requestAnimationFrame(() => {
+            const ta = textareaRef.current;
+            if (ta === null) return;
+            ta.focus();
+            ta.setSelectionRange(insert.length, insert.length);
+          });
+        },
+      });
+    }
     return commands;
-  }, [isStreaming, sessionId, abortSession, reloadMessages, openSettings, minimalUi]);
+  }, [
+    isStreaming,
+    sessionId,
+    abortSession,
+    reloadMessages,
+    openSettings,
+    minimalUi,
+    availablePrompts,
+  ]);
 
   const slashFiltered = useMemo(() => {
     const q = slashQuery.toLowerCase();
     if (q.length === 0) return slashCatalog;
     return slashCatalog.filter((c) => c.name.slice(1).toLowerCase().startsWith(q));
   }, [slashCatalog, slashQuery]);
+
+  /**
+   * True when the input text is in `/<knownpromptname>` or
+   * `/<knownpromptname> ...args` form. In those cases Enter should
+   * BYPASS slash-command dispatch and fall through to a normal submit
+   * — pi's `session.prompt()` will expand the template at send time.
+   * Without this bypass, Enter on `/<name> foo` re-fires the prompt
+   * entry's `run()` which re-inserts `/<name> ` and clobbers the args.
+   *
+   * Distinguishes from the still-typing-the-name case (e.g. text is
+   * `/sum` while a prompt is named `summarize`) — that DOES go through
+   * normal slash dispatch so Enter Tab-completes the name.
+   */
+  const isPromptInvocation = useMemo(() => {
+    if (!slashOpen) return false;
+    const firstWord = text.slice(1).split(/\s/)[0] ?? "";
+    if (firstWord.length === 0) return false;
+    if (!availablePrompts.some((p) => p.name === firstWord)) return false;
+    return text === `/${firstWord}` || text.startsWith(`/${firstWord} `);
+  }, [slashOpen, text, availablePrompts]);
 
   const slashRunSelected = (): void => {
     const cmd = slashFiltered[slashSelectedIdx];
@@ -841,7 +953,10 @@ export function ChatInput({ sessionId }: Props) {
     // /-command dispatch — the keyboard path (Enter) handles this
     // first, but a click on Send also lands here and a `/foo` typed
     // input shouldn't slip through to the LLM as a regular prompt.
-    if (slashOpen) {
+    // Exception: pi prompt templates in `/<name> ...args` form bypass
+    // dispatch — the SDK's `session.prompt()` expands them at send
+    // time. See `isPromptInvocation` for the predicate.
+    if (slashOpen && !isPromptInvocation) {
       if (slashFiltered.length > 0) {
         slashRunSelected();
       } else {
@@ -944,9 +1059,19 @@ export function ChatInput({ sessionId }: Props) {
           return;
         }
         if (e.key === "Enter" || e.key === "Tab") {
-          e.preventDefault();
-          slashRunSelected();
-          return;
+          // Pi-prompt invocation form (`/<knownname>` or
+          // `/<knownname> ...args`) — fall through to the normal
+          // Enter-submits path. Without this branch the Enter key
+          // would re-fire the prompt entry's `run()` and clobber
+          // any args the user typed.
+          if (isPromptInvocation && e.key === "Enter" && !e.shiftKey) {
+            // Don't preventDefault — let the regular Enter handler
+            // below pick it up. (Tab still discovers / fills in.)
+          } else {
+            e.preventDefault();
+            slashRunSelected();
+            return;
+          }
         }
       } else if (e.key === "Enter" && !e.shiftKey) {
         // Open palette + no matches + Enter: refuse rather than

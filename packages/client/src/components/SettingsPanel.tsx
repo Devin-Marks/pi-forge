@@ -8,18 +8,29 @@ import {
   type McpServerStatus,
   type McpTransport,
   type ProvidersListing,
+  type PromptSummary,
   type SkillDiagnostic,
   type SkillSummary,
   type ToolListing,
 } from "../lib/api-client";
 import { useActiveProject, useProjectStore } from "../store/project-store";
 import { useUiConfigStore } from "../store/ui-config-store";
+import { useUiStore } from "../store/ui-store";
 import { EMPTY_STATUS, useMcpStore } from "../store/mcp-store";
 import { THEME_DEFS, useThemeStore, type ThemeId } from "../lib/theme";
 import { getStoredToken } from "../lib/auth-client";
 import { useAuthStore } from "../store/auth-store";
 
-type Tab = "providers" | "agent" | "mcp" | "tools" | "skills" | "appearance" | "backup" | "general";
+type Tab =
+  | "providers"
+  | "agent"
+  | "mcp"
+  | "tools"
+  | "skills"
+  | "prompts"
+  | "appearance"
+  | "backup"
+  | "general";
 
 interface Props {
   onClose: () => void;
@@ -63,13 +74,14 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           // deployments often want to disable bash/edit/write at the
           // tool level, regardless of what providers / agent settings
           // are exposed.
-          (["skills", "tools", "appearance", "backup", "general"] as const)
+          (["skills", "prompts", "tools", "appearance", "backup", "general"] as const)
         : ([
             "providers",
             "agent",
             "mcp",
             "tools",
             "skills",
+            "prompts",
             "appearance",
             "backup",
             "general",
@@ -100,7 +112,12 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="flex h-full max-h-[640px] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950 shadow-2xl"
+        // Width bumped from max-w-3xl (768px) to max-w-4xl (896px) when
+        // the Prompts tab brought the count to 9 and the bar started
+        // crowding the "API Docs ↗" button on the right. Settings is
+        // a modal, so the extra width doesn't compete with the chat
+        // for screen real estate.
+        className="flex h-full max-h-[640px] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950 shadow-2xl"
       >
         <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
           <div className="flex items-center gap-1">
@@ -124,11 +141,13 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
                         ? "Tools"
                         : t === "skills"
                           ? "Skills"
-                          : t === "appearance"
-                            ? "Appearance"
-                            : t === "backup"
-                              ? "Backup"
-                              : "General"}
+                          : t === "prompts"
+                            ? "Prompts"
+                            : t === "appearance"
+                              ? "Appearance"
+                              : t === "backup"
+                                ? "Backup"
+                                : "General"}
               </button>
             ))}
           </div>
@@ -177,6 +196,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           {tab === "mcp" && <McpTab onError={setError} />}
           {tab === "tools" && <ToolsTab onError={setError} />}
           {tab === "skills" && <SkillsTab onError={setError} />}
+          {tab === "prompts" && <PromptsTab onError={setError} />}
           {tab === "appearance" && <AppearanceTab />}
           {tab === "backup" && <BackupTab onError={setError} />}
           {tab === "general" && <GeneralTab />}
@@ -993,6 +1013,247 @@ function SkillsTab({ onError }: { onError: (msg: string | undefined) => void }) 
                     disabled={busy}
                     onAdd={(targetProjectId, state) =>
                       void setProjectOverride(targetProjectId, s.name, state)
+                    }
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------- Prompts tab ----------------
+
+/**
+ * Settings → Prompts. Mirrors `SkillsTab` end-to-end (see that for
+ * detailed comments on the override / cascade pattern). Differences:
+ *
+ * - No "extension" source kind — pi prompts have no package-contributed
+ *   path today, so every prompt is `global` or `project`.
+ * - Surfaces the optional `argumentHint` from the prompt's frontmatter
+ *   so users know what `/<promptname>` expects.
+ * - Same diagnostics envelope (always empty server-side today, but
+ *   plumbed for future SDK changes).
+ *
+ * Toggling enabled/disabled here doesn't INVOKE the prompt — that's
+ * driven from the chat input's `/<promptname>` slash-command palette.
+ * This tab is the management surface (which prompts exist on disk,
+ * which are turned on for which projects).
+ */
+function PromptsTab({ onError }: { onError: (msg: string | undefined) => void }) {
+  const project = useActiveProject();
+  const projects = useProjectStore((s) => s.projects);
+  const bumpPromptsRefresh = useUiStore((s) => s.bumpPromptsRefresh);
+  const [prompts, setPrompts] = useState<PromptSummary[] | undefined>(undefined);
+  const [diagnostics, setDiagnostics] = useState<SkillDiagnostic[]>([]);
+  const [allOverrides, setAllOverrides] = useState<
+    Record<string, { enable: string[]; disable: string[] }>
+  >({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [busy, setBusy] = useState(false);
+
+  const refresh = async (): Promise<void> => {
+    if (project === undefined) return;
+    onError(undefined);
+    try {
+      const [{ prompts: list, diagnostics: diags }, overrides] = await Promise.all([
+        api.listPrompts(project.id),
+        api.listPromptOverrides(),
+      ]);
+      setPrompts(list);
+      setDiagnostics(diags);
+      setAllOverrides(overrides.projects);
+    } catch (err) {
+      onError(`Failed to load prompts: ${errorCode(err)}`);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
+
+  if (project === undefined) {
+    return (
+      <p className="text-xs italic text-neutral-500">
+        Pick a project from the header to manage its prompts.
+      </p>
+    );
+  }
+
+  if (prompts === undefined) {
+    return <p className="text-xs italic text-neutral-500">Loading prompts for {project.name}…</p>;
+  }
+
+  const toggleGlobal = async (name: string, next: boolean): Promise<void> => {
+    setBusy(true);
+    try {
+      const { prompts: updated } = await api.setPromptEnabled(project.id, name, next, "global");
+      setPrompts(updated);
+      // Tell the chat input to refetch its slash-palette so the
+      // toggled prompt appears / disappears without a project switch.
+      bumpPromptsRefresh();
+    } catch (err) {
+      onError(`Toggle failed: ${errorCode(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setProjectOverride = async (
+    targetProjectId: string,
+    name: string,
+    state: "enabled" | "disabled" | undefined,
+  ): Promise<void> => {
+    setBusy(true);
+    try {
+      if (state === undefined) {
+        await api.clearPromptProjectOverride(targetProjectId, name);
+      } else {
+        await api.setPromptEnabled(targetProjectId, name, state === "enabled", "project");
+      }
+      await refresh();
+      bumpPromptsRefresh();
+    } catch (err) {
+      onError(`Override write failed: ${errorCode(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const overrideStateFor = (
+    targetProjectId: string,
+    promptName: string,
+  ): "enabled" | "disabled" | undefined => {
+    const entry = allOverrides[targetProjectId];
+    if (entry === undefined) return undefined;
+    if (entry.enable.includes(promptName)) return "enabled";
+    if (entry.disable.includes(promptName)) return "disabled";
+    return undefined;
+  };
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-neutral-500">
+        Pi prompt templates discovered in <code className="font-mono">~/.pi/agent/prompts/</code>{" "}
+        and <code className="font-mono">{project.path}/.pi/prompts/</code>. Invoke from the chat
+        input via <code className="font-mono">/&lt;name&gt;</code>; the global toggle writes to
+        pi&apos;s <code className="font-mono">settings.prompts</code>; per-project overrides write
+        to <code className="font-mono">{`\${FORGE_DATA_DIR}/prompts-overrides.json`}</code>.
+      </p>
+      <div className="rounded border border-amber-700/40 bg-amber-900/10 px-3 py-2 text-[11px] text-amber-200">
+        Prompt changes apply to the <strong>next session</strong> you start in the affected project.
+        Live sessions keep the prompt set they booted with — start a new session to use a freshly
+        enabled prompt.
+      </div>
+      {diagnostics.length > 0 && <SkillDiagnosticsBanner diagnostics={diagnostics} />}
+      {prompts.length === 0 && (
+        <p className="text-xs italic text-neutral-500">No prompts found for this project.</p>
+      )}
+      {prompts.map((p) => {
+        const key = `${p.source}:${p.name}`;
+        const isExpanded = expanded[key] === true;
+        const overrideRows = projects
+          .map((proj) => ({ project: proj, state: overrideStateFor(proj.id, p.name) }))
+          .filter((r) => r.state !== undefined);
+        const projectsWithoutOverride = projects.filter(
+          (proj) => overrideStateFor(proj.id, p.name) === undefined,
+        );
+        return (
+          <div key={key} className="rounded border border-neutral-800 bg-neutral-900/40">
+            <div className="flex items-start gap-3 p-3">
+              <span
+                className={`mt-1.5 inline-block h-2.5 w-2.5 rounded-full ${
+                  p.effective ? "bg-emerald-500" : "bg-neutral-700"
+                }`}
+                title={`Effective for ${project.name}: ${p.effective ? "enabled" : "disabled"}`}
+              />
+              <div className="flex-1 space-y-0.5">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="font-mono text-neutral-100">/{p.name}</span>
+                  <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-400">
+                    {p.source}
+                  </span>
+                  {p.argumentHint !== undefined && (
+                    <span
+                      className="rounded bg-neutral-800/60 px-1.5 py-0.5 font-mono text-[10px] text-neutral-300"
+                      title="Argument hint from the prompt's frontmatter"
+                    >
+                      {p.argumentHint}
+                    </span>
+                  )}
+                  {p.projectOverride !== undefined && (
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${
+                        p.projectOverride === "enabled"
+                          ? "bg-emerald-900/40 text-emerald-300"
+                          : "bg-red-900/40 text-red-300"
+                      }`}
+                      title={`Active project ('${project.name}') has an override`}
+                    >
+                      Project: {p.projectOverride}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-neutral-400">{p.description || "(no description)"}</p>
+                <p className="font-mono text-[10px] text-neutral-600">{p.filePath}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1 text-xs">
+                <button
+                  onClick={() => void toggleGlobal(p.name, !p.enabled)}
+                  disabled={busy}
+                  className={`rounded border px-2 py-0.5 ${
+                    p.enabled
+                      ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300"
+                      : "border-neutral-700 text-neutral-300 hover:border-neutral-500"
+                  }`}
+                  title="Global enable in pi's settings.prompts"
+                >
+                  Global: {p.enabled ? "enabled" : "disabled"}
+                </button>
+                <button
+                  onClick={() => setExpanded((e) => ({ ...e, [key]: !isExpanded }))}
+                  className="rounded border border-neutral-700 px-2 py-0.5 text-neutral-300 hover:border-neutral-500"
+                  title="Show per-project overrides"
+                >
+                  {isExpanded ? "▾ Overrides" : `▸ Overrides (${overrideRows.length})`}
+                </button>
+              </div>
+            </div>
+            {isExpanded && (
+              <div className="border-t border-neutral-800 px-3 py-2">
+                {overrideRows.length === 0 ? (
+                  <p className="mb-2 text-[11px] italic text-neutral-500">
+                    No project overrides yet — every project inherits the global state.
+                  </p>
+                ) : (
+                  <div className="mb-2 space-y-1">
+                    {overrideRows.map(({ project: proj, state }) => (
+                      <div
+                        key={proj.id}
+                        className="flex items-center justify-between gap-2 rounded bg-neutral-900/60 px-2 py-1 text-xs"
+                      >
+                        <span className="truncate text-neutral-200" title={proj.path}>
+                          {proj.name}
+                        </span>
+                        <TriStatePicker
+                          value={state}
+                          disabled={busy}
+                          onChange={(next) => void setProjectOverride(proj.id, p.name, next)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {projectsWithoutOverride.length > 0 && (
+                  <AddOverrideDropdown
+                    projects={projectsWithoutOverride}
+                    disabled={busy}
+                    onAdd={(targetProjectId, state) =>
+                      void setProjectOverride(targetProjectId, p.name, state)
                     }
                   />
                 )}

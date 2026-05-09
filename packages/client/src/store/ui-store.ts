@@ -14,7 +14,7 @@ import { create } from "zustand";
  * state belongs here too.
  */
 
-export type SettingsTab = "providers" | "agent" | "mcp" | "skills" | "appearance";
+export type SettingsTab = "providers" | "agent" | "mcp" | "skills" | "prompts" | "appearance";
 
 interface SettingsRequest {
   /** Optional tab to switch to on open. Undefined = leave the
@@ -51,6 +51,23 @@ interface UiState {
    *  decides spacing based on its current contents). */
   requestChatInsert: (text: string) => void;
   clearChatInsertRequest: () => void;
+  /**
+   * Monotonic refresh trigger for the chat input's per-project prompt
+   * list. Bumped by the Settings → Prompts tab on every toggle so the
+   * chat input re-fetches `availablePrompts` and the slash-command
+   * palette reflects the new effective state without a project switch
+   * or full reload.
+   *
+   * Why a counter and not a callback: the chat input is mounted by
+   * App, not by SettingsPanel — there's no parent/child relationship
+   * to thread a callback through. Same pattern as `_chatInsertSeq` on
+   * the producer side; consumers (chat input) just include this in
+   * their useEffect deps.
+   */
+  promptsRefreshTrigger: number;
+  /** Bump `promptsRefreshTrigger`. Called from PromptsTab after every
+   *  global / project-scope toggle. */
+  bumpPromptsRefresh: () => void;
   /**
    * Monotonic counters feeding the `seq` field on cross-component
    * requests. These NEVER reset on `clear*` — that's the whole point.
@@ -92,5 +109,9 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
   clearChatInsertRequest: () => {
     set({ chatInsertRequest: undefined });
+  },
+  promptsRefreshTrigger: 0,
+  bumpPromptsRefresh: () => {
+    set((s) => ({ promptsRefreshTrigger: s.promptsRefreshTrigger + 1 }));
   },
 }));

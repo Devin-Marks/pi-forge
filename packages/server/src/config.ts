@@ -201,6 +201,17 @@ export const config = Object.freeze({
    */
   toolOverridesFile: join(FORGE_DATA_DIR, "tool-overrides.json"),
   /**
+   * Path to the forge-private per-project prompt overrides file.
+   * Same shape + rationale as `skillOverridesFile` but for pi prompt
+   * templates (markdown files under `<dir>/prompts/`). Pi's
+   * `settings.prompts` is a flat global override-pattern list; we
+   * inject project-scoped patterns at session create through the
+   * SettingsManager monkey-patch in session-registry.ts (mirrors the
+   * skills code path). Lives in the data dir for the same reasons
+   * skill overrides do — install-private, not team-shared.
+   */
+  promptOverridesFile: join(FORGE_DATA_DIR, "prompts-overrides.json"),
+  /**
    * Whether `/api/docs` (Swagger UI + OpenAPI JSON spec) is reachable.
    * Defaults to true so Docker / production deploys keep working without
    * extra config (the README quickstart documents `/api/docs`). When

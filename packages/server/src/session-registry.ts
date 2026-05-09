@@ -11,7 +11,7 @@ import {
 import { buildForgeResourceLoader } from "./agent-resource-loader.js";
 import { config } from "./config.js";
 import { makeDedupe, makeLock } from "./concurrency.js";
-import { effectiveSkillsForProject } from "./config-manager.js";
+import { effectivePromptsForProject, effectiveSkillsForProject } from "./config-manager.js";
 import { readProjects } from "./project-manager.js";
 import { filterEnabledTools, readToolOverrides } from "./tool-overrides.js";
 import { discoverExtensionResources } from "./extensions-discovery.js";
@@ -1399,19 +1399,28 @@ async function buildSessionSettingsManager(
   projectId: string,
 ): Promise<SettingsManager> {
   const sm = SettingsManager.create(workspacePath, config.piConfigDir);
-  const patterns = await effectiveSkillsForProject(projectId);
-  if (patterns.length === 0) return sm;
+  const [skillPatterns, promptPatterns] = await Promise.all([
+    effectiveSkillsForProject(projectId),
+    effectivePromptsForProject(projectId),
+  ]);
+  if (skillPatterns.length === 0 && promptPatterns.length === 0) return sm;
   const origGlobal = sm.getGlobalSettings.bind(sm);
   const origProject = sm.getProjectSettings.bind(sm);
-  const merge = (existing: string[] | undefined): string[] =>
-    Array.from(new Set([...(existing ?? []), ...patterns]));
+  const mergeSkills = (existing: string[] | undefined): string[] =>
+    skillPatterns.length === 0
+      ? (existing ?? [])
+      : Array.from(new Set([...(existing ?? []), ...skillPatterns]));
+  const mergePrompts = (existing: string[] | undefined): string[] =>
+    promptPatterns.length === 0
+      ? (existing ?? [])
+      : Array.from(new Set([...(existing ?? []), ...promptPatterns]));
   sm.getGlobalSettings = (): ReturnType<typeof origGlobal> => {
     const s = origGlobal();
-    return { ...s, skills: merge(s.skills) };
+    return { ...s, skills: mergeSkills(s.skills), prompts: mergePrompts(s.prompts) };
   };
   sm.getProjectSettings = (): ReturnType<typeof origProject> => {
     const s = origProject();
-    return { ...s, skills: merge(s.skills) };
+    return { ...s, skills: mergeSkills(s.skills), prompts: mergePrompts(s.prompts) };
   };
   return sm;
 }

@@ -3,8 +3,11 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   AuthStorage,
+  DefaultResourceLoader,
   ModelRegistry,
+  type PromptTemplate,
   type ResourceDiagnostic,
+  SettingsManager,
   type Skill,
   loadSkills,
 } from "@earendil-works/pi-coding-agent";
@@ -19,6 +22,13 @@ import {
   type SkillOverrides,
   type SkillOverrideState,
 } from "./skill-overrides.js";
+import {
+  getProjectPromptState,
+  readPromptOverrides,
+  setProjectPromptOverride,
+  type PromptOverrides,
+  type PromptOverrideState,
+} from "./prompt-overrides.js";
 
 const MODELS_FILE = (): string => join(config.piConfigDir, "models.json");
 const AUTH_FILE = (): string => join(config.piConfigDir, "auth.json");
@@ -59,6 +69,8 @@ export interface SettingsJson {
   steeringMode?: "all" | "one-at-a-time";
   followUpMode?: "all" | "one-at-a-time";
   skills?: string[];
+  /** Pi's prompt-pattern overrides — same `!name`/`+name`/`-name` grammar as `skills`. */
+  prompts?: string[];
   enableSkillCommands?: boolean;
   [k: string]: unknown;
 }
@@ -680,4 +692,193 @@ export async function effectiveSkillsForProject(projectId: string): Promise<stri
     for (const name of entry.enable) result.add(forceIncludePattern(name));
   }
   return Array.from(result);
+}
+
+// ---------------------------------------------------------------------------
+// prompts — pi prompt templates (`.md` files under `<dir>/prompts/`).
+// Mirrors the skills section's shape end-to-end: list summaries with
+// global + per-project effective state, tri-state per-project toggle,
+// pattern-list injection at session-create. Pi exposes prompts via
+// `loadPromptTemplates(...)` (returns `PromptTemplate[]` directly — no
+// `diagnostics` like loadSkills, which is why `PromptsListResult.diagnostics`
+// is always `[]`; kept on the shape for parallelism with the SkillsTab UI
+// so the client validator and panel layout can mirror SkillsTab structurally).
+//
+// Pi prompts have NO package-contributed source today (`extensions-discovery`
+// only surfaces tools + skillPaths) — every prompt is either global
+// (`<piConfigDir>/prompts/`) or project (`<workspacePath>/.pi/prompts/`).
+// If pi adds package-contributed prompts later, plumb them through the
+// same way `extensionSkillPaths` flows for skills.
+
+export interface PromptSummary {
+  name: string;
+  description: string;
+  /** Optional argument hint from the prompt's frontmatter (e.g. `<file>`). */
+  argumentHint?: string;
+  source: "global" | "project";
+  filePath: string;
+  /** Whether the prompt is enabled in pi's GLOBAL settings.prompts list. */
+  enabled: boolean;
+  /** Tri-state per-project override; absent = inherit from global. */
+  projectOverride?: PromptOverrideState;
+  /**
+   * Resolved state for the project the request asked about —
+   * `(global ∪ project.enabled) − project.disabled`. Equals `enabled`
+   * when no project context is supplied.
+   */
+  effective: boolean;
+}
+
+/**
+ * Mirrors `SkillsListResult`. `diagnostics` is always `[]` for prompts
+ * (the SDK's `loadPromptTemplates` doesn't surface collision warnings
+ * the way `loadSkills` does); it's kept on the shape so the client
+ * SkillDiagnosticsBanner / PromptDiagnosticsBanner pattern stays
+ * uniform.
+ */
+export interface PromptsListResult {
+  prompts: PromptSummary[];
+  diagnostics: ResourceDiagnostic[];
+}
+
+export async function listPrompts(
+  workspacePath: string,
+  projectId?: string,
+): Promise<PromptsListResult> {
+  // Use a one-off DefaultResourceLoader for discovery — the SDK's
+  // standalone `loadPromptTemplates` isn't exported from the package
+  // index, so we go through the loader's `getPrompts()` instead. This
+  // also gives us SDK-emitted diagnostics for free if/when the SDK
+  // starts surfacing them for prompts (today the array is always empty).
+  const loader = new DefaultResourceLoader({
+    cwd: workspacePath,
+    agentDir: config.piConfigDir,
+    settingsManager: SettingsManager.create(workspacePath, config.piConfigDir),
+  });
+  await loader.reload();
+  const { prompts: templates, diagnostics } = loader.getPrompts();
+  const settings = await readSettings();
+  const globalDisabled = disabledNamesFromPatterns(settings.prompts ?? []);
+  const overrides = await readPromptOverrides();
+  return {
+    prompts: templates.map((t) =>
+      promptSummary(t, workspacePath, globalDisabled, overrides, projectId),
+    ),
+    diagnostics,
+  };
+}
+
+function promptSummary(
+  t: PromptTemplate,
+  workspacePath: string,
+  globalDisabled: Set<string>,
+  overrides: PromptOverrides,
+  projectId: string | undefined,
+): PromptSummary {
+  // The SDK returns sourceInfo with a `scope` of "user" / "project" /
+  // undefined; we fall back to a path-based heuristic when the SDK
+  // didn't tag (e.g. explicit promptPaths from a third-party caller).
+  const isProject =
+    t.sourceInfo.scope === "project" ||
+    (t.sourceInfo.scope === undefined && t.filePath.startsWith(workspacePath));
+  const source: PromptSummary["source"] = isProject ? "project" : "global";
+  const isEnabledGlobal = !globalDisabled.has(t.name);
+  const projectOverride =
+    projectId !== undefined ? getProjectPromptState(overrides, projectId, t.name) : undefined;
+  const effective =
+    projectOverride === "enabled" ? true : projectOverride === "disabled" ? false : isEnabledGlobal;
+  const summary: PromptSummary = {
+    name: t.name,
+    description: t.description,
+    source,
+    filePath: t.filePath,
+    enabled: isEnabledGlobal,
+    effective,
+  };
+  if (t.argumentHint !== undefined) summary.argumentHint = t.argumentHint;
+  if (projectOverride !== undefined) summary.projectOverride = projectOverride;
+  return summary;
+}
+
+export class PromptNotFoundError extends Error {
+  constructor(name: string) {
+    super(`prompt not found: ${name}`);
+    this.name = "PromptNotFoundError";
+  }
+}
+
+/**
+ * Toggle a prompt's enabled state at either the global scope (writes
+ * pi's `settings.prompts` patterns) or the project scope (writes
+ * pi-forge-private prompt-overrides.json). Mirrors `setSkillEnabled`
+ * end-to-end — same tri-state semantics for project scope, same
+ * pattern-rewrite for global scope.
+ */
+export async function setPromptEnabled(
+  name: string,
+  enabled: boolean | undefined,
+  workspacePath: string,
+  opts?: { scope?: "global" | "project"; projectId?: string },
+): Promise<PromptSummary[]> {
+  const all = await listPrompts(workspacePath, opts?.projectId);
+  if (!all.prompts.some((p) => p.name === name)) throw new PromptNotFoundError(name);
+  const scope = opts?.scope ?? "global";
+  if (scope === "project") {
+    if (opts?.projectId === undefined) {
+      throw new Error("setPromptEnabled: scope=project requires a projectId");
+    }
+    const state: PromptOverrideState | undefined =
+      enabled === true ? "enabled" : enabled === false ? "disabled" : undefined;
+    await setProjectPromptOverride(opts.projectId, name, state);
+    return (await listPrompts(workspacePath, opts.projectId)).prompts;
+  }
+  if (enabled === undefined) {
+    throw new Error("setPromptEnabled: scope=global requires enabled to be true or false");
+  }
+  // Same lock + read-modify-write + pattern-rewrite as setSkillEnabled.
+  // Pi auto-discovers every prompt and enables them by default; to
+  // disable one we push `!<name>`. Drop any prior pattern targeting the
+  // same name plus any inert bare entries on every rewrite.
+  await withSettingsLock(async () => {
+    const settings = await readSettings();
+    const existing = settings.prompts ?? [];
+    const filtered = existing.filter((p) => {
+      if (!p.startsWith("!") && !p.startsWith("+") && !p.startsWith("-")) return false;
+      if (p.slice(1) === name) return false;
+      return true;
+    });
+    if (!enabled) filtered.push(excludePattern(name));
+    const next: SettingsJson = { ...settings, prompts: filtered };
+    await atomicWriteJson(SETTINGS_FILE(), next);
+  });
+  return (await listPrompts(workspacePath, opts?.projectId)).prompts;
+}
+
+/**
+ * Compute the prompt-pattern list a session in `projectId` should see.
+ * Same merge semantics as `effectiveSkillsForProject` — global patterns
+ * are the floor; per-project enable/disable patterns layer on top
+ * via `+name`/`!name`. Pushed into the SettingsManager monkey-patch in
+ * `session-registry.buildSessionSettingsManager` so pi's package-manager
+ * applies them when discovering prompts.
+ */
+export async function effectivePromptsForProject(projectId: string): Promise<string[]> {
+  const settings = await readSettings();
+  const overrides = await readPromptOverrides();
+  const globalPatterns = (settings.prompts ?? []).filter(
+    (p) => p.startsWith("!") || p.startsWith("+") || p.startsWith("-"),
+  );
+  const result = new Set<string>(globalPatterns);
+  const entry = overrides.projects[projectId];
+  if (entry !== undefined) {
+    for (const name of entry.disable) result.add(excludePattern(name));
+    for (const name of entry.enable) result.add(forceIncludePattern(name));
+  }
+  return Array.from(result);
+}
+
+/** Cascade-view counterpart to `getAllSkillOverrides`, for the Settings
+ *  UI's per-prompt expand-and-show-all-projects affordance. */
+export async function getAllPromptOverrides(): Promise<PromptOverrides> {
+  return readPromptOverrides();
 }
