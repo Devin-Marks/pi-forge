@@ -143,10 +143,21 @@ export function ProjectSidebar() {
                       setRenamingId(p.id);
                       setRenameValue(p.name);
                     }}
-                    className="flex-1 truncate text-left"
+                    className="flex min-w-0 flex-1 flex-col items-start text-left leading-tight"
                     title={p.path}
                   >
-                    {p.name}
+                    <span className="w-full truncate">{p.name}</span>
+                    {/* Folder basename below the display name. Distinct
+                        font (mono) and tone (neutral-500) so it reads as
+                        metadata, not part of the name. Useful when the
+                        display name doesn't match the on-disk folder
+                        (e.g. user renamed the project to something
+                        memorable but is debugging which checkout it
+                        points at). Hover the row to see the full path
+                        — that's still in the title attribute above. */}
+                    <span className="w-full truncate font-mono text-[10px] text-neutral-500">
+                      {folderName(p.path)}
+                    </span>
                   </button>
                 )}
                 <button
@@ -233,4 +244,19 @@ export function ProjectSidebar() {
       </Modal>
     </aside>
   );
+}
+
+/**
+ * Strip everything but the last path segment so the project row can
+ * show "the folder name" as a sub-label under the display name. Both
+ * `/` and `\` are accepted so Windows-form paths (which the project
+ * store could in principle produce) don't fall through to showing the
+ * whole absolute path. Trailing-separator and empty-string defenses
+ * are belt-and-suspenders — `project-manager` realpaths every project
+ * path before storage, so the result should always have at least one
+ * segment.
+ */
+function folderName(absPath: string): string {
+  const parts = absPath.split(/[/\\]/).filter((s) => s.length > 0);
+  return parts[parts.length - 1] ?? absPath;
 }

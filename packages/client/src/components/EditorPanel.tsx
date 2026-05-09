@@ -242,7 +242,14 @@ function Tabs({
                 {extChanged ? (
                   <AlertTriangle size={11} className="mr-1 inline text-amber-400" />
                 ) : f.dirty ? (
-                  <span className="mr-1 text-amber-400">•</span>
+                  // Filled 10-px circle (was a 12-px bullet character that
+                  // mostly disappeared into the surrounding text). aria-
+                  // label so screen readers announce the unsaved state.
+                  <span
+                    className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full bg-amber-400 align-middle"
+                    aria-label="Unsaved changes"
+                    title="Unsaved changes"
+                  />
                 ) : null}
                 {name}
               </button>
