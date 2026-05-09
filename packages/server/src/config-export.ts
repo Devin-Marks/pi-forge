@@ -2,9 +2,24 @@
  * Config export / import as a flat `.tar.gz`.
  *
  * What's included (and why):
- *   - `mcp.json`       — pi-forge-owned MCP server registry
- *   - `settings.json`  — pi-owned defaults (model, thinking level, skills patterns)
- *   - `models.json`    — pi-owned custom providers
+ *   - `mcp.json`              — pi-forge-owned MCP server registry
+ *   - `settings.json`         — pi-owned defaults (model, thinking level, skills patterns)
+ *   - `models.json`           — pi-owned custom providers
+ *   - `skills-overrides.json` — pi-forge-private per-project skill enable/disable state
+ *   - `tool-overrides.json`   — pi-forge-private per-project tool enable/disable state
+ *
+ * The two `*-overrides.json` files live in `${FORGE_DATA_DIR}` (not
+ * `${PI_CONFIG_DIR}` like the other three). They're included because
+ * the user's per-project tool/skill toggle decisions are part of "the
+ * pi-forge config a power-user wants to carry across installations" —
+ * pairing a backup of `settings.json` (global skill patterns) without
+ * also backing up the per-project overrides loses information.
+ * `projectId`s in the overrides files are local UUIDs — re-importing
+ * onto an installation with a different `projects.json` will leave
+ * orphan entries that are silently ignored at session-create time.
+ * Acceptable trade-off; the alternative (refusing to import overrides
+ * when project IDs don't match) would defeat the point of carrying
+ * per-project config across installs that share workspaces.
  *
  * What's deliberately EXCLUDED:
  *   - `auth.json` — provider API keys + OAuth tokens. OAuth tokens are
@@ -14,12 +29,14 @@
  *     (Slack, Drive, ticket attachment) outweighs the convenience. The
  *     import flow tells the user to re-authenticate providers
  *     afterwards.
+ *   - `projects.json` — installation-bound (project paths reference
+ *     local disk locations that won't exist on the target machine).
  *   - The auto-generated `jwt-secret` and `password-hash` files —
  *     installation-bound, intentionally not portable.
  *
- * Archive layout: a flat tar with the three files at the top level (no
+ * Archive layout: a flat tar with the files at the top level (no
  * leading directory). Importing rejects any entry that isn't one of
- * those three exact names — this is the only validation that matters
+ * the allow-listed names — this is the only validation that matters
  * for safety, since the names map deterministically to disk targets.
  *
  * Atomic writes: each imported file lands in `<dst>.import.tmp` first,
@@ -41,19 +58,30 @@ import { config } from "./config.js";
  * entry and we can't accidentally accept a near-miss like
  * `Settings.json` on a case-sensitive filesystem.
  */
-const ALLOWED_FILES = ["mcp.json", "settings.json", "models.json"] as const;
+const ALLOWED_FILES = [
+  "mcp.json",
+  "settings.json",
+  "models.json",
+  "skills-overrides.json",
+  "tool-overrides.json",
+] as const;
 type AllowedFile = (typeof ALLOWED_FILES)[number];
 const ALLOWED_SET: ReadonlySet<string> = new Set<string>(ALLOWED_FILES);
 
 /**
  * Map each allowed name to its on-disk target. Functions (not
- * constants) so changes to `config.piConfigDir` /
- * `config.mcpConfigFile` at test time take effect.
+ * constants) so changes to `config.piConfigDir` / `config.forgeDataDir`
+ * / `config.mcpConfigFile` at test time take effect. The two
+ * `*-overrides.json` files live under FORGE_DATA_DIR, NOT PI_CONFIG_DIR
+ * — pi-forge-private state, intentionally not commingled with the
+ * SDK's directory.
  */
 const TARGETS: Record<AllowedFile, () => string> = {
   "mcp.json": () => config.mcpConfigFile,
   "settings.json": () => join(config.piConfigDir, "settings.json"),
   "models.json": () => join(config.piConfigDir, "models.json"),
+  "skills-overrides.json": () => config.skillOverridesFile,
+  "tool-overrides.json": () => config.toolOverridesFile,
 };
 
 export interface ExportResult {

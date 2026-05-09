@@ -609,20 +609,23 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
 
   // ---------------------- export / import ----------------------
   // Two routes that round-trip the pi-forge's portable config
-  // (mcp.json + settings.json + models.json — see config-export.ts
-  // header for what's in and what's out).
+  // (mcp.json + settings.json + models.json + skills-overrides.json +
+  // tool-overrides.json — see config-export.ts header for what's in
+  // and what's out).
   fastify.get(
     "/config/export",
     {
       schema: {
         description:
           "Stream a `.tar.gz` of the portable pi-forge config: " +
-          "`mcp.json`, `settings.json`, and `models.json`. Excludes " +
-          "`auth.json` (provider keys / OAuth tokens) and any " +
-          "installation-bound files (jwt-secret, password-hash). " +
-          "The header `X-Pi-Forge-Files` lists the names actually " +
-          "included so a client can warn when a file was missing on " +
-          "disk and therefore omitted from the export.",
+          "`mcp.json`, `settings.json`, `models.json`, " +
+          "`skills-overrides.json`, and `tool-overrides.json`. Excludes " +
+          "`auth.json` (provider keys / OAuth tokens), `projects.json` " +
+          "(installation-bound paths), and the auto-generated " +
+          "`jwt-secret`/`password-hash` files. The header " +
+          "`X-Pi-Forge-Files` lists the names actually included so a " +
+          "client can warn when a file was missing on disk and " +
+          "therefore omitted from the export.",
         tags: ["config"],
         response: {
           200: {
@@ -655,13 +658,18 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
       schema: {
         description:
           "Restore a `.tar.gz` previously produced by `/config/export`. " +
-          "The archive must contain only the three top-level files " +
-          "`mcp.json`, `settings.json`, `models.json` — anything else " +
-          "is reported in `skipped`. Each accepted file is parsed as " +
-          "JSON; ALL files must validate before ANY are written. " +
+          "The archive must contain only the allow-listed top-level " +
+          "files (`mcp.json`, `settings.json`, `models.json`, " +
+          "`skills-overrides.json`, `tool-overrides.json`) — anything " +
+          "else is reported in `skipped`. Each accepted file is parsed " +
+          "as JSON; ALL files must validate before ANY are written. " +
           "Imported files land atomically (`.tmp` + rename). " +
           "**Provider auth is NOT included in exports** — re-authenticate " +
-          "providers via the Auth settings page after import.",
+          "providers via the Auth settings page after import. Note that " +
+          "`*-overrides.json` `projectId` keys are local UUIDs; importing " +
+          "onto an installation with a different `projects.json` will " +
+          "leave orphan entries that are silently ignored at session-" +
+          "create time.",
         tags: ["config"],
         consumes: ["multipart/form-data"],
         response: {

@@ -142,8 +142,10 @@ async function main(): Promise<void> {
   console.log(`[test-config-export] PI_CONFIG_DIR=${configDir}`);
   console.log(`[test-config-export] FORGE_DATA_DIR=${dataDir}`);
 
-  // Seed the three exportable files PLUS auth.json (which we expect
-  // the export to deliberately exclude).
+  // Seed the five exportable files PLUS auth.json (which we expect
+  // the export to deliberately exclude). The two `*-overrides.json`
+  // files live under FORGE_DATA_DIR (dataDir), not PI_CONFIG_DIR
+  // (configDir) — pi-forge-private state.
   await mkdir(configDir, { recursive: true });
   await mkdir(dataDir, { recursive: true });
   const seedSettings = { defaultProvider: "anthropic", defaultThinkingLevel: "high" };
@@ -153,11 +155,31 @@ async function main(): Promise<void> {
   const seedMcp = {
     servers: { example: { url: "http://localhost:9000/sse" } },
   };
+  const seedSkillsOverrides = {
+    projects: {
+      "00000000-0000-0000-0000-000000000001": { enable: ["foo-skill"], disable: ["bar-skill"] },
+    },
+  };
+  const seedToolOverrides = {
+    projects: {
+      "00000000-0000-0000-0000-000000000001": {
+        builtin: { enable: [], disable: ["bash"] },
+        mcp: {},
+        extension: {},
+      },
+    },
+  };
   const seedAuth = { providers: { anthropic: { apiKey: "sk-ant-secret-do-not-export" } } };
   await writeFile(join(configDir, "settings.json"), JSON.stringify(seedSettings), "utf8");
   await writeFile(join(configDir, "models.json"), JSON.stringify(seedModels), "utf8");
   await writeFile(join(configDir, "auth.json"), JSON.stringify(seedAuth), "utf8");
   await writeFile(join(dataDir, "mcp.json"), JSON.stringify(seedMcp), "utf8");
+  await writeFile(
+    join(dataDir, "skills-overrides.json"),
+    JSON.stringify(seedSkillsOverrides),
+    "utf8",
+  );
+  await writeFile(join(dataDir, "tool-overrides.json"), JSON.stringify(seedToolOverrides), "utf8");
 
   const buildModule = (await import(
     resolve(repoRoot, "packages/server/dist/index.js")
@@ -187,8 +209,15 @@ async function main(): Promise<void> {
         .filter((s) => s.length > 0)
         .sort();
       assert(
-        "  X-Pi-Forge-Files lists all three files",
-        JSON.stringify(filesList) === JSON.stringify(["mcp.json", "models.json", "settings.json"]),
+        "  X-Pi-Forge-Files lists all five files",
+        JSON.stringify(filesList) ===
+          JSON.stringify([
+            "mcp.json",
+            "models.json",
+            "settings.json",
+            "skills-overrides.json",
+            "tool-overrides.json",
+          ]),
         filesHeader,
       );
       assert(
@@ -206,8 +235,15 @@ async function main(): Promise<void> {
 
       const entries = (await listTarEntries(exportedBuf)).sort();
       assert(
-        "  tar contents match the three exportable files",
-        JSON.stringify(entries) === JSON.stringify(["mcp.json", "models.json", "settings.json"]),
+        "  tar contents match the five exportable files",
+        JSON.stringify(entries) ===
+          JSON.stringify([
+            "mcp.json",
+            "models.json",
+            "settings.json",
+            "skills-overrides.json",
+            "tool-overrides.json",
+          ]),
         JSON.stringify(entries),
       );
       assert(
@@ -223,6 +259,8 @@ async function main(): Promise<void> {
       await rm(join(configDir, "settings.json"));
       await rm(join(configDir, "models.json"));
       await rm(join(dataDir, "mcp.json"));
+      await rm(join(dataDir, "skills-overrides.json"));
+      await rm(join(dataDir, "tool-overrides.json"));
 
       const r = await postMultipart(
         base,
@@ -235,8 +273,9 @@ async function main(): Promise<void> {
       assert("POST /config/import → 200", r.status === 200, JSON.stringify(r.body));
       const summary = r.body as { imported: string[]; skipped: string[]; errors: unknown[] };
       assert(
-        "  imported lists all three",
-        summary.imported.sort().join(",") === "mcp.json,models.json,settings.json",
+        "  imported lists all five",
+        summary.imported.sort().join(",") ===
+          "mcp.json,models.json,settings.json,skills-overrides.json,tool-overrides.json",
         JSON.stringify(summary),
       );
       assert("  no skipped entries", summary.skipped.length === 0, JSON.stringify(summary.skipped));
@@ -256,6 +295,22 @@ async function main(): Promise<void> {
       );
       const mcpBack = JSON.parse(await readFile(join(dataDir, "mcp.json"), "utf8"));
       assert("  mcp.json content round-trips", JSON.stringify(mcpBack) === JSON.stringify(seedMcp));
+      const skillsOverridesBack = JSON.parse(
+        await readFile(join(dataDir, "skills-overrides.json"), "utf8"),
+      );
+      assert(
+        "  skills-overrides.json content round-trips",
+        JSON.stringify(skillsOverridesBack) === JSON.stringify(seedSkillsOverrides),
+        JSON.stringify(skillsOverridesBack),
+      );
+      const toolOverridesBack = JSON.parse(
+        await readFile(join(dataDir, "tool-overrides.json"), "utf8"),
+      );
+      assert(
+        "  tool-overrides.json content round-trips",
+        JSON.stringify(toolOverridesBack) === JSON.stringify(seedToolOverrides),
+        JSON.stringify(toolOverridesBack),
+      );
 
       // auth.json was NEVER touched by the import path.
       const authBack = JSON.parse(await readFile(join(configDir, "auth.json"), "utf8"));
@@ -407,15 +462,30 @@ async function main(): Promise<void> {
         .split(",")
         .filter((s) => s.length > 0)
         .sort();
+      // The two `*-overrides.json` files were re-imported in step 2
+      // and again touched by step 3, so they're still on disk and
+      // included in this missing-mcp.json export.
       assert(
         "  X-Pi-Forge-Files omits missing mcp.json",
-        JSON.stringify(filesList) === JSON.stringify(["models.json", "settings.json"]),
+        JSON.stringify(filesList) ===
+          JSON.stringify([
+            "models.json",
+            "settings.json",
+            "skills-overrides.json",
+            "tool-overrides.json",
+          ]),
         JSON.stringify(filesList),
       );
       const entries = (await listTarEntries(r.buf)).sort();
       assert(
         "  tar contents omit missing mcp.json",
-        JSON.stringify(entries) === JSON.stringify(["models.json", "settings.json"]),
+        JSON.stringify(entries) ===
+          JSON.stringify([
+            "models.json",
+            "settings.json",
+            "skills-overrides.json",
+            "tool-overrides.json",
+          ]),
         JSON.stringify(entries),
       );
     }
