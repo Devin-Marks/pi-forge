@@ -15,6 +15,7 @@ import {
 } from "../lib/api-client";
 import { useActiveProject, useProjectStore } from "../store/project-store";
 import { useUiConfigStore } from "../store/ui-config-store";
+import { useUiStore } from "../store/ui-store";
 import { EMPTY_STATUS, useMcpStore } from "../store/mcp-store";
 import { THEME_DEFS, useThemeStore, type ThemeId } from "../lib/theme";
 import { getStoredToken } from "../lib/auth-client";
@@ -1045,6 +1046,7 @@ function SkillsTab({ onError }: { onError: (msg: string | undefined) => void }) 
 function PromptsTab({ onError }: { onError: (msg: string | undefined) => void }) {
   const project = useActiveProject();
   const projects = useProjectStore((s) => s.projects);
+  const bumpPromptsRefresh = useUiStore((s) => s.bumpPromptsRefresh);
   const [prompts, setPrompts] = useState<PromptSummary[] | undefined>(undefined);
   const [diagnostics, setDiagnostics] = useState<SkillDiagnostic[]>([]);
   const [allOverrides, setAllOverrides] = useState<
@@ -1091,6 +1093,9 @@ function PromptsTab({ onError }: { onError: (msg: string | undefined) => void })
     try {
       const { prompts: updated } = await api.setPromptEnabled(project.id, name, next, "global");
       setPrompts(updated);
+      // Tell the chat input to refetch its slash-palette so the
+      // toggled prompt appears / disappears without a project switch.
+      bumpPromptsRefresh();
     } catch (err) {
       onError(`Toggle failed: ${errorCode(err)}`);
     } finally {
@@ -1111,6 +1116,7 @@ function PromptsTab({ onError }: { onError: (msg: string | undefined) => void })
         await api.setPromptEnabled(targetProjectId, name, state === "enabled", "project");
       }
       await refresh();
+      bumpPromptsRefresh();
     } catch (err) {
       onError(`Override write failed: ${errorCode(err)}`);
     } finally {

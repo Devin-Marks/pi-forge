@@ -359,6 +359,10 @@ export function ChatInput({ sessionId }: Props) {
   const openSettings = useUiStore((s) => s.openSettings);
   const chatInsertRequest = useUiStore((s) => s.chatInsertRequest);
   const clearChatInsertRequest = useUiStore((s) => s.clearChatInsertRequest);
+  // Bumped by Settings → Prompts after every toggle so the slash
+  // palette refetches without requiring a project switch or full
+  // reload. Included in the prompts-fetch effect's deps.
+  const promptsRefreshTrigger = useUiStore((s) => s.promptsRefreshTrigger);
   const lastChatInsertSeqRef = useRef(0);
   const [slashSelectedIdx, setSlashSelectedIdx] = useState(0);
   const slashOpen = text.startsWith("/") && !text.includes("\n");
@@ -415,7 +419,7 @@ export function ChatInput({ sessionId }: Props) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.id]);
+  }, [project?.id, promptsRefreshTrigger]);
 
   // Bang-prefix mode for the visual treatment around the textarea.
   // `!!` runs bash local-only (output stays out of LLM context); `!`
