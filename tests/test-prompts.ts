@@ -134,17 +134,32 @@ async function main(): Promise<void> {
       const list = await jget(base, `/api/v1/config/prompts?projectId=${projectId}`);
       assert("GET /config/prompts → 200", list.status === 200);
       const body = list.body as {
-        prompts: { name: string; source: string; enabled: boolean; effective: boolean; argumentHint?: string }[];
+        prompts: {
+          name: string;
+          source: string;
+          enabled: boolean;
+          effective: boolean;
+          argumentHint?: string;
+        }[];
         diagnostics: unknown[];
       };
       const summarize = body.prompts.find((p) => p.name === "summarize");
       const review = body.prompts.find((p) => p.name === "review");
       assert("  project-local 'summarize' present", summarize !== undefined);
       assert("  global 'review' present", review !== undefined);
-      assert("  source classification correct", summarize?.source === "project" && review?.source === "global");
+      assert(
+        "  source classification correct",
+        summarize?.source === "project" && review?.source === "global",
+      );
       assert("  argumentHint surfaced", summarize?.argumentHint === "<path>");
-      assert("  both default to enabled (no global !patterns)", summarize?.enabled === true && review?.enabled === true);
-      assert("  diagnostics is empty array (SDK doesn't surface prompt collisions yet)", Array.isArray(body.diagnostics) && body.diagnostics.length === 0);
+      assert(
+        "  both default to enabled (no global !patterns)",
+        summarize?.enabled === true && review?.enabled === true,
+      );
+      assert(
+        "  diagnostics is empty array (SDK doesn't surface prompt collisions yet)",
+        Array.isArray(body.diagnostics) && body.diagnostics.length === 0,
+      );
     }
 
     // 3. PUT global enabled=false on `summarize` — writes pi's settings.prompts pattern.
@@ -181,13 +196,16 @@ async function main(): Promise<void> {
       );
       assert("PUT /config/prompts/summarize/enabled true (project) → 200", r.status === 200);
       const updated = (
-        r.body as { prompts: { name: string; enabled: boolean; effective: boolean; projectOverride?: string }[] }
+        r.body as {
+          prompts: {
+            name: string;
+            enabled: boolean;
+            effective: boolean;
+            projectOverride?: string;
+          }[];
+        }
       ).prompts.find((p) => p.name === "summarize");
-      assert(
-        "  global remains disabled",
-        updated?.enabled === false,
-        JSON.stringify(updated),
-      );
+      assert("  global remains disabled", updated?.enabled === false, JSON.stringify(updated));
       assert("  projectOverride === 'enabled'", updated?.projectOverride === "enabled");
       assert(
         "  effective is true (project enable wins)",
@@ -237,11 +255,7 @@ async function main(): Promise<void> {
         `/api/v1/config/prompts/no-such-prompt/enabled?projectId=${projectId}`,
         { enabled: true },
       );
-      assert(
-        "PUT toggle on unknown prompt → 404",
-        r.status === 404,
-        JSON.stringify(r.body),
-      );
+      assert("PUT toggle on unknown prompt → 404", r.status === 404, JSON.stringify(r.body));
     }
 
     // 8. Unknown projectId → 404.
