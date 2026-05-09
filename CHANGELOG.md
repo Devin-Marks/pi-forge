@@ -15,6 +15,55 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Added
+
+- **Pi prompt templates as a first-class surface.** Markdown templates
+  under `<dir>/prompts/` (mirrors `<dir>/skills/`) now appear in the
+  chat-input slash-command palette as `/<promptname>` entries with
+  description + argument hint, and in a new **Settings → Prompts**
+  management tab modeled on Settings → Skills (per-project tri-state
+  toggles, cascade view across projects). Pi's `session.prompt()`
+  already expands `/<name> args` to the template body via
+  `expandPromptTemplates: true`, so pi-forge's role is purely
+  discovery + management — no server-side expansion. Per-project
+  state lives in `${FORGE_DATA_DIR}/prompts-overrides.json`. Toggling
+  in Settings → Prompts immediately drops/adds the prompt in the
+  chat-input palette without a project switch (cross-component
+  refresh trigger via ui-store).
+- **Settings → Backup now bundles per-project override files.** Export
+  tarball gains `skills-overrides.json`, `tool-overrides.json`, and
+  `prompts-overrides.json` alongside the existing `mcp.json` /
+  `settings.json` / `models.json`. Pairs the global state with the
+  per-project tool/skill/prompt toggles so a backup → restore cycle
+  preserves both. `projectId` keys in the override files are local
+  UUIDs — importing onto a different installation leaves orphan
+  entries that are silently ignored at session-create (deliberate
+  trade-off; the alternative would defeat the point of carrying
+  per-project config across installs that share workspaces).
+- **`npm run dev:remote`** — same as `npm run dev` but binds both
+  halves (Fastify + Vite dev server) to `0.0.0.0` so other devices
+  on the LAN can reach the dev workbench. Useful for testing on a
+  phone, pair-debugging from another laptop, or demoing in a room.
+  Set `UI_PASSWORD` or `API_KEY` first — auth is OFF by default in
+  dev. macOS will prompt to allow incoming connections on first run.
+- **Folder name on project sidebar rows.** Each project row now shows
+  the on-disk folder basename below the display name in a smaller
+  mono font. Useful when the display name has been renamed away from
+  the folder name and you're debugging which checkout the project
+  points at.
+
+### Changed
+
+- **Settings panel widened from `max-w-3xl` (768 px) to `max-w-4xl`
+  (896 px)** to give the now-9-tab bar (Providers, Agent, MCP, Tools,
+  Skills, Prompts, Appearance, Backup, General) breathing room. The
+  panel is a modal so the extra width doesn't compete with the chat.
+- **Unsaved file indicator on editor tabs is now a 10 px filled
+  amber circle.** Was a 12 px bullet character (`•`) at the
+  surrounding text size which mostly disappeared into the filename.
+  Sized independently of the text so the dirty cue is unmissable;
+  `aria-label="Unsaved changes"` for screen readers.
+
 ## [1.1.5] — 2026-05-08
 
 ### Added
