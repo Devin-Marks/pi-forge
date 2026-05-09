@@ -107,6 +107,13 @@ serves the built Vite output as static files — single port, no CORS needed.
 All reads are centralized in `packages/server/src/config.ts`. Never read
 `process.env` directly in any other file — always import from config.
 
+Every operationally-relevant env var also has an equivalent CLI flag on
+the `pi-forge` command, surfaced via the bin shim
+(`bin/pi-forge.mjs` → `packages/server/src/cli.ts`). The flag table in
+`cli.ts` is the single source of truth for the env↔flag mapping —
+adding a new env var means adding one row there so it's reachable
+without an env wrapper. Run `pi-forge --help` for the grouped list.
+
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3000` | Fastify listen port |

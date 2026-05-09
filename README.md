@@ -73,9 +73,19 @@ pi-forge
 
 By default pi-forge listens on `http://localhost:3000`, reads provider config
 from `~/.pi/agent/` (shared with the host `pi` CLI if you have one), and
-stores its own state in `~/.pi-forge/`. Override with `PORT`, `PI_CONFIG_DIR`,
-`FORGE_DATA_DIR`, `WORKSPACE_PATH` env vars — see
-[`docs/configuration.md`](./docs/configuration.md).
+stores its own state in `~/.pi-forge/`. Override paths, port, auth, and the
+rest with `--flags` or environment variables — every server env var has an
+equivalent flag, so you don't need a wrapper script just to set a port:
+
+```bash
+pi-forge --port 4000 --workspace-path ~/Code
+pi-forge --api-key @/run/secrets/api-key --no-expose-docs
+pi-forge --help            # full flag table grouped by category
+```
+
+Flags win when both a flag and the matching env var are set. See
+[`docs/configuration.md`](./docs/configuration.md) for the full
+flag ↔ env mapping.
 
 Either way: open the listed URL, add a project (point at a folder under
 `WORKSPACE_PATH`), drop a provider API key into Settings, and start a session.
