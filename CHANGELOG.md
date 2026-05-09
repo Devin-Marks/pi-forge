@@ -15,6 +15,8 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.1.6] — 2026-05-09
+
 ### Added
 
 - **Pi prompt templates as a first-class surface.** Markdown templates
