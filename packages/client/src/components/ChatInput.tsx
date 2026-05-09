@@ -564,6 +564,26 @@ export function ChatInput({ sessionId }: Props) {
     return slashCatalog.filter((c) => c.name.slice(1).toLowerCase().startsWith(q));
   }, [slashCatalog, slashQuery]);
 
+  /**
+   * True when the input text is in `/<knownpromptname>` or
+   * `/<knownpromptname> ...args` form. In those cases Enter should
+   * BYPASS slash-command dispatch and fall through to a normal submit
+   * — pi's `session.prompt()` will expand the template at send time.
+   * Without this bypass, Enter on `/<name> foo` re-fires the prompt
+   * entry's `run()` which re-inserts `/<name> ` and clobbers the args.
+   *
+   * Distinguishes from the still-typing-the-name case (e.g. text is
+   * `/sum` while a prompt is named `summarize`) — that DOES go through
+   * normal slash dispatch so Enter Tab-completes the name.
+   */
+  const isPromptInvocation = useMemo(() => {
+    if (!slashOpen) return false;
+    const firstWord = text.slice(1).split(/\s/)[0] ?? "";
+    if (firstWord.length === 0) return false;
+    if (!availablePrompts.some((p) => p.name === firstWord)) return false;
+    return text === `/${firstWord}` || text.startsWith(`/${firstWord} `);
+  }, [slashOpen, text, availablePrompts]);
+
   const slashRunSelected = (): void => {
     const cmd = slashFiltered[slashSelectedIdx];
     if (cmd === undefined || !cmd.available) return;
@@ -929,7 +949,10 @@ export function ChatInput({ sessionId }: Props) {
     // /-command dispatch — the keyboard path (Enter) handles this
     // first, but a click on Send also lands here and a `/foo` typed
     // input shouldn't slip through to the LLM as a regular prompt.
-    if (slashOpen) {
+    // Exception: pi prompt templates in `/<name> ...args` form bypass
+    // dispatch — the SDK's `session.prompt()` expands them at send
+    // time. See `isPromptInvocation` for the predicate.
+    if (slashOpen && !isPromptInvocation) {
       if (slashFiltered.length > 0) {
         slashRunSelected();
       } else {
@@ -1032,9 +1055,19 @@ export function ChatInput({ sessionId }: Props) {
           return;
         }
         if (e.key === "Enter" || e.key === "Tab") {
-          e.preventDefault();
-          slashRunSelected();
-          return;
+          // Pi-prompt invocation form (`/<knownname>` or
+          // `/<knownname> ...args`) — fall through to the normal
+          // Enter-submits path. Without this branch the Enter key
+          // would re-fire the prompt entry's `run()` and clobber
+          // any args the user typed.
+          if (isPromptInvocation && e.key === "Enter" && !e.shiftKey) {
+            // Don't preventDefault — let the regular Enter handler
+            // below pick it up. (Tab still discovers / fills in.)
+          } else {
+            e.preventDefault();
+            slashRunSelected();
+            return;
+          }
         }
       } else if (e.key === "Enter" && !e.shiftKey) {
         // Open palette + no matches + Enter: refuse rather than
