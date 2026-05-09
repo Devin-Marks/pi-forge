@@ -111,7 +111,12 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="flex h-full max-h-[640px] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950 shadow-2xl"
+        // Width bumped from max-w-3xl (768px) to max-w-4xl (896px) when
+        // the Prompts tab brought the count to 9 and the bar started
+        // crowding the "API Docs ↗" button on the right. Settings is
+        // a modal, so the extra width doesn't compete with the chat
+        // for screen real estate.
+        className="flex h-full max-h-[640px] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950 shadow-2xl"
       >
         <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
           <div className="flex items-center gap-1">
