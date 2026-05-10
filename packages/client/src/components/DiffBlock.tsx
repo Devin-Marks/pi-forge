@@ -243,14 +243,23 @@ function FileDiff({
             // the position WITHIN this file's hunks, which matches
             // what /git/apply-hunks expects.
             if (onHunkAction !== undefined) {
+              // Action strip rendered above each hunk via
+              // react-diff-view's Decoration slot. Styled to be
+              // unmistakably visible against the diff background:
+              // explicit blue accent + bold-ish button so it doesn't
+              // get lost in the +/- noise. Index label tells the
+              // user which hunk they're operating on.
               out.push(
                 <Decoration key={`dec-${hunk.content}`}>
-                  <div className="flex justify-end gap-1 border-t border-neutral-800 bg-neutral-900/40 px-2 py-1">
+                  <div className="flex items-center justify-between gap-2 border-y border-blue-700/40 bg-blue-950/40 px-3 py-1.5">
+                    <span className="text-[10px] uppercase tracking-wider text-blue-300">
+                      Hunk {idx + 1}
+                    </span>
                     <button
                       type="button"
                       onClick={() => onHunkAction(idx)}
                       disabled={hunkActionDisabled === true}
-                      className="rounded border border-neutral-700 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-300 hover:border-neutral-500 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded border border-blue-500/60 bg-blue-900/40 px-2.5 py-0.5 text-[11px] font-medium text-blue-100 hover:border-blue-400 hover:bg-blue-800/60 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {hunkActionLabel ?? "Apply hunk"}
                     </button>
