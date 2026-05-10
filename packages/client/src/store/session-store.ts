@@ -273,6 +273,14 @@ interface SessionState {
    * pop entries optimistically.
    */
   queuedBySession: Record<string, { steering: string[]; followUp: string[] } | undefined>;
+  /**
+   * Per-session pending scroll target (zero-based message index) set
+   * by the global search bar when a result is clicked. ChatView reads
+   * this on session activation, scrolls to the matching message, then
+   * calls `consumePendingScroll` so a subsequent activation of the
+   * same session doesn't re-trigger the scroll.
+   */
+  pendingScrollByMessageIndex: Record<string, number>;
   /** Errors surfaced from API calls (sticky until next successful op). */
   error: string | undefined;
   loadingList: boolean;
@@ -309,6 +317,10 @@ interface SessionState {
    */
   setPendingDraft: (sessionId: string, draft: string) => void;
   consumePendingDraft: (sessionId: string) => void;
+  /** Set the pending scroll target for `sessionId` (used by global search). */
+  requestScrollToMessage: (sessionId: string, messageIndex: number) => void;
+  /** Consume + clear the pending scroll target for `sessionId`. */
+  consumePendingScroll: (sessionId: string) => number | undefined;
   sendPrompt: (sessionId: string, text: string, attachments?: File[]) => Promise<void>;
   sendSteer: (sessionId: string, text: string, mode?: "steer" | "followUp") => Promise<void>;
   abortSession: (sessionId: string) => Promise<void>;
@@ -328,6 +340,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   agentEndCountBySession: {},
   compactionEndCountBySession: {},
   queuedBySession: {},
+  pendingScrollByMessageIndex: {},
   error: undefined,
   loadingList: false,
 
@@ -452,6 +465,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       delete next[sessionId];
       return { pendingDraftBySession: next };
     }),
+
+  requestScrollToMessage: (sessionId, messageIndex) =>
+    set((s) => ({
+      pendingScrollByMessageIndex: {
+        ...s.pendingScrollByMessageIndex,
+        [sessionId]: messageIndex,
+      },
+    })),
+
+  consumePendingScroll: (sessionId) => {
+    const value = get().pendingScrollByMessageIndex[sessionId];
+    if (value === undefined) return undefined;
+    set((s) => {
+      const next = { ...s.pendingScrollByMessageIndex };
+      delete next[sessionId];
+      return { pendingScrollByMessageIndex: next };
+    });
+    return value;
+  },
 
   setActiveSession: (sessionId) => {
     if (sessionId !== undefined) localStorage.setItem(ACTIVE_SESSION_KEY, sessionId);

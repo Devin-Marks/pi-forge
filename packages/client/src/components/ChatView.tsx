@@ -90,6 +90,12 @@ export function ChatView({ sessionId }: Props) {
   const queued = useSessionStore((s) => s.queuedBySession[sessionId]);
   const openStream = useSessionStore((s) => s.openStream);
   const closeStream = useSessionStore((s) => s.closeStream);
+  // Pending scroll target set by the global search bar when the user
+  // clicks a result. Read as a primitive so the effect below only
+  // re-fires when the target index actually changes (selecting the
+  // map and reading by key would re-run on every map mutation).
+  const pendingScrollTarget = useSessionStore((s) => s.pendingScrollByMessageIndex[sessionId]);
+  const consumePendingScroll = useSessionStore((s) => s.consumePendingScroll);
 
   const [chatViewType, setChatViewType] = useState<ChatViewType>(readChatViewType);
   const setAndPersistChatViewType = (next: ChatViewType): void => {
@@ -158,6 +164,26 @@ export function ChatView({ sessionId }: Props) {
     }
     lastUserMessageCountRef.current = userCount;
   }, [messages]);
+
+  // Global-search scroll-to-message: when the search bar dispatches a
+  // pending target for this session, locate the matching wrapper by
+  // its `data-message-index` attribute and bring it into view. Wait
+  // for the snapshot to land (messages.length > target) so the target
+  // node actually exists in the DOM. Once consumed, drop the pending
+  // value so a re-mount of ChatView (e.g. user toggling the chat
+  // pane) doesn't re-scroll. Disable sticky-bottom follow so the
+  // subsequent agent stream doesn't yank focus away.
+  useEffect(() => {
+    if (pendingScrollTarget === undefined) return;
+    if (messages.length <= pendingScrollTarget) return;
+    const root = scrollRef.current;
+    if (root === null) return;
+    const node = root.querySelector(`[data-message-index="${pendingScrollTarget}"]`);
+    if (node === null) return;
+    node.scrollIntoView({ block: "center", behavior: "smooth" });
+    isFollowingBottomRef.current = false;
+    consumePendingScroll(sessionId);
+  }, [pendingScrollTarget, messages.length, sessionId, consumePendingScroll]);
 
   return (
     <ChatDiffViewContext.Provider
@@ -263,7 +289,11 @@ export function ChatView({ sessionId }: Props) {
                 // bubble would just duplicate the content under an
                 // "unknown message" fallback.
                 if (m.role === "compactionSummary") return;
-                out.push(<Message key={i} message={m} toolResultsById={toolResultsById} />);
+                out.push(
+                  <div key={i} data-message-index={i}>
+                    <Message message={m} toolResultsById={toolResultsById} />
+                  </div>,
+                );
               });
               // Trailing cards (insertBeforeIndex === messages.length)
               // — the entire current context was archived but no

@@ -41,6 +41,9 @@ import {
   type SearchMatch,
   type SearchResponse,
   type SearchOptions,
+  type SessionSearchGroup,
+  type SessionSearchMatch,
+  type SessionSearchResponse,
   type SessionTreeEntry,
   type ContextTurn,
   type ContextUsageStats,
@@ -858,6 +861,64 @@ function vSearchResponse(value: unknown, status: number): SearchResponse {
         length: m.length,
         lineSnippet: m.lineSnippet,
       };
+    }),
+  };
+}
+
+function vSessionSearchResponse(value: unknown, status: number): SessionSearchResponse {
+  if (
+    !isObject(value) ||
+    (value.engine !== "ripgrep" && value.engine !== "node") ||
+    typeof value.truncated !== "boolean" ||
+    !Array.isArray(value.results)
+  ) {
+    fail(status, "expected SessionSearchResponse");
+  }
+  return {
+    engine: value.engine,
+    truncated: value.truncated,
+    results: value.results.map((g): SessionSearchGroup => {
+      if (
+        !isObject(g) ||
+        typeof g.sessionId !== "string" ||
+        typeof g.projectId !== "string" ||
+        typeof g.projectName !== "string" ||
+        typeof g.modifiedAt !== "string" ||
+        !Array.isArray(g.matches)
+      ) {
+        fail(status, "expected SessionSearchGroup");
+      }
+      const out: SessionSearchGroup = {
+        sessionId: g.sessionId,
+        projectId: g.projectId,
+        projectName: g.projectName,
+        modifiedAt: g.modifiedAt,
+        matches: g.matches.map((m): SessionSearchMatch => {
+          if (
+            !isObject(m) ||
+            typeof m.messageIndex !== "number" ||
+            (m.kind !== "user" && m.kind !== "assistant" && m.kind !== "tool_call") ||
+            typeof m.snippet !== "string" ||
+            typeof m.matchOffset !== "number" ||
+            typeof m.matchLength !== "number"
+          ) {
+            fail(status, "expected SessionSearchMatch");
+          }
+          const match: SessionSearchMatch = {
+            messageIndex: m.messageIndex,
+            kind: m.kind,
+            snippet: m.snippet,
+            matchOffset: m.matchOffset,
+            matchLength: m.matchLength,
+          };
+          if (typeof m.messageEnvelopeId === "string") {
+            match.messageEnvelopeId = m.messageEnvelopeId;
+          }
+          return match;
+        }),
+      };
+      if (typeof g.sessionName === "string") out.sessionName = g.sessionName;
+      return out;
     }),
   };
 }
@@ -1810,6 +1871,26 @@ export const api = {
       `/api/v1/files/search?${qs.toString()}`,
       vSearchResponse,
       signal !== undefined ? { signal } : {},
+    );
+  },
+  /**
+   * Cross-session text search backed by `/api/v1/search/sessions`.
+   * Used by the global search bar in the top-of-app header; returns
+   * sessions grouped with per-session message snippets.
+   */
+  searchSessions: (
+    query: string,
+    opts?: { sessionLimit?: number; matchesPerSession?: number; signal?: AbortSignal },
+  ) => {
+    const qs = new URLSearchParams({ q: query });
+    if (opts?.sessionLimit !== undefined) qs.set("sessionLimit", String(opts.sessionLimit));
+    if (opts?.matchesPerSession !== undefined) {
+      qs.set("matchesPerSession", String(opts.matchesPerSession));
+    }
+    return request(
+      `/api/v1/search/sessions?${qs.toString()}`,
+      vSessionSearchResponse,
+      opts?.signal !== undefined ? { signal: opts.signal } : {},
     );
   },
 
