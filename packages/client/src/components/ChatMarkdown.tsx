@@ -90,10 +90,13 @@ function CodeCopyButton({ code }: { code: string }) {
     <button
       type="button"
       onClick={onClick}
-      className="absolute right-1 top-1 rounded bg-neutral-800/80 p-1 text-neutral-400 opacity-0 transition-opacity hover:text-neutral-100 group-hover:opacity-100 focus:opacity-100"
+      // Mobile: always visible, ≥ 44 px tap target (no hover on touch).
+      // Desktop: hover-revealed via group-hover, compact size.
+      className="absolute right-1 top-1 inline-flex min-h-11 min-w-11 items-center justify-center rounded bg-neutral-800/80 p-1 text-neutral-400 transition-opacity hover:text-neutral-100 focus:opacity-100 md:min-h-0 md:min-w-0 md:opacity-0 md:group-hover:opacity-100"
       title="Copy code block"
+      aria-label="Copy code block"
     >
-      {copied ? <Check size={12} /> : <Copy size={12} />}
+      {copied ? <Check size={14} /> : <Copy size={14} />}
     </button>
   );
 }

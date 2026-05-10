@@ -2,7 +2,18 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- `interactive-widget=resizes-content`: when the on-screen
+         keyboard appears on iOS / Android, shrink the visual viewport
+         (i.e. take the keyboard's space out of the layout) instead of
+         the default `resizes-visual` which leaves layout untouched and
+         lets the keyboard overlay the page. The chat input lives at
+         the bottom of a flex column, so this lets it ride above the
+         keyboard automatically — no JS / visualViewport handling
+         needed. Safe on desktop (no keyboard, no effect). -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
     <meta name="theme-color" content="#0a0a0a" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
