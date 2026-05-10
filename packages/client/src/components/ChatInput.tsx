@@ -8,6 +8,7 @@ import {
 } from "react";
 import { AtSign, Image as ImageIcon, Paperclip, RotateCcw, X } from "lucide-react";
 import { api, ApiError, type ProvidersListing } from "../lib/api-client";
+import { useIsMobile } from "../lib/use-is-mobile";
 import { EMPTY_MESSAGES, useSessionStore, type AgentMessageLike } from "../store/session-store";
 import { useActiveProject } from "../store/project-store";
 import { useUiConfigStore } from "../store/ui-config-store";
@@ -248,6 +249,7 @@ export function ChatInput({ sessionId }: Props) {
   // block at send time — see file-references.ts).
   const project = useActiveProject();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const isMobile = useIsMobile();
 
   /**
    * User-chosen textarea height in pixels, driven by the drag handle
@@ -588,8 +590,20 @@ export function ChatInput({ sessionId }: Props) {
     return text === `/${firstWord}` || text.startsWith(`/${firstWord} `);
   }, [slashOpen, text, availablePrompts]);
 
-  const slashRunSelected = (): void => {
-    const cmd = slashFiltered[slashSelectedIdx];
+  /**
+   * Run the highlighted command. `overrideIdx` lets a tap handler
+   * pass the row's index directly instead of going through React
+   * state, which avoids a stale-state bug on touch: desktop relies
+   * on `onMouseEnter` to update `slashSelectedIdx` before
+   * `onMouseDown` fires, but a tap on a touchscreen has no enter
+   * event — mouseDown fires immediately and `setSlashSelectedIdx`
+   * (async) hasn't applied yet, so the read here returns whatever
+   * was previously highlighted. Tap handlers MUST pass the index;
+   * keyboard / Enter paths can omit it (state is already current).
+   */
+  const slashRunSelected = (overrideIdx?: number): void => {
+    const idx = overrideIdx ?? slashSelectedIdx;
+    const cmd = slashFiltered[idx];
     if (cmd === undefined || !cmd.available) return;
     setText("");
     setSlashSelectedIdx(0);
@@ -607,6 +621,19 @@ export function ChatInput({ sessionId }: Props) {
   const [attachments, setAttachments] = useState<File[]>([]);
   const previewUrlsRef = useRef<Map<File, string>>(new Map());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Separate ref for the mobile-only image picker. Two inputs is
+  // cleaner than swapping a single input's `accept` attribute, which
+  // some browsers cache at element-mount and others don't.
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  // Popover state for the mobile attach menu (Photo / File). Single
+  // entry-point keeps the composer compact on phones — two buttons
+  // would steal ~90 px of horizontal real estate from the textarea.
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const attachMenuRef = useRef<HTMLDivElement | null>(null);
+  // Auto-grown textarea height for mobile (px). Recomputed on every
+  // text change as `min(scrollHeight, 30vh)` — desktop ignores this
+  // because it has the drag-resize handle for the same purpose.
+  const [autoHeight, setAutoHeight] = useState<number | undefined>(undefined);
 
   // Per-file size + count limits mirror the server's. Validating
   // client-side gives instant feedback; the server still re-checks.
@@ -1021,6 +1048,11 @@ export function ChatInput({ sessionId }: Props) {
       // should land on it from a fresh empty draft.
       setHistoryIdx(undefined);
       historyDraftRef.current = "";
+      // Mobile-only: dismiss the on-screen keyboard so the user
+      // can read the streaming reply without the keyboard eating
+      // half the viewport. Desktop keeps focus so the next prompt
+      // can be typed without re-clicking.
+      if (isMobile) textareaRef.current?.blur();
     } catch (err) {
       // Surface bash-exec errors inline (api.exec throws ApiError on
       // 4xx/5xx). Other paths still surface via store.error below.
@@ -1113,7 +1145,15 @@ export function ChatInput({ sessionId }: Props) {
         return;
       }
     }
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Plain-Enter submits on desktop. On mobile we let the keyboard's
+    // Enter key insert a newline (default browser behavior) — sending
+    // happens via the explicit Send button. Mobile virtual keyboards
+    // don't expose Shift conveniently, so the desktop "Shift+Enter
+    // for newline" rule would force users into multi-line workflows
+    // with no working escape. The slash-palette and @-completion
+    // popover Enter paths above are unaffected — they still pick the
+    // highlighted suggestion regardless of viewport.
+    if (e.key === "Enter" && !e.shiftKey && !isMobile) {
       e.preventDefault();
       void submit();
       return;
@@ -1297,6 +1337,66 @@ export function ChatInput({ sessionId }: Props) {
     setText((prev) => prev.replace(re, (_match, lead: string) => lead).trimEnd());
   };
 
+  // Close the mobile attach popover on outside-click or Esc. The
+  // file-input click-then-pick flow doesn't bounce focus back here,
+  // so without an explicit close the popover would linger after the
+  // picker dismisses. Single Event-typed handler covers mousedown +
+  // touchstart so TS doesn't have to reconcile the per-event-name
+  // overloads with a union handler signature.
+  useEffect(() => {
+    if (!attachMenuOpen) return;
+    const onPointerDown = (e: Event): void => {
+      const root = attachMenuRef.current;
+      if (root === null) return;
+      if (root.contains(e.target as Node)) return;
+      setAttachMenuOpen(false);
+    };
+    // `KeyboardEvent` is shadowed by React's type import at the top
+    // of the file, so we can't write `(e: KeyboardEvent)` without
+    // hitting React's overload. Read the key off the raw Event
+    // instead — it's the same shape at runtime.
+    const onKey: EventListener = (e) => {
+      const key = (e as { key?: string }).key;
+      if (key === "Escape") setAttachMenuOpen(false);
+    };
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("touchstart", onPointerDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("touchstart", onPointerDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [attachMenuOpen]);
+
+  // Mobile-only auto-grow: the textarea has a comfortable minimum
+  // height (matches the attach + send buttons' 44 px height so the
+  // composer row reads as one unified bar) and grows with input up
+  // to a 30vh cap, after which it scrolls internally. Measuring:
+  // collapse height to "auto" first (otherwise scrollHeight reports
+  // the previously-set expanded value and we can never shrink),
+  // measure, then store clamped to [min, max]. Desktop opts out —
+  // the drag handle owns textarea sizing there.
+  useEffect(() => {
+    if (!isMobile) {
+      if (autoHeight !== undefined) setAutoHeight(undefined);
+      return;
+    }
+    const ta = textareaRef.current;
+    if (ta === null) return;
+    const prev = ta.style.height;
+    ta.style.height = "auto";
+    const measured = ta.scrollHeight;
+    ta.style.height = prev;
+    const min = 44; // matches min-h-11 on attach/send buttons
+    const max = Math.round(window.innerHeight * 0.3);
+    const next = Math.max(min, Math.min(measured, max));
+    if (next !== autoHeight) setAutoHeight(next);
+    // Recompute when the input grows/shrinks or the viewport flips
+    // (orientation change → different 30vh).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text, isMobile]);
+
   return (
     <div className="bg-neutral-950">
       {/*
@@ -1309,16 +1409,29 @@ export function ChatInput({ sessionId }: Props) {
         have to pixel-hunt; `-translate-y` shifts the click region up
         without growing the layout box.
       */}
+      {/* Drag-to-resize handle — hidden on mobile. Touch users have
+          no use for cursor-row-resize, and a hidden 5-px hit area
+          right above the textarea would intercept scroll gestures
+          on phones. */}
       <div
         role="separator"
         aria-orientation="horizontal"
         aria-label="Resize chat input"
         onPointerDown={startDividerDrag}
-        className="group relative h-px cursor-row-resize bg-neutral-800 hover:bg-neutral-600 active:bg-neutral-500"
+        className="group relative hidden h-px cursor-row-resize bg-neutral-800 hover:bg-neutral-600 active:bg-neutral-500 md:block"
       >
         <div className="absolute inset-x-0 -top-1 h-2" />
       </div>
-      <div className="mx-auto max-w-3xl space-y-2 px-6 py-3">
+      {/* Tighter padding on mobile so the composer hugs the bottom
+          of the viewport (and the on-screen keyboard, when open).
+          Bottom padding rides the safe-area inset so the composer
+          sits above the iPhone home indicator / Android gesture bar
+          instead of being clipped by them. Desktop keeps the
+          original `px-6 py-3` breathing room. */}
+      <div
+        className="mx-auto max-w-3xl space-y-2 px-3 pt-2 md:px-6 md:py-3"
+        style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
+      >
         <div className="flex flex-wrap items-center gap-2">
           <ModelPicker
             providers={providers}
@@ -1353,7 +1466,10 @@ export function ChatInput({ sessionId }: Props) {
               {modelError !== undefined && (
                 <span className="text-[11px] text-red-400">{modelError}</span>
               )}
-              {textareaHeight !== undefined && (
+              {/* Reset is paired with the drag handle; hide on
+                  mobile since the handle is hidden there too and the
+                  textarea ignores the persisted height. */}
+              {!isMobile && textareaHeight !== undefined && (
                 <button
                   type="button"
                   onClick={resetTextareaHeight}
@@ -1379,33 +1495,107 @@ export function ChatInput({ sessionId }: Props) {
           />
         )}
         <div className="flex items-end gap-2">
+          {/* Files input — accepts everything. On desktop this is
+              the only attach affordance (the file dialog handles
+              browsing anywhere, including image folders, fine).
+              On mobile it's the "any file" companion to the image
+              button below. */}
           <input
             ref={fileInputRef}
             type="file"
             multiple
             className="hidden"
-            // Accept everything; the server (and addAttachments above)
-            // sort images vs text by MIME type. Restricting `accept`
-            // here would block legitimate code-file extensions the
-            // browser doesn't have a built-in MIME for.
             onChange={(e) => {
               if (e.target.files !== null) addAttachments(e.target.files);
               // Reset so re-selecting the same file fires onChange.
               e.target.value = "";
             }}
           />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={submitting || isStreaming}
-            className="self-stretch rounded-md border border-neutral-700 bg-neutral-900 px-2 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-50"
-            title={
-              isStreaming
-                ? "Attachments aren't sent on steer (mid-turn). Wait for the current run to finish."
-                : "Attach files (images go into model context; text files are prepended to the prompt)"
-            }
-          >
-            <Paperclip size={14} />
-          </button>
+          {/* Image input — mobile-only. `accept="image/*"` is what
+              both iOS Safari and Android Chrome use to surface the
+              gallery + camera picker. Reached from the attach
+              popover below; the popover is what hides the two
+              attach surfaces behind a single button so the composer
+              keeps its width on a phone. */}
+          {isMobile && (
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files !== null) addAttachments(e.target.files);
+                e.target.value = "";
+              }}
+            />
+          )}
+          {/* Attach affordance.
+              - Mobile: single Paperclip that opens a small popover
+                with Photo + File entries (Slack/Discord style).
+                One button = one tap target's worth of horizontal
+                space, instead of the ~90 px two side-by-side
+                buttons would steal from the textarea on a 360 px
+                phone.
+              - Desktop: the same Paperclip directly opens the
+                file picker (no popover, since the desktop file
+                dialog already handles browsing anywhere). */}
+          {isMobile ? (
+            <div className="relative" ref={attachMenuRef}>
+              <button
+                onClick={() => setAttachMenuOpen((o) => !o)}
+                disabled={submitting || isStreaming}
+                aria-label="Attach"
+                aria-expanded={attachMenuOpen}
+                className="inline-flex min-h-11 min-w-11 items-center justify-center self-stretch rounded-md border border-neutral-700 bg-neutral-900 px-2 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-50"
+                title={
+                  isStreaming
+                    ? "Attachments aren't sent on steer (mid-turn)."
+                    : "Attach a photo or a file"
+                }
+              >
+                <Paperclip size={16} />
+              </button>
+              {attachMenuOpen && (
+                <div className="absolute bottom-full left-0 z-20 mb-1 flex flex-col overflow-hidden rounded-md border border-neutral-700 bg-neutral-900 shadow-lg">
+                  <button
+                    onClick={() => {
+                      imageInputRef.current?.click();
+                      setAttachMenuOpen(false);
+                    }}
+                    className="flex min-h-11 items-center gap-2 px-3 text-left text-[14px] text-neutral-200 hover:bg-neutral-800"
+                  >
+                    <ImageIcon size={16} className="shrink-0 text-neutral-400" />
+                    Photo
+                  </button>
+                  <button
+                    onClick={() => {
+                      fileInputRef.current?.click();
+                      setAttachMenuOpen(false);
+                    }}
+                    className="flex min-h-11 items-center gap-2 border-t border-neutral-800 px-3 text-left text-[14px] text-neutral-200 hover:bg-neutral-800"
+                  >
+                    <Paperclip size={16} className="shrink-0 text-neutral-400" />
+                    File
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={submitting || isStreaming}
+              aria-label="Attach files"
+              className="inline-flex items-center justify-center self-stretch rounded-md border border-neutral-700 bg-neutral-900 px-2 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-50"
+              title={
+                isStreaming
+                  ? "Attachments aren't sent on steer (mid-turn). Wait for the current run to finish."
+                  : "Attach files (images go into model context; text files are prepended to the prompt)"
+              }
+            >
+              <Paperclip size={14} />
+            </button>
+          )}
           <div className="relative flex-1">
             {/* /-command palette — opens whenever the input starts
                 with `/` and has no newline. Listed top-to-bottom in
@@ -1415,7 +1605,10 @@ export function ChatInput({ sessionId }: Props) {
                 grayed and don't accept Enter. */}
             {slashOpen && slashFiltered.length > 0 && (
               <div className="absolute bottom-full left-0 right-0 z-10 mb-1 overflow-hidden rounded-md border border-neutral-700 bg-neutral-900 shadow-lg">
-                <div className="max-h-64 overflow-y-auto py-1">
+                {/* Taller list with more breathing room on mobile so
+                    each item is a comfortable tap target. md:max-h-64
+                    restores the desktop popover size. */}
+                <div className="max-h-[60vh] overflow-y-auto py-1 md:max-h-64">
                   {slashFiltered.map((cmd, i) => (
                     <button
                       key={cmd.name}
@@ -1423,11 +1616,13 @@ export function ChatInput({ sessionId }: Props) {
                         ev.preventDefault();
                         if (!cmd.available) return;
                         setSlashSelectedIdx(i);
-                        slashRunSelected();
+                        // Pass `i` directly — see the slashRunSelected
+                        // doc-comment for why state isn't safe here.
+                        slashRunSelected(i);
                       }}
                       onMouseEnter={() => setSlashSelectedIdx(i)}
                       disabled={!cmd.available}
-                      className={`block w-full px-3 py-1 text-left text-[12px] ${
+                      className={`block w-full px-3 py-2.5 text-left text-[14px] md:py-1 md:text-[12px] ${
                         i === slashSelectedIdx && cmd.available
                           ? "bg-neutral-800 text-neutral-100"
                           : "text-neutral-300 hover:bg-neutral-900/80"
@@ -1438,12 +1633,23 @@ export function ChatInput({ sessionId }: Props) {
                           : `${cmd.description} — unavailable right now`
                       }
                     >
-                      <span className="font-mono text-neutral-200">{cmd.name}</span>
-                      <span className="ml-2 text-[10px] text-neutral-500">{cmd.description}</span>
+                      {/* Stack name/description on phones — descriptions
+                          are too wide to fit on one line at 360 px and
+                          would either truncate or push the row taller
+                          than its tap-target sweet spot. md:flex
+                          restores the desktop side-by-side layout. */}
+                      <div className="flex flex-col md:block">
+                        <span className="font-mono text-neutral-200">{cmd.name}</span>
+                        <span className="text-[12px] text-neutral-500 md:ml-2 md:text-[10px]">
+                          {cmd.description}
+                        </span>
+                      </div>
                     </button>
                   ))}
                 </div>
-                <div className="border-t border-neutral-800 px-3 py-1 text-[10px] text-neutral-500">
+                {/* Hint footer — keyboard hints aren't useful on a
+                    touchscreen, hide on mobile to save vertical space. */}
+                <div className="hidden border-t border-neutral-800 px-3 py-1 text-[10px] text-neutral-500 md:block">
                   ↑↓ navigate · Enter/Tab run · Esc cancel
                 </div>
               </div>
@@ -1454,7 +1660,7 @@ export function ChatInput({ sessionId }: Props) {
                 item is closest to the input. */}
             {acToken !== undefined && acSuggestions.length > 0 && (
               <div className="absolute bottom-full left-0 right-0 z-10 mb-1 overflow-hidden rounded-md border border-neutral-700 bg-neutral-900 shadow-lg">
-                <div className="max-h-64 overflow-y-auto py-1">
+                <div className="max-h-[60vh] overflow-y-auto py-1 md:max-h-64">
                   {acSuggestions.map((path, i) => (
                     <button
                       key={path}
@@ -1466,7 +1672,7 @@ export function ChatInput({ sessionId }: Props) {
                         acInsert(path);
                       }}
                       onMouseEnter={() => setAcSelectedIdx(i)}
-                      className={`block w-full truncate px-3 py-1 text-left font-mono text-[12px] ${
+                      className={`block w-full truncate px-3 py-2.5 text-left font-mono text-[14px] md:py-1 md:text-[12px] ${
                         i === acSelectedIdx
                           ? "bg-neutral-800 text-neutral-100"
                           : "text-neutral-300 hover:bg-neutral-900/80"
@@ -1477,7 +1683,7 @@ export function ChatInput({ sessionId }: Props) {
                     </button>
                   ))}
                 </div>
-                <div className="border-t border-neutral-800 px-3 py-1 text-[10px] text-neutral-500">
+                <div className="hidden border-t border-neutral-800 px-3 py-1 text-[10px] text-neutral-500 md:block">
                   ↑↓ navigate · Enter/Tab insert · Esc close
                 </div>
               </div>
@@ -1501,19 +1707,45 @@ export function ChatInput({ sessionId }: Props) {
                 isAutoRetrying
                   ? "Auto-retry in progress — your message will be queued and sent after the retry completes…"
                   : isStreaming
-                    ? "Steer the agent (Enter to send, Shift+Enter for newline)…"
-                    : minimalUi
-                      ? "Ask pi (Enter to send, Shift+Enter for newline) — `/` runs commands, `@path` references files…"
-                      : "Ask pi (Enter to send, Shift+Enter for newline) — `/` runs commands, `!` runs bash, `@path` references files…"
+                    ? isMobile
+                      ? "Steer the agent…"
+                      : "Steer the agent (Enter to send, Shift+Enter for newline)…"
+                    : isMobile
+                      ? minimalUi
+                        ? "Ask pi — `/` runs commands, `@path` references files…"
+                        : "Ask pi — `/` runs commands, `!` runs bash, `@path` references files…"
+                      : minimalUi
+                        ? "Ask pi (Enter to send, Shift+Enter for newline) — `/` runs commands, `@path` references files…"
+                        : "Ask pi (Enter to send, Shift+Enter for newline) — `/` runs commands, `!` runs bash, `@path` references files…"
               }
               title={
                 isAutoRetrying
                   ? "The agent is auto-retrying after a provider error. New messages are queued and delivered when the retry succeeds."
                   : undefined
               }
-              rows={3}
-              style={textareaHeight !== undefined ? { height: `${textareaHeight}px` } : undefined}
-              className={`w-full resize-none rounded-md border bg-neutral-900 px-3 py-2 text-sm text-neutral-100 outline-none ${
+              // Mobile: starts at 2 lines, then auto-grows with the
+              // user's input via the useEffect above (capped at
+              // 30vh; scrolls internally past that). Desktop keeps
+              // its 3-row default and uses the drag handle for
+              // explicit resizing — autoHeight is undefined on
+              // desktop so the inline style only applies the
+              // user-dragged value.
+              rows={isMobile ? 2 : 3}
+              style={
+                isMobile && autoHeight !== undefined
+                  ? { height: `${autoHeight}px`, maxHeight: "30vh" }
+                  : !isMobile && textareaHeight !== undefined
+                    ? { height: `${textareaHeight}px` }
+                    : undefined
+              }
+              className={`block w-full resize-none rounded-md border bg-neutral-900 px-3 py-2 text-sm text-neutral-100 outline-none ${
+                // Match attach + send button min-height on mobile so
+                // every child of the row renders at the same baseline
+                // height. Without this the textarea collapses to its
+                // intrinsic scrollHeight (~37 px when empty) and sits
+                // visibly higher than the 44 px buttons.
+                "min-h-11 md:min-h-0 "
+              }${
                 bangMode === "local"
                   ? "border-amber-500 focus:border-amber-400"
                   : bangMode === "context"
@@ -1539,17 +1771,25 @@ export function ChatInput({ sessionId }: Props) {
             )}
           </div>
           {/*
-            Two buttons: Send (always) + Abort (streaming only). Pi's
-            SDK picks steer-vs-followUp natively when we POST /steer
-            during a run — we don't try to second-guess it. Abort is
-            its own button so it can't be hit by accident from a
-            misclick on Send.
+            Send + Abort. On mobile they stack vertically (Abort
+            above Send via flex-col-reverse, DOM order Send-then-
+            Abort so desktop's `md:flex-row` reads correctly left-
+            to-right). Crucially the wrapper is `self-stretch`, so
+            its height matches the parent row's height (the auto-
+            grown textarea). Each button takes `flex-1`, splitting
+            that height evenly. Net result: composer overall height
+            stays constant whether streaming or not — model picker
+            row above doesn't shift when Abort appears.
+
+            On desktop (md:) we revert to a row of natural-height
+            buttons; the desktop composer is taller and there's
+            plenty of room, so stretching looks weird there.
           */}
-          <div className="flex flex-row gap-1">
+          <div className="flex flex-col-reverse gap-1 self-stretch md:flex-row md:items-end md:self-auto">
             <button
               onClick={() => void submit()}
               disabled={(text.trim().length === 0 && attachments.length === 0) || submitting}
-              className="rounded-md bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex-1 rounded-md bg-neutral-100 px-4 text-sm font-medium text-neutral-900 disabled:cursor-not-allowed disabled:opacity-50 md:flex-none md:py-2"
               title={
                 isStreaming
                   ? "Send (Pi queues at the next agent break — steer or follow-up depending on agent state)"
@@ -1561,7 +1801,7 @@ export function ChatInput({ sessionId }: Props) {
             {isStreaming && (
               <button
                 onClick={() => void abortSession(sessionId)}
-                className="rounded-md border border-red-700/50 px-3 py-2 text-sm text-red-300 hover:bg-red-900/20"
+                className="flex-1 rounded-md border border-red-700/60 bg-red-950/30 px-3 text-sm font-medium text-red-300 hover:bg-red-900/40 hover:text-red-100 md:flex-none md:py-2"
                 title="Stop the agent (or press Esc twice in the textbox)"
               >
                 Abort

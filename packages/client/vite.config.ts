@@ -19,12 +19,30 @@ export default defineConfig({
       manifest: {
         name: "pi-forge",
         short_name: "pi-forge",
-        description: "Browser interface for the pi coding agent",
+        description:
+          "Self-hosted browser workbench for the pi coding agent — chat with the agent against your code, browse files, run a terminal, review diffs, all from one tab.",
+        // theme_color is the static fallback used during PWA install
+        // and at first paint before applyTheme() runs in the React
+        // boot path. Once the React app mounts, theme.ts swaps the
+        // <meta name="theme-color"> tag to match the user's chosen
+        // theme — see THEME_CHROME in lib/theme.ts. Keep this in
+        // sync with the dark theme's --color-neutral-950.
         theme_color: "#0a0a0a",
+        // Splash screen background (Android shows a solid-color
+        // splash before the SW serves index.html). Kept dark; light-
+        // theme users will get a brief flash on cold launch which is
+        // an acceptable trade-off vs forcing a per-theme manifest
+        // (which would require a rebuild per user preference).
         background_color: "#0a0a0a",
         display: "standalone",
         start_url: "/",
         scope: "/",
+        orientation: "any",
+        lang: "en",
+        // App-store-style categorization. Surfaced by Chrome's
+        // install UI and by some app launchers / browser extensions
+        // that index PWAs.
+        categories: ["productivity", "developer"],
         // Raster PNGs for the standard install sizes (192/512 are the
         // PWA spec's recommended baseline) plus a dedicated maskable
         // 512×512 with the glyph rendered into the middle 80% of the
