@@ -462,6 +462,43 @@ export interface SearchOptions {
   limit?: number;
 }
 
+export interface SessionSearchMatch {
+  /**
+   * Zero-based index into the session snapshot's `messages` array,
+   * counting only `type === "message"` JSONL lines. For un-forked
+   * sessions this maps directly to the snapshot index — the common
+   * case. Forked sessions whose active branch differs from disk
+   * order may not find this index; consumers should fall back to
+   * `messageEnvelopeId` lookup when present.
+   */
+  messageIndex: number;
+  /** JSONL envelope `id`, for branch-aware lookup. */
+  messageEnvelopeId?: string;
+  kind: "user" | "assistant" | "tool_call";
+  /** ~120 chars centered on the match, with leading / trailing "…" when clipped. */
+  snippet: string;
+  /** Offset of the matched substring within `snippet`. */
+  matchOffset: number;
+  matchLength: number;
+}
+
+export interface SessionSearchGroup {
+  sessionId: string;
+  projectId: string;
+  projectName: string;
+  /** Display name from session_info; absent for unnamed sessions. */
+  sessionName?: string;
+  /** ISO 8601 — file mtime, used to sort newest-first. */
+  modifiedAt: string;
+  matches: SessionSearchMatch[];
+}
+
+export interface SessionSearchResponse {
+  engine: "ripgrep" | "node";
+  truncated: boolean;
+  results: SessionSearchGroup[];
+}
+
 export interface SessionTreeEntry {
   id: string;
   parentId: string | null;

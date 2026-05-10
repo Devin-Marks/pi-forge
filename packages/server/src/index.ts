@@ -24,6 +24,7 @@ import { fileRoutes } from "./routes/files.js";
 import { gitRoutes } from "./routes/git.js";
 import { execRoutes } from "./routes/exec.js";
 import { mcpRoutes } from "./routes/mcp.js";
+import { searchRoutes } from "./routes/search.js";
 import { terminalRoutes } from "./routes/terminal.js";
 import { disposeAll as disposeAllMcp, loadGlobal as loadGlobalMcp } from "./mcp/manager.js";
 import { disposeAllSessions } from "./session-registry.js";
@@ -380,6 +381,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       await api.register(gitRoutes);
       await api.register(execRoutes);
       await api.register(mcpRoutes);
+      await api.register(searchRoutes);
       await api.register(terminalRoutes);
     },
     { prefix: "/api/v1" },

@@ -18,6 +18,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { FileBrowserPanel } from "./components/FileBrowserPanel";
 import { EditorPanel } from "./components/EditorPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
+import { GlobalSearchBar } from "./components/GlobalSearchBar";
 import { McpStatusBadge } from "./components/McpStatusBadge";
 import { useMcpStore } from "./store/mcp-store";
 import { useUiStore, type SettingsTab } from "./store/ui-store";
@@ -428,6 +429,14 @@ export function App() {
                 Terminal
               </button>
             )}
+          </div>
+          {/* Global cross-session search. Hidden at < md to keep the
+              mobile header compact — phone users can search via the
+              session list. Sits to the LEFT of the status badges /
+              Settings so it's the visual anchor when the user is
+              looking for "where did I see that?" content. */}
+          <div className="hidden md:block">
+            <GlobalSearchBar />
           </div>
           {/* MCP status badge stays visible in minimal — operators
               still want to see whether MCP servers are connected,
