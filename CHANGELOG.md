@@ -15,6 +15,114 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-05-09
+
+### Added
+
+- **CLI flag interface for every operationally-relevant env var.**
+  `pi-forge` now accepts `--port 4000`, `--workspace-path ~/Code`,
+  `--api-key @/run/secrets/api-key`, etc. — single source of truth
+  in `packages/server/src/cli.ts` drives parsing, env writes, and
+  `--help`. Sensitive flags (`--ui-password`, `--api-key`,
+  `--jwt-secret`) accept `@<path>` to read from a file (curl/gh-
+  style) so secrets stay out of shell history. Boolean flags
+  accept `--foo`, `--foo=value`, and `--no-foo`. Flag values win
+  over env when both are set; env still works as a fallback. Run
+  `pi-forge --help` for the grouped table. Removes the npm-install
+  user's need to write env wrappers just to set a port. (#101)
+- **Mobile-friendly PWA.** Four-PR push to make pi-forge usable on
+  a phone without sacrificing any desktop functionality:
+  - **Mobile breakpoint + slide-in drawer** (#102): viewport
+    detection via `window.matchMedia('(max-width: 767px)')`. The
+    project / session sidebar becomes a slide-in drawer behind a
+    hamburger button, with both tap-toggle and left-edge swipe
+    gestures. Auto-closes on selection, on Esc, and when the
+    viewport leaves mobile. Tablets are treated as desktop. The
+    "Request Desktop Site" toggle works for free because the
+    breakpoint reacts to viewport width, not user-agent.
+  - **Off-scope panels hidden on mobile** (#106): editor, files,
+    git, and terminal panes are unmounted (not just `display:
+    none`) at `< 768 px` so the mobile viewport doesn't load
+    CodeMirror or hold a server-side PTY for surfaces the user
+    can't see. Header pane-toggle buttons hide together with no
+    spacing change at md+.
+  - **Chat-view polish** (#107): auto-grow composer (44 px min,
+    30vh cap), drag-resize handle hidden on mobile, sticky
+    composer above the on-screen keyboard via the new
+    `interactive-widget=resizes-content` viewport hint, keyboard
+    auto-dismisses on send, Enter inserts newline (mobile virtual
+    keyboards don't surface Shift conveniently — Send is the
+    explicit button), Send + Abort stack vertically with constant
+    row height so the model picker doesn't shift when streaming
+    starts, attach popover (Photo / File) replaces side-by-side
+    buttons, slash + `@` palette items bumped to ≥ 44 pt with
+    stacked descriptions. Touch targets ≥ 44 pt across copy /
+    raw / file-ref / sub-agent buttons, all gated with
+    `md:min-h-0` so the desktop layout stays compact.
+  - **PWA install polish** (#107): safe-area insets on header,
+    composer, and drawer (no clipping under iPhone notches /
+    Android cutouts; composer rides above the home indicator);
+    per-theme `theme-color` meta tag (Android Chrome address bar
+    blends with the active theme across all 5 themes); PWA
+    manifest tuning (description, categories, lang, orientation);
+    install prompt banner (Android `beforeinstallprompt` →
+    Install button; iOS Safari → "tap Share, then Add to Home
+    Screen" hint); new `docs/mobile.md` covering install paths,
+    the HTTPS-required-for-install gotcha for self-hosted, and
+    the mobile-specific behaviors.
+
+### Changed
+
+- **`HOST` defaults to `127.0.0.1` in every mode** (was `0.0.0.0`
+  in production). Binding loopback by default protects against
+  silently exposing the agent's `bash` / `edit` tools to anyone on
+  the same WiFi/VLAN/Docker bridge — opt-in, not opt-out. Operators
+  who want LAN access set `HOST=0.0.0.0` (or `--host 0.0.0.0`)
+  explicitly. The shipped Docker image's `Dockerfile` already pins
+  `HOST=0.0.0.0` so the documented `docker compose up` flow works
+  unchanged. (#101)
+- **`REQUIRE_PASSWORD_CHANGE` defaults to `false`** (was `true`).
+  pi-forge is single-tenant and a user setting their own
+  `--ui-password` does so deliberately — forcing a password change
+  on first login was friction without a real threat-model win.
+  Sealed-secret deploys (helm, vault, sealed-secrets) that DO want
+  the operator to rotate on first login can opt back in with
+  `--require-password-change` or the env equivalent. The shipped
+  `docker-compose.yml` and `docker/.env.example` updated to match
+  the new default. (#101)
+- **TypeScript bumped to 6.0.3** (#95), **`@fastify/multipart`
+  bumped to 10.0.0** (#97), **`@types/node` bumped to 25.6.2**
+  (#98), **`@xterm/addon-fit` bumped to 0.11.0** (#99),
+  **`@xterm/addon-web-links` bumped to 0.12.0** (#96). Major
+  bumps; no API surface changes pi-forge actually uses. The
+  `@types/node` 25 jump exposed one Buffer-vs-BlobPart type
+  inconsistency in `tests/test-config-export.ts` that was fixed
+  in the same change.
+
+### Fixed
+
+- **Login no longer 500's when only the persisted `password-hash`
+  file exists** (no `UI_PASSWORD` env, no `JWT_SECRET` env). Pre-
+  fix, `JWT_SECRET` was only loaded when `UI_PASSWORD !==
+  undefined`, so `passwordAuthEnabled()` returned true (because
+  the hash file existed) but `jsonwebtoken.sign(payload,
+  undefined)` threw. Now the JWT secret is also loaded (or
+  generated) when the password-hash file exists. Models the real
+  deployment shape where the operator boots once with `UI_PASSWORD`
+  set, the user changes their password through the UI (which
+  persists the hash; the env value becomes ignored), and on
+  subsequent boots the operator drops `UI_PASSWORD` from env.
+  Regression test added as `scenarioPersistedHashOnly` in
+  `tests/test-auth.ts`. (#106)
+- **Slash command palette ran the wrong command on touch.** Tap
+  handlers updated `slashSelectedIdx` via React state and then
+  called `slashRunSelected()` immediately, which read the *stale*
+  state — desktop got away with this because `onMouseEnter` fired
+  before `onMouseDown`, but touch has no enter event. Every tap
+  ran whatever was last selected (typically `/compact`).
+  `slashRunSelected()` now accepts an optional index override;
+  tap handlers pass `i` directly. (#107)
+
 ## [1.1.6] — 2026-05-09
 
 ### Added
