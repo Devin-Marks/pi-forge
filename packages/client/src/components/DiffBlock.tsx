@@ -243,23 +243,22 @@ function FileDiff({
             // the position WITHIN this file's hunks, which matches
             // what /git/apply-hunks expects.
             if (onHunkAction !== undefined) {
-              // Action strip rendered above each hunk via
-              // react-diff-view's Decoration slot. Styled to be
-              // unmistakably visible against the diff background:
-              // explicit blue accent + bold-ish button so it doesn't
-              // get lost in the +/- noise. Index label tells the
-              // user which hunk they're operating on.
+              // Slim action strip rendered above each hunk via
+              // react-diff-view's Decoration slot. Single-line
+              // height (no extra vertical padding) so it doesn't
+              // dominate the diff; blue accent keeps it visible
+              // without being garish.
               out.push(
                 <Decoration key={`dec-${hunk.content}`}>
-                  <div className="flex items-center justify-between gap-2 border-y border-blue-700/40 bg-blue-950/40 px-3 py-1.5">
-                    <span className="text-[10px] uppercase tracking-wider text-blue-300">
+                  <div className="flex items-center justify-between gap-2 border-y border-blue-700/30 bg-blue-950/30 px-2 py-px leading-none">
+                    <span className="text-[9px] uppercase tracking-wider text-blue-400">
                       Hunk {idx + 1}
                     </span>
                     <button
                       type="button"
                       onClick={() => onHunkAction(idx)}
                       disabled={hunkActionDisabled === true}
-                      className="rounded border border-blue-500/60 bg-blue-900/40 px-2.5 py-0.5 text-[11px] font-medium text-blue-100 hover:border-blue-400 hover:bg-blue-800/60 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded border border-blue-500/50 bg-blue-900/40 px-1.5 py-px text-[10px] text-blue-100 hover:border-blue-400 hover:bg-blue-800/60 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {hunkActionLabel ?? "Apply hunk"}
                     </button>
