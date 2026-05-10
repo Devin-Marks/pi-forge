@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  Decoration,
   Diff,
   Hunk,
   parseDiff,
@@ -9,6 +10,29 @@ import {
 } from "react-diff-view";
 import "react-diff-view/style/index.css";
 import { highlightHunks, languageForFile } from "../lib/diff-highlight";
+
+/**
+ * Optional per-hunk action handler. When supplied, DiffBlock renders
+ * a small button above each hunk header (via react-diff-view's
+ * `Decoration` slot, which is the only insertion point that doesn't
+ * break the table layout). Used by GitPanel for hunk-level
+ * stage / unstage; ignored elsewhere so chat / turn-diff diffs stay
+ * action-free.
+ *
+ * `hunkIndex` is 0-based within the SAME file's hunks — i.e. the
+ * position the server's `/git/apply-hunks` endpoint expects. Multi-
+ * file diffs would need per-file index resets, but the consumers
+ * that pass an action only ever render single-file diffs.
+ */
+export interface HunkActionProps {
+  // exactOptionalPropertyTypes: true requires the explicit `| undefined`
+  // so parents can pass through possibly-undefined props without a
+  // conditional spread at every call site.
+  onHunkAction?: ((hunkIndex: number) => void) | undefined;
+  hunkActionLabel?: string | undefined;
+  /** Set true to grey-out the button while the parent's request is in-flight. */
+  hunkActionDisabled?: boolean | undefined;
+}
 
 /**
  * Soft cap on rendered changes per file before we collapse the rest
@@ -83,6 +107,9 @@ const renderSplitGutter: RenderGutter = ({ change, side }) => {
 export function DiffBlock({
   diff,
   viewType = "unified",
+  onHunkAction,
+  hunkActionLabel,
+  hunkActionDisabled,
 }: {
   diff: string;
   /**
@@ -93,7 +120,7 @@ export function DiffBlock({
    * controlled and never reads the prefs itself.
    */
   viewType?: "unified" | "split";
-}) {
+} & HunkActionProps) {
   let files: FileData[] = [];
   let strategy: "pi" | "raw" | "synthetic" | "fallback" = "fallback";
 
@@ -151,6 +178,9 @@ export function DiffBlock({
           file={file}
           viewType={viewType}
           renderGutter={renderGutter}
+          onHunkAction={onHunkAction}
+          hunkActionLabel={hunkActionLabel}
+          hunkActionDisabled={hunkActionDisabled}
         />
       ))}
     </div>
@@ -167,11 +197,14 @@ function FileDiff({
   file,
   viewType,
   renderGutter,
+  onHunkAction,
+  hunkActionLabel,
+  hunkActionDisabled,
 }: {
   file: FileData;
   viewType: "unified" | "split";
   renderGutter: RenderGutter;
-}) {
+} & HunkActionProps) {
   const [expanded, setExpanded] = useState(false);
   // Filename for syntax-highlighter selection. The diff header
   // uses `a/<path>` and `b/<path>` conventionally; strip the
@@ -196,7 +229,39 @@ function FileDiff({
         // Coerce so unhighlighted languages still render plainly.
         tokens={tokens ?? null}
       >
-        {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
+        {(hunks) => {
+          // The Diff component types its children fn as
+          // `(hunks) => ReactElement | ReactElement[]`. We need to
+          // emit two elements per hunk (Decoration + Hunk) when the
+          // action prop is set, so we build a flat ReactElement[]
+          // and rely on the runtime accepting it; the explicit cast
+          // sidesteps the narrower compile-time signature.
+          const out: React.ReactElement[] = [];
+          hunks.forEach((hunk, idx) => {
+            // When the parent doesn't supply an action, render exactly
+            // what we always have — no extra DOM. Hunk index here is
+            // the position WITHIN this file's hunks, which matches
+            // what /git/apply-hunks expects.
+            if (onHunkAction !== undefined) {
+              out.push(
+                <Decoration key={`dec-${hunk.content}`}>
+                  <div className="flex justify-end gap-1 border-t border-neutral-800 bg-neutral-900/40 px-2 py-1">
+                    <button
+                      type="button"
+                      onClick={() => onHunkAction(idx)}
+                      disabled={hunkActionDisabled === true}
+                      className="rounded border border-neutral-700 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-300 hover:border-neutral-500 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {hunkActionLabel ?? "Apply hunk"}
+                    </button>
+                  </div>
+                </Decoration>,
+              );
+            }
+            out.push(<Hunk key={hunk.content} hunk={hunk} />);
+          });
+          return out;
+        }}
       </Diff>
       {isLarge && (
         <button

@@ -186,6 +186,10 @@ export function GitPanel() {
   // Per-file diff cache. Keyed by `<path>|<staged>` so toggling
   // staged status swaps the rendered diff cleanly.
   const [openDiffs, setOpenDiffs] = useState<Record<string, string | "loading" | "error">>({});
+  // Path of the file whose hunk-level apply is in flight. Hoisted
+  // above any early return for the rules-of-hooks check (matches the
+  // pattern used by the push-form state below).
+  const [pendingHunkPath, setPendingHunkPath] = useState<string | undefined>(undefined);
 
   // Push form state — has to live above the early returns to keep
   // hook order stable. `pushRemote === undefined` means "use the
@@ -400,6 +404,62 @@ export function GitPanel() {
     }
   };
 
+  // Per-hunk stage / unstage. The button in DiffBlock fires this with
+  // the file + the hunk's 0-based index within the file's CURRENT diff
+  // (server-side fetch). After the apply we refetch the diff so the
+  // panel reflects the new state — and refresh status so the file's
+  // staged/unstaged grouping updates if the apply consumed the last
+  // hunk on a side. (`pendingHunkPath` state is hoisted above early
+  // returns at the top of the component for rules-of-hooks.)
+  const applyHunk = async (
+    file: GitFileStatus,
+    hunkIndex: number,
+    mode: "stage" | "unstage",
+  ): Promise<void> => {
+    setPendingHunkPath(file.path);
+    setOpError(undefined);
+    try {
+      const r = await api.gitApplyHunks(project.id, file.path, mode, [hunkIndex]);
+      if (r.ok !== true) {
+        // Surface the server's error code as the op-error banner so
+        // the user sees "binary_or_no_hunks" / "git_apply_failed" /
+        // etc. The panel's existing banner is the right surface for
+        // these — they're file-level diagnostics, not toasts.
+        setOpError(`Hunk apply failed: ${r.error ?? "unknown_error"}`);
+        return;
+      }
+      // Refetch BOTH sides of the diff for this file so the inline
+      // expanded sections update if the user has them open. Then
+      // refresh status so the file moves between groups when its
+      // last hunk on one side gets applied.
+      await Promise.all([refetchOpenDiff(file, true), refetchOpenDiff(file, false), refresh()]);
+    } catch (err) {
+      setOpError(err instanceof ApiError ? err.message : (err as Error).message);
+    } finally {
+      setPendingHunkPath(undefined);
+    }
+  };
+  const refetchOpenDiff = async (file: GitFileStatus, staged: boolean): Promise<void> => {
+    const key = `${file.path}|${staged ? "staged" : "unstaged"}`;
+    if (openDiffs[key] === undefined) return; // not currently shown — skip
+    setOpenDiffs((s) => ({ ...s, [key]: "loading" }));
+    try {
+      const r = await api.gitDiffFile(project.id, file.path, staged);
+      setOpenDiffs((s) => {
+        // Empty diff after an apply means "no more changes on this side";
+        // drop the key so the inline section collapses naturally.
+        if (r.diff.length === 0) {
+          const next = { ...s };
+          delete next[key];
+          return next;
+        }
+        return { ...s, [key]: r.diff };
+      });
+    } catch {
+      setOpenDiffs((s) => ({ ...s, [key]: "error" }));
+    }
+  };
+
   const commit = async (): Promise<void> => {
     const msg = commitMessage.trim();
     if (msg.length === 0) return;
@@ -582,6 +642,8 @@ export function GitPanel() {
             openDiffs={openDiffs}
             staged
             diffViewType={diffViewType}
+            onHunkAction={(f, idx) => void applyHunk(f, idx, "unstage")}
+            pendingHunkPath={pendingHunkPath}
           />
         )}
         {unstagedFiles.length > 0 && (
@@ -597,6 +659,8 @@ export function GitPanel() {
             openDiffs={openDiffs}
             staged={false}
             diffViewType={diffViewType}
+            onHunkAction={(f, idx) => void applyHunk(f, idx, "stage")}
+            pendingHunkPath={pendingHunkPath}
           />
         )}
         {untrackedFiles.length > 0 && (
@@ -616,6 +680,10 @@ export function GitPanel() {
             openDiffs={openDiffs}
             staged={false}
             diffViewType={diffViewType}
+            // No per-hunk action for untracked files: `git apply
+            // --cached` against an unknown path errors. File-level
+            // Stage already covers the use case (untracked = single
+            // "all-add" hunk anyway).
           />
         )}
 
@@ -1066,6 +1134,16 @@ interface FileGroupProps {
   openDiffs: Record<string, string | "loading" | "error">;
   staged: boolean;
   diffViewType: "unified" | "split";
+  /**
+   * Per-hunk action for the inline diff. Called with the file + the
+   * hunk's 0-based index within the file's diff. Pass `undefined` to
+   * disable hunk-level actions for this group (e.g. untracked files
+   * — they're a single "added" hunk so file-level Stage suffices and
+   * `git apply --cached` against an untracked file would error).
+   */
+  onHunkAction?: ((file: GitFileStatus, hunkIndex: number) => void) | undefined;
+  /** Path currently being mutated — disables its diff buttons during the request. */
+  pendingHunkPath?: string | undefined;
 }
 
 const REVERT_CONFIRM_TIMEOUT_MS = 3000;
@@ -1202,7 +1280,17 @@ function FileGroup(props: FileGroupProps) {
                       (no diff — file is binary or unchanged)
                     </p>
                   ) : (
-                    <DiffBlock diff={diffState} viewType={props.diffViewType} />
+                    <DiffBlock
+                      diff={diffState}
+                      viewType={props.diffViewType}
+                      onHunkAction={
+                        props.onHunkAction !== undefined
+                          ? (idx) => props.onHunkAction?.(f, idx)
+                          : undefined
+                      }
+                      hunkActionLabel={props.staged ? "Unstage hunk" : "Stage hunk"}
+                      hunkActionDisabled={props.pendingHunkPath === f.path}
+                    />
                   )}
                 </div>
               )}
