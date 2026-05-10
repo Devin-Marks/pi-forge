@@ -330,7 +330,14 @@ export function GitPanel() {
   }
 
   const stagedFiles = status?.files.filter((f) => f.staged) ?? [];
-  const unstagedFiles = status?.files.filter((f) => f.unstaged && !f.staged) ?? [];
+  // A partially-staged file (porcelain `MM` — some hunks staged, some
+  // not) MUST appear in BOTH Staged and Unstaged groups so the user
+  // can keep adding hunks. Earlier this filter had `&& !f.staged`,
+  // which hid the file from Unstaged the moment its first hunk was
+  // staged — blocking access to remaining hunks. Untracked files have
+  // both flags false, so they're naturally excluded here and only
+  // appear in the dedicated Untracked group below.
+  const unstagedFiles = status?.files.filter((f) => f.unstaged) ?? [];
   const untrackedFiles = status?.files.filter((f) => f.kind === "untracked") ?? [];
 
   const toggleDiff = async (file: GitFileStatus, staged: boolean): Promise<void> => {
