@@ -360,56 +360,64 @@ export function App() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setChatOpenPersisted(!chatOpen)}
-            className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs ${
-              chatOpen
-                ? "border-neutral-500 bg-neutral-800 text-neutral-100"
-                : "border-neutral-700 text-neutral-300 hover:border-neutral-500"
-            }`}
-            title="Toggle the chat pane"
-          >
-            <MessageSquare size={13} />
-            Chat
-          </button>
-          <button
-            onClick={() => setEditorOpenPersisted(!editorOpen)}
-            className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs ${
-              editorOpen
-                ? "border-neutral-500 bg-neutral-800 text-neutral-100"
-                : "border-neutral-700 text-neutral-300 hover:border-neutral-500"
-            }`}
-            title="Toggle the editor pane (open tabs persist across reloads)"
-          >
-            <FileCode size={13} />
-            Editor
-          </button>
-          <button
-            onClick={() => setFilesOpenPersisted(!filesOpen)}
-            className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs ${
-              filesOpen
-                ? "border-neutral-500 bg-neutral-800 text-neutral-100"
-                : "border-neutral-700 text-neutral-300 hover:border-neutral-500"
-            }`}
-            title="Toggle the file browser tree"
-          >
-            <FolderTree size={13} />
-            Files
-          </button>
-          {!minimal && (
+          {/* Pane-toggle buttons (Chat / Editor / Files / Terminal) hide
+              at < md. The corresponding panes are also unmounted by the
+              isMobile gates below, so the toggles would have nothing to
+              act on anyway. `hidden md:contents` keeps the wrapper out
+              of the flex layout at md+ so spacing stays identical to
+              pre-mobile-PR behavior. */}
+          <div className="hidden md:contents">
             <button
-              onClick={() => setTerminalOpenPersisted(!terminalOpen)}
+              onClick={() => setChatOpenPersisted(!chatOpen)}
               className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs ${
-                terminalOpen
+                chatOpen
                   ? "border-neutral-500 bg-neutral-800 text-neutral-100"
                   : "border-neutral-700 text-neutral-300 hover:border-neutral-500"
               }`}
-              title="Toggle the integrated terminal"
+              title="Toggle the chat pane"
             >
-              <TerminalIcon size={13} />
-              Terminal
+              <MessageSquare size={13} />
+              Chat
             </button>
-          )}
+            <button
+              onClick={() => setEditorOpenPersisted(!editorOpen)}
+              className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs ${
+                editorOpen
+                  ? "border-neutral-500 bg-neutral-800 text-neutral-100"
+                  : "border-neutral-700 text-neutral-300 hover:border-neutral-500"
+              }`}
+              title="Toggle the editor pane (open tabs persist across reloads)"
+            >
+              <FileCode size={13} />
+              Editor
+            </button>
+            <button
+              onClick={() => setFilesOpenPersisted(!filesOpen)}
+              className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs ${
+                filesOpen
+                  ? "border-neutral-500 bg-neutral-800 text-neutral-100"
+                  : "border-neutral-700 text-neutral-300 hover:border-neutral-500"
+              }`}
+              title="Toggle the file browser tree"
+            >
+              <FolderTree size={13} />
+              Files
+            </button>
+            {!minimal && (
+              <button
+                onClick={() => setTerminalOpenPersisted(!terminalOpen)}
+                className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs ${
+                  terminalOpen
+                    ? "border-neutral-500 bg-neutral-800 text-neutral-100"
+                    : "border-neutral-700 text-neutral-300 hover:border-neutral-500"
+                }`}
+                title="Toggle the integrated terminal"
+              >
+                <TerminalIcon size={13} />
+                Terminal
+              </button>
+            )}
+          </div>
           {/* MCP status badge stays visible in minimal — operators
               still want to see whether MCP servers are connected,
               they just can't reconfigure them from a locked-down
@@ -583,7 +591,8 @@ export function App() {
 
                 `chatColumnVisible` mirrors the rendering condition for
                 the chat column above — strictly chatOpen now. */}
-            {editorVisible &&
+            {!isMobile &&
+              editorVisible &&
               (() => {
                 const chatColumnVisible = chatOpen;
                 const editorIsLeftmost = !chatColumnVisible;
@@ -618,7 +627,8 @@ export function App() {
                 );
               })()}
 
-            {filesOpen &&
+            {!isMobile &&
+              filesOpen &&
               (() => {
                 const chatColumnVisible = chatOpen;
                 const filesIsLeftmost = !chatColumnVisible && !editorVisible;
@@ -721,7 +731,7 @@ export function App() {
           </main>
         </div>
 
-        {!minimal && terminalOpen && (
+        {!isMobile && !minimal && terminalOpen && (
           <>
             <ResizableDivider
               orientation="horizontal"
