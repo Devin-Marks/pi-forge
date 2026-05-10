@@ -25,6 +25,7 @@ import {
   stagePaths,
   unstagePaths,
 } from "../git-runner.js";
+import { applyHunks, HunkStagingError } from "../git-hunk-stager.js";
 import { config } from "../config.js";
 import { getProject } from "../project-manager.js";
 import { errorSchema } from "./_schemas.js";
@@ -714,6 +715,82 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
         await unstagePaths(project.path, req.body.paths);
         return { ok: true };
       } catch (err) {
+        return mapError(reply, err);
+      }
+    },
+  );
+
+  fastify.post<{
+    Body: {
+      projectId: string;
+      path: string;
+      mode: "stage" | "unstage";
+      hunkIndices: number[];
+    };
+  }>(
+    "/git/apply-hunks",
+    {
+      schema: {
+        description:
+          "Stage or unstage selected hunks of a single file. Builds a " +
+          "synthetic patch from the file's current diff containing only " +
+          "the requested hunk indices, then runs " +
+          "`git apply --cached --recount [--reverse]` against it. " +
+          "Returns `{ ok: false, error }` for git-side failures (binary " +
+          "file, no diff on the requested side, conflicting patch, etc.) " +
+          "rather than 500 — these are user-visible events.",
+        tags: ["git"],
+        body: {
+          type: "object",
+          required: ["projectId", "path", "mode", "hunkIndices"],
+          additionalProperties: false,
+          properties: {
+            projectId: { type: "string", minLength: 1 },
+            path: { type: "string", minLength: 1, maxLength: 4096 },
+            mode: { type: "string", enum: ["stage", "unstage"] },
+            hunkIndices: {
+              type: "array",
+              items: { type: "integer", minimum: 0, maximum: 10_000 },
+              minItems: 1,
+              maxItems: 1_000,
+            },
+          },
+        },
+        response: {
+          200: {
+            type: "object",
+            required: ["ok"],
+            properties: {
+              ok: { type: "boolean" },
+              error: { type: "string" },
+              totalHunks: { type: "integer", minimum: 0 },
+            },
+          },
+          400: errorSchema,
+          404: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const project = await resolveProject(req.body.projectId, reply);
+      if (project === undefined) return reply;
+      try {
+        const { totalHunks } = await applyHunks(
+          project.path,
+          req.body.path,
+          req.body.hunkIndices,
+          req.body.mode,
+        );
+        return { ok: true, totalHunks };
+      } catch (err) {
+        // HunkStagingError carries a code suitable for the UI to show
+        // (binary_or_no_hunks, no_diff, hunk_index_out_of_range,
+        // git_apply_failed). Return as ok:false so the panel can render
+        // a banner rather than a generic toast.
+        if (err instanceof HunkStagingError) {
+          return { ok: false, error: err.code, totalHunks: 0 };
+        }
         return mapError(reply, err);
       }
     },

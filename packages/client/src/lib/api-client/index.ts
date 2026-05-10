@@ -2044,6 +2044,32 @@ export const api = {
       },
       { method: "POST", body: { projectId, paths } },
     ),
+  /**
+   * Stage or unstage selected hunks of a single file. Server returns
+   * `{ ok: false, error }` for git-side failures (binary file, no diff
+   * on the requested side, conflicting patch) — those are user-visible
+   * events, not server errors, so the caller should branch on `ok`
+   * and show the error code in a banner rather than a toast.
+   */
+  gitApplyHunks: (
+    projectId: string,
+    path: string,
+    mode: "stage" | "unstage",
+    hunkIndices: number[],
+  ) =>
+    request<{ ok: boolean; error?: string; totalHunks?: number }>(
+      "/api/v1/git/apply-hunks",
+      (v, s) => {
+        if (!isObject(v) || typeof v.ok !== "boolean") {
+          fail(s, "expected { ok: boolean }");
+        }
+        const out: { ok: boolean; error?: string; totalHunks?: number } = { ok: v.ok };
+        if (typeof v.error === "string") out.error = v.error;
+        if (typeof v.totalHunks === "number") out.totalHunks = v.totalHunks;
+        return out;
+      },
+      { method: "POST", body: { projectId, path, mode, hunkIndices } },
+    ),
   gitRevert: (projectId: string, paths: string[]) =>
     request(
       "/api/v1/git/revert",

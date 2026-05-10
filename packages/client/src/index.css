@@ -161,6 +161,14 @@
   white-space: pre;
   word-break: normal;
   overflow-wrap: normal;
+  /* Make the code column claim all remaining width inside the table.
+     With `table-layout: auto` the code cell would otherwise size to
+     its longest line of content, leaving empty space to the right
+     when lines are short — visible as un-tinted gaps after `+` / `-`
+     line backgrounds. `width: 100%` on a table cell is the standard
+     "take the rest" idiom; the gutter cells keep their intrinsic
+     widths because they have content. */
+  width: 100%;
 }
 .pi-diff-block .diff-gutter,
 .pi-diff-block .diff-line {
