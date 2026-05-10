@@ -54,14 +54,47 @@ function writePersistedTheme(id: ThemeId): void {
 }
 
 /**
+ * Per-theme `theme-color` for the browser chrome (Android Chrome
+ * paints the address bar with this; iOS PWA standalone mode uses
+ * it for the status-bar surround). Each value is the theme's
+ * `--color-neutral-950` from index.css — the same color the
+ * application header renders against, so the chrome blends into
+ * the app surface.
+ *
+ * Resolved via this lookup table (NOT readCssVar) because the meta
+ * tag needs to update synchronously on theme change before the next
+ * paint — reading from getComputedStyle right after applyTheme can
+ * race the browser's style recalc and return the previous theme's
+ * value. Hard-coded values stay in sync via the CSS-in-source-of-
+ * truth review checklist when adding a theme.
+ */
+const THEME_CHROME: Record<ThemeId, string> = {
+  dark: "#0a0a0a",
+  light: "#ffffff",
+  dracula: "#191a21",
+  "solarized-dark": "#002b36",
+  "catppuccin-mocha": "#11111b",
+};
+
+function syncThemeColorMeta(id: ThemeId): void {
+  if (typeof document === "undefined") return;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta === null) return;
+  meta.setAttribute("content", THEME_CHROME[id] ?? THEME_CHROME.dark);
+}
+
+/**
  * Apply a theme to the document. Idempotent — safe to call from
  * both the boot path and the picker. Updates `<html data-theme>`
  * which the CSS in index.css uses as a selector to switch the
- * Tailwind neutral palette at runtime.
+ * Tailwind neutral palette at runtime, and syncs the
+ * `<meta name="theme-color">` tag so the browser chrome blends
+ * into the new palette.
  */
 export function applyTheme(id: ThemeId): void {
   if (typeof document === "undefined") return;
   document.documentElement.dataset.theme = id;
+  syncThemeColorMeta(id);
 }
 
 /** Synchronous boot helper called before React mounts. */
