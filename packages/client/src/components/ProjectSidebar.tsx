@@ -6,7 +6,14 @@ import { ProjectPicker } from "./ProjectPicker";
 import { SessionList } from "./SessionList";
 import { Modal } from "./Modal";
 
-export function ProjectSidebar() {
+export interface ProjectSidebarProps {
+  /** Extra classes on the outer aside. Used by the App-level mobile
+   *  drawer wrapper to layer in fixed-position transform classes
+   *  without ProjectSidebar needing to know it's in a drawer. */
+  className?: string;
+}
+
+export function ProjectSidebar({ className = "" }: ProjectSidebarProps = {}) {
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const collapsed = useProjectStore((s) => s.collapsed);
@@ -88,7 +95,9 @@ export function ProjectSidebar() {
   };
 
   return (
-    <aside className="flex h-full w-64 flex-col border-r border-neutral-800 bg-neutral-950">
+    <aside
+      className={`flex h-full w-64 flex-col border-r border-neutral-800 bg-neutral-950 ${className}`}
+    >
       <header className="flex items-center justify-between border-b border-neutral-800 px-3 py-2">
         <span className="text-xs font-semibold uppercase tracking-wider text-neutral-400">
           Projects

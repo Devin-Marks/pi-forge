@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { FileCode, FolderTree, MessageSquare, Terminal as TerminalIcon } from "lucide-react";
+import { FileCode, FolderTree, Menu, MessageSquare, Terminal as TerminalIcon } from "lucide-react";
+import { useIsMobile } from "./lib/use-is-mobile";
 import { useAuthStore } from "./store/auth-store";
 import { useActiveProject, useProjectStore } from "./store/project-store";
 import { useSessionStore } from "./store/session-store";
@@ -60,8 +61,16 @@ export function App() {
   const projectsLoaded = useProjectStore((s) => !s.loading);
   const loadProjects = useProjectStore((s) => s.load);
   const active = useActiveProject();
+  const activeProjectId = useProjectStore((s) => s.activeProjectId);
 
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
+
+  /* Mobile drawer state. The sidebar slides off-screen at < 768 px and
+     reappears via the hamburger button OR a left-edge swipe gesture.
+     `useIsMobile` reacts to viewport changes so resize / orientation
+     flip / "Request Desktop Site" all transition cleanly. */
+  const isMobile = useIsMobile();
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Files pane visibility persists across reloads — opening it once is
@@ -216,6 +225,50 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [settingsOpen]);
 
+  /* Mobile drawer: close when the user picks something. Watching the
+     two active-id values catches every selection path (project click,
+     session click, new-session creation that auto-selects). A first-
+     mount ref guard skips the initial restoration so the drawer
+     doesn't auto-open-then-close on page load. */
+  const drawerFirstMount = useRef(true);
+  useEffect(() => {
+    if (drawerFirstMount.current) {
+      drawerFirstMount.current = false;
+      return;
+    }
+    if (drawerOpen) setDrawerOpen(false);
+    // Intentional: respond to selection changes only, not to drawerOpen
+    // toggling (would create a self-closing loop).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId, activeSessionId]);
+
+  /* Esc key closes the drawer. Body scroll lock prevents the page
+     scrolling behind the open drawer on iOS Safari (where the address
+     bar's scroll-to-top can otherwise pull the chat out from under
+     the user's finger). */
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") setDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [drawerOpen]);
+
+  /* Auto-close when leaving mobile (resize, rotate, "Request Desktop
+     Site"). Without this, a drawer left open while flipping to desktop
+     keeps the open-state in memory; harmless visually because the CSS
+     forces it visible at md+, but it'd resurrect as "open" if the
+     viewport re-narrowed. */
+  useEffect(() => {
+    if (!isMobile && drawerOpen) setDrawerOpen(false);
+  }, [isMobile, drawerOpen]);
+
   // ui-store: ChatInput's `/settings`, `/skills`, `/mcp`, `/providers`
   // slash commands set `settingsRequest` here. We open the panel and
   // (if a tab was specified) hand the requested tab to SettingsPanel
@@ -283,6 +336,20 @@ export function App() {
     <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
       <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-2">
         <div className="flex items-center gap-3">
+          {/* Hamburger — only at < md. Tapping toggles the drawer
+              that wraps ProjectSidebar; the icon serves as the
+              visible affordance complementing the left-edge swipe
+              gesture. min-w-11 keeps the touch target ≥ 44px even
+              on small phones. */}
+          <button
+            type="button"
+            onClick={() => setDrawerOpen((v) => !v)}
+            aria-label={drawerOpen ? "Close project sidebar" : "Open project sidebar"}
+            aria-expanded={drawerOpen}
+            className="-ml-1 inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-neutral-300 hover:bg-neutral-800 md:hidden"
+          >
+            <Menu size={20} />
+          </button>
           {/* Header brand: same SVG as the favicon / PWA icon, served
               from /icons/icon.svg via the public dir. The inner gap-1.5
               keeps the logo + wordmark visually paired (tighter than
@@ -376,7 +443,55 @@ export function App() {
 
       <div className="flex flex-1 flex-col overflow-hidden">
         <div className="flex flex-1 overflow-hidden">
-          <ProjectSidebar />
+          {/* Mobile drawer chrome (only renders at < md):
+              - backdrop dims main content + closes on tap
+              - left-edge swipe-target opens the drawer when closed
+              Hidden on desktop via md:hidden so the layout stays
+              identical at md+ — sidebar is in normal flow there. */}
+          {drawerOpen && (
+            <div
+              className="fixed inset-0 z-30 bg-black/50 md:hidden"
+              onClick={() => setDrawerOpen(false)}
+              aria-hidden
+            />
+          )}
+          {isMobile && !drawerOpen && (
+            <div
+              className="fixed inset-y-0 left-0 z-20 w-5 md:hidden"
+              aria-hidden
+              onPointerDown={(e) => {
+                /* Threshold-based open: ≥ 50px rightward drag from
+                   the left edge opens the drawer. Listeners attach
+                   to the window so the gesture isn't lost when the
+                   pointer leaves this thin strip. */
+                const startX = e.clientX;
+                let opened = false;
+                const onMove = (ev: PointerEvent): void => {
+                  if (opened) return;
+                  if (ev.clientX - startX > 50) {
+                    setDrawerOpen(true);
+                    opened = true;
+                    cleanup();
+                  }
+                };
+                const cleanup = (): void => {
+                  window.removeEventListener("pointermove", onMove);
+                  window.removeEventListener("pointerup", cleanup);
+                  window.removeEventListener("pointercancel", cleanup);
+                };
+                window.addEventListener("pointermove", onMove);
+                window.addEventListener("pointerup", cleanup);
+                window.addEventListener("pointercancel", cleanup);
+              }}
+            />
+          )}
+          <ProjectSidebar
+            className={
+              "fixed inset-y-0 left-0 z-40 transform shadow-2xl transition-transform duration-200 ease-out " +
+              "md:static md:inset-auto md:z-auto md:transform-none md:shadow-none md:transition-none md:translate-x-0 " +
+              (drawerOpen ? "translate-x-0" : "-translate-x-full")
+            }
+          />
           <main className="flex flex-1 overflow-hidden">
             {/* Layout when files pane is open:
                   chat (flex) | divider | editor (when ≥1 tab) | divider | files
