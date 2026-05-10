@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Columns2,
   Copy,
+  Download,
   ExternalLink,
   FileCode,
   GitBranch,
@@ -22,6 +23,8 @@ import {
   type CompactionEvent,
 } from "../store/session-store";
 import { useActiveProject, useProjectStore } from "../store/project-store";
+import { api, ApiError } from "../lib/api-client";
+import { useIsMobile } from "../lib/use-is-mobile";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { CompactionCard } from "./CompactionCard";
 import { DiffBlock } from "./DiffBlock";
@@ -113,6 +116,53 @@ export function ChatView({ sessionId }: Props) {
   const project = useActiveProject();
   const [treeOpen, setTreeOpen] = useState(false);
 
+  // Conversation export menu (Markdown / Raw JSONL). Hidden on mobile —
+  // the file-download flow is desktop-shaped (browser save dialog,
+  // open-in-editor follow-ups) and a phone user typically doesn't
+  // want a .md / .jsonl landing in their Downloads folder anyway.
+  const isMobile = useIsMobile();
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [exportError, setExportError] = useState<string | undefined>(undefined);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+    const onDoc = (e: MouseEvent): void => {
+      if (exportMenuRef.current === null) return;
+      if (!exportMenuRef.current.contains(e.target as Node)) setExportMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [exportMenuOpen]);
+  const doExport = async (format: "markdown" | "jsonl"): Promise<void> => {
+    setExportMenuOpen(false);
+    setExportError(undefined);
+    try {
+      const { blob, filename } = await api.exportSession(sessionId, format);
+      // Same trigger pattern FileBrowserPanel / SettingsPanel use:
+      // synthesize an `<a download>`, click, then revoke the blob URL
+      // on the next tick so Safari has time to grab it.
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? `${err.code} (${err.status})`
+          : err instanceof Error
+            ? err.message
+            : "export_failed";
+      setExportError(message);
+      // Auto-clear after a few seconds so a transient error doesn't
+      // sit forever.
+      window.setTimeout(() => setExportError(undefined), 4_000);
+    }
+  };
+
   // Open SSE on mount, close on unmount/session change. The store ensures
   // openStream is idempotent for the same id.
   useEffect(() => {
@@ -190,11 +240,50 @@ export function ChatView({ sessionId }: Props) {
       value={{ viewType: chatViewType, setViewType: setAndPersistChatViewType }}
     >
       <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Chat-level toolbar. Single button today (session tree); add
-            future per-session controls (export, copy session id, etc.)
-            here. Pinned above the scroll container so the affordance
-            stays reachable from any scroll position. */}
+        {/* Chat-level toolbar. Per-session controls (export, session
+            tree, etc.) — pinned above the scroll container so the
+            affordances stay reachable from any scroll position. */}
         <div className="flex items-center justify-end gap-1 border-b border-neutral-800 bg-neutral-900/30 px-3 py-1">
+          {!isMobile && (
+            <div ref={exportMenuRef} className="relative">
+              <button
+                onClick={() => setExportMenuOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={exportMenuOpen}
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+                title="Export this conversation"
+              >
+                <Download size={11} />
+                Export
+              </button>
+              {exportMenuOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full z-30 mt-1 min-w-[12rem] rounded-md border border-neutral-700 bg-neutral-900 py-1 shadow-xl"
+                >
+                  <button
+                    role="menuitem"
+                    onClick={() => void doExport("markdown")}
+                    className="block w-full px-3 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-800"
+                  >
+                    Markdown <span className="text-neutral-500">(.md)</span>
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => void doExport("jsonl")}
+                    className="block w-full px-3 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-800"
+                  >
+                    Raw JSONL <span className="text-neutral-500">(.jsonl)</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {exportError !== undefined && (
+            <span className="text-[10px] text-amber-400" role="status">
+              Export failed: {exportError}
+            </span>
+          )}
           <button
             onClick={() => setTreeOpen(true)}
             className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"

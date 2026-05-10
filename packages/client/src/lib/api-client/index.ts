@@ -1674,6 +1674,46 @@ export const api = {
   },
 
   /**
+   * Export a single conversation as Markdown or raw JSONL. The server
+   * inlines pi-subagents children into the parent's transcript at the
+   * matching `subagent` tool call. Returns a blob + filename in the
+   * same shape as exportConfig / exportSkills so the download-trigger
+   * logic in the UI can stay uniform.
+   */
+  exportSession: async (
+    sessionId: string,
+    format: "markdown" | "jsonl",
+  ): Promise<{ blob: Blob; filename: string }> => {
+    const headers: Record<string, string> = {};
+    const stored = getStoredToken();
+    if (stored !== undefined) headers.Authorization = `Bearer ${stored.token}`;
+    const res = await fetch(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/export?format=${format}`,
+      { headers },
+    );
+    if (res.status === 401) {
+      clearStoredToken();
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+      throw new ApiError(401, "unauthorized");
+    }
+    if (!res.ok) {
+      let code = "request_failed";
+      try {
+        const body = (await res.json()) as { error?: unknown };
+        if (typeof body.error === "string") code = body.error;
+      } catch {
+        // body wasn't JSON — keep generic code
+      }
+      throw new ApiError(res.status, code);
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") ?? "";
+    const fallback = format === "markdown" ? "session.md" : "session.jsonl";
+    const filename = parseContentDispositionFilename(cd) ?? fallback;
+    return { blob, filename };
+  },
+
+  /**
    * Upload skills to the server. Accepts either a single tar.gz
    * (auto-detected by `.tar.gz` / `.tgz` suffix) OR a list of files
    * from a folder picker (`<input webkitdirectory>`); each file's
