@@ -513,7 +513,7 @@ function FileRefBadge({ ref: r }: { ref: FileRef }) {
         type="button"
         onClick={() => isInline && setExpanded((v) => !v)}
         disabled={!isInline}
-        className={`flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] ${
+        className={`flex min-h-11 w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] md:min-h-0 ${
           isInline ? "text-neutral-200 hover:bg-neutral-800" : "cursor-default text-emerald-200"
         }`}
         title={
@@ -1199,10 +1199,10 @@ function SubagentResultCard({
         {parsed.results.length === 1 && parsed.results[0]!.sessionFile !== undefined && (
           <button
             onClick={() => openByFile(parsed.results[0]!.sessionFile)}
-            className="inline-flex shrink-0 items-center gap-1 rounded border border-sky-700/60 px-1.5 py-0.5 text-[10px] font-medium text-sky-200 hover:border-sky-500 hover:bg-sky-900/30 hover:text-sky-100"
+            className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded border border-sky-700/60 px-2 py-1 text-[12px] font-medium text-sky-200 hover:border-sky-500 hover:bg-sky-900/30 hover:text-sky-100 md:min-h-0 md:px-1.5 md:py-0.5 md:text-[10px]"
             title={`Open sub-agent session — ${parsed.results[0]!.sessionFile}`}
           >
-            <ExternalLink size={10} />
+            <ExternalLink size={12} />
             Open
           </button>
         )}
@@ -1403,10 +1403,11 @@ function CopyButton({ getText, title }: { getText: () => string; title: string }
     <button
       type="button"
       onClick={onClick}
-      className="rounded px-1.5 py-0.5 text-neutral-500 hover:bg-neutral-700/40 hover:text-neutral-300"
+      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1.5 py-0.5 text-neutral-500 hover:bg-neutral-700/40 hover:text-neutral-300 md:min-h-0 md:min-w-0"
       title={title}
+      aria-label={title}
     >
-      {copied ? <Check size={12} /> : <Copy size={12} />}
+      {copied ? <Check size={14} /> : <Copy size={14} />}
     </button>
   );
 }
@@ -1432,7 +1433,7 @@ function RawToggle({ showRaw, onToggle }: { showRaw: boolean; onToggle: (next: b
     <button
       type="button"
       onClick={() => onToggle(!showRaw)}
-      className="rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-500 hover:bg-neutral-700/40 hover:text-neutral-300"
+      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-500 hover:bg-neutral-700/40 hover:text-neutral-300 md:min-h-0 md:min-w-0"
       title={showRaw ? "Show rendered markdown" : "Show raw text"}
     >
       {showRaw ? "rendered" : "raw"}
