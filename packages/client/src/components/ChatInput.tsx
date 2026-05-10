@@ -1424,8 +1424,14 @@ export function ChatInput({ sessionId }: Props) {
       </div>
       {/* Tighter padding on mobile so the composer hugs the bottom
           of the viewport (and the on-screen keyboard, when open).
-          Desktop keeps the original `px-6 py-3` breathing room. */}
-      <div className="mx-auto max-w-3xl space-y-2 px-3 pb-2 pt-2 md:px-6 md:py-3">
+          Bottom padding rides the safe-area inset so the composer
+          sits above the iPhone home indicator / Android gesture bar
+          instead of being clipped by them. Desktop keeps the
+          original `px-6 py-3` breathing room. */}
+      <div
+        className="mx-auto max-w-3xl space-y-2 px-3 pt-2 md:px-6 md:py-3"
+        style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
+      >
         <div className="flex flex-wrap items-center gap-2">
           <ModelPicker
             providers={providers}

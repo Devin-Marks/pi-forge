@@ -8,6 +8,7 @@ import { useFileStore } from "./store/file-store";
 import { useUiConfigStore } from "./store/ui-config-store";
 import { LoginScreen } from "./components/LoginScreen";
 import { ChangePasswordScreen } from "./components/ChangePasswordScreen";
+import { InstallPrompt } from "./components/InstallPrompt";
 import { ProjectSidebar } from "./components/ProjectSidebar";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { ChatView } from "./components/ChatView";
@@ -334,7 +335,17 @@ export function App() {
 
   return (
     <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
-      <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-2">
+      {/* Top-of-viewport chrome respects iOS Dynamic Island / notch
+          and Android cutouts via safe-area-inset-top. The viewport
+          meta in index.html already opts in with `viewport-fit=cover`
+          (PR 3); this is what actually consumes the inset so the
+          hamburger + brand don't sit under the status bar. Combined
+          with `py-2` so we have at least the original 8 px even on
+          devices with no inset. */}
+      <header
+        className="flex items-center justify-between border-b border-neutral-800 px-4 py-2"
+        style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}
+      >
         <div className="flex items-center gap-3">
           {/* Hamburger — only at < md. Tapping toggles the drawer
               that wraps ProjectSidebar; the icon serves as the
@@ -438,6 +449,11 @@ export function App() {
           </button>
         </div>
       </header>
+
+      {/* PWA install prompt — mobile-only, dismissable, hidden when
+          already running standalone or after the user has dismissed
+          once. Self-gated to render nothing on desktop. */}
+      <InstallPrompt />
 
       {settingsOpen && (
         <SettingsPanel

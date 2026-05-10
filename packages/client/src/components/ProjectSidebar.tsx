@@ -97,6 +97,15 @@ export function ProjectSidebar({ className = "" }: ProjectSidebarProps = {}) {
   return (
     <aside
       className={`flex h-full w-64 flex-col border-r border-neutral-800 bg-neutral-950 ${className}`}
+      // Safe-area-aware top + bottom padding so the drawer chrome
+      // (header, sessions list) doesn't slide under iPhone notches /
+      // Android cutouts when the drawer is fullscreen-tall on
+      // mobile. env() returns 0 on devices without insets, so this
+      // is a no-op on desktop and on non-notched phones.
+      style={{
+        paddingTop: "env(safe-area-inset-top)",
+        paddingBottom: "env(safe-area-inset-bottom)",
+      }}
     >
       <header className="flex items-center justify-between border-b border-neutral-800 px-3 py-2">
         <span className="text-xs font-semibold uppercase tracking-wider text-neutral-400">
