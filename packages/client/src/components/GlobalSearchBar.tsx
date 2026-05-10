@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 import { api } from "../lib/api-client";
 import type { SessionSearchGroup, SessionSearchMatch } from "../lib/api-client";
+import { useIsMobile } from "../lib/use-is-mobile";
 import { useProjectStore } from "../store/project-store";
 import { useSessionStore } from "../store/session-store";
 
@@ -16,8 +17,15 @@ import { useSessionStore } from "../store/session-store";
  *
  * Hotkeys: Cmd+K / Ctrl+K to focus, Esc to close, ↑/↓ + Enter to
  * navigate the dropdown.
+ *
+ * Mobile: self-gated via `useIsMobile()` so the component returns null
+ * on small viewports. The header-level `<div className="hidden md:block">`
+ * wrapper is belt-and-braces; this internal early-return is what
+ * actually prevents the Cmd+K listener from registering when a
+ * Bluetooth keyboard is paired with a phone.
  */
 export function GlobalSearchBar() {
+  const isMobile = useIsMobile();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SessionSearchGroup[]>([]);
   const [open, setOpen] = useState(false);
@@ -129,6 +137,14 @@ export function GlobalSearchBar() {
       ctrl.abort();
     };
   }, [query]);
+
+  // Mobile self-gate. Placed AFTER every hook so React's rules-of-hooks
+  // are honored — the hooks above register listeners (Cmd+K, click-away,
+  // debounced fetch) that we want to NO-OP on mobile, but the early
+  // return must come last. The viewport class on the parent in App.tsx
+  // would hide the bar anyway; this layer prevents the hotkey from
+  // firing if the user has a Bluetooth keyboard paired with a phone.
+  if (isMobile) return null;
 
   const dispatchResult = (group: SessionSearchGroup, match: SessionSearchMatch): void => {
     requestScrollToMessage(group.sessionId, match.messageIndex);
