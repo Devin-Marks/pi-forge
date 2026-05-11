@@ -1,121 +1,120 @@
 # Deployment
 
-This document covers production deployment of pi-forge: TLS termination,
-reverse-proxy configuration, auth setup, and the per-environment-variable
-guidance for going from "works on localhost" to "works on a public domain
-with no surprises."
+Running pi-forge for use on a **private network** — your homelab, an
+office LAN, an internal VLAN, an air-gapped subnet. Reverse-proxy
+config (single hostname, optional TLS for PWA install), auth, and
+env-var guidance.
 
-For the container itself (image, volumes, resources, troubleshooting) see
-[`docs/CONTAINERS.md`](./CONTAINERS.md). For Kubernetes and OpenShift, see
+> Pi-forge is **not designed for public-internet exposure.** The
+> agent's `bash` tool is a real shell with the container's
+> permissions; the integrated terminal is a live PTY. Even with auth
+> on, the right deployment shape is "trusted users on a trusted
+> network." For multi-tenant or hostile-network use cases, pi-forge
+> is the wrong tool.
+
+For the container itself see [`containers.md`](./containers.md); for
+Kubernetes / OpenShift see
 [`kubernetes/DEPLOY.md`](../kubernetes/DEPLOY.md).
 
 ## Before you deploy
 
-A short checklist that catches the common foot-guns:
+- [ ] **Set `UI_PASSWORD` or `API_KEY` (or both)** before binding to
+      anything other than loopback. Even on a trusted LAN, passing
+      credentials prevents a sibling device from poking at the API
+      by accident.
+- [ ] **`TRUST_PROXY=true`** if there's a reverse proxy in front, so
+      the login rate-limit sees real client IPs instead of the
+      proxy's IP.
+- [ ] **`CORS_ORIGIN` pinned** to the hostname you'll reach pi-forge
+      at (e.g. `http://pi-forge.local:3000` or
+      `https://pi-forge.internal.lan`). Defaults to reflecting any
+      origin — fine for solo loopback use, worth pinning when other
+      devices on the LAN can reach it.
+- [ ] **Workspace, pi config, and forge data on backed-up storage.**
+      The container is replaceable; sessions + provider keys aren't.
+- [ ] **Provider account has a spending limit set.** Pi-forge surfaces
+      cost telemetry but doesn't enforce caps.
 
-- [ ] `UI_PASSWORD` set, OR `API_KEY` set, OR both — never run a
-      network-exposed deploy with both unset. `JWT_SECRET` is
-      auto-generated and persisted to `${FORGE_DATA_DIR}/jwt-secret`
-      on first boot (override by setting `JWT_SECRET` env explicitly).
-- [ ] `JWT_SECRET` either auto-generated (recommended; the persisted
-      file is mode 0600 inside your already-mounted data dir) or, if
-      overriding, from `openssl rand -hex 32` — not a memorable string.
-      Rotating (delete the file or change the env) invalidates all
-      sessions immediately, which is what you want after a key leak.
-- [ ] Reverse proxy (Caddy / nginx / Traefik) terminates TLS in front of
-      the pi-forge. Plain HTTP is fine on `127.0.0.1`; never on a routable
-      interface.
-- [ ] `TRUST_PROXY=true` so the login rate-limit applies per real client
-      IP rather than per proxy hop.
-- [ ] `CORS_ORIGIN` pinned to your actual domain (e.g.
-      `https://pi.example.com`) — do not leave it reflecting whatever
-      the request claims.
-- [ ] Workspace + pi config + pi-forge data on backed-up storage. The
-      container is replaceable; your sessions and provider keys are not.
-- [ ] LLM provider account has a spending limit set. The pi-forge
-      surfaces token + cost telemetry in the Context Inspector but does
-      not enforce caps.
+`JWT_SECRET` is auto-generated and persisted to
+`${FORGE_DATA_DIR}/jwt-secret` (mode 0600) on first boot. Set
+explicitly only if you want to manage rotation out-of-band; delete
+the file to rotate in-place.
 
-## Recommended topology
+## Recommended topologies
+
+### Loopback only (single user on the host)
+
+Default. Container binds to `127.0.0.1:3000`. Nothing else on the
+network can reach it. No reverse proxy, no TLS, no auth required.
+
+### LAN access via direct port-forward
+
+Container binds to `0.0.0.0:3000` (e.g. drop the `127.0.0.1:` prefix
+in `docker/docker-compose.yml`). Set `UI_PASSWORD` or `API_KEY`
+before exposing — anything on the LAN can hit `http://<host>:3000`.
+
+### LAN access behind a reverse proxy (recommended for multi-device use)
 
 ```
-┌──────────────┐       HTTPS        ┌──────────────┐
-│   Browser    │  ─────────────────▶│   Caddy /    │
-│              │                    │  nginx /     │
-└──────────────┘                    │  Traefik     │
-                                    │  (TLS, auth  │
-                                    │   header     │
-                                    │   forwarding) │
-                                    └──────┬───────┘
-                                           │ HTTP, loopback
-                                           │ or private network
-                                           ▼
-                                    ┌──────────────┐
-                                    │ pi-forge │
-                                    │  container   │
-                                    │   :3000      │
-                                    └──────────────┘
-                                           │
-                                           ▼
-                                    Bind-mounted volumes
-                                    (workspace, config)
+Browser on phone / laptop / etc.
+        │
+        ▼  HTTP(S) on the LAN
+   reverse proxy (Caddy / nginx / Traefik on the same host or a
+   sibling host) — single hostname, optional TLS for PWA install
+        │
+        ▼  HTTP, loopback
+   pi-forge container on 127.0.0.1:3000
 ```
 
-The proxy handles TLS, HSTS, and (optionally) request logging. The
-pi-forge handles app-level auth. Bind the container's port 3000 to
-`127.0.0.1` only on the host so nothing besides the proxy can reach it.
+The proxy gives you:
+
+- **A stable hostname** — `http://pi-forge.local` instead of
+  `http://10.0.0.42:3000`
+- **Optional TLS** — a PWA install on iOS / Android requires HTTPS,
+  even on a LAN. Use [mkcert](https://github.com/FiloSottile/mkcert)
+  or your internal CA. Caddy's `tls internal` directive will also
+  generate certs from its own local CA
+- **A single bind point** for multiple deploys on one host (see
+  Multi-deploy patterns below)
 
 ## Reverse-proxy snippets
 
-### Caddy (recommended for simplicity)
+Examples use `pi-forge.local` (mDNS) — substitute whatever hostname
+the LAN's DNS / `/etc/hosts` resolves. The recurring requirements:
+forward `X-Forwarded-*`, support WebSocket upgrade, disable response
+buffering for SSE, and lift the proxy's read timeout to handle long
+agent runs (30 min is a reasonable ceiling).
+
+### Caddy
 
 ```caddy
-pi.example.com {
-    # SSE needs flush-passthrough + a generous read timeout for long
-    # agent runs. The transport block lifts read_timeout from the default
-    # 30s to 30 minutes; flush_interval -1 disables Caddy's response
-    # buffering so each SSE event reaches the browser immediately.
+pi-forge.local {
     reverse_proxy localhost:3000 {
-        flush_interval -1
+        flush_interval -1            # don't buffer SSE
         transport http {
-            read_timeout 30m
+            read_timeout 30m         # long agent runs
         }
-    }
-
-    # Optional: stricter HSTS than Caddy's default
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
-        # Tighten if you control all the assets — pi-forge has no
-        # external script deps post-build, so a strict CSP is feasible
-        # Content-Security-Policy "default-src 'self'; img-src 'self' data:; ..."
-    }
-
-    # Optional: log to file
-    log {
-        output file /var/log/caddy/pi-forge.log
     }
 }
 ```
 
-Then: `caddy reload --config /etc/caddy/Caddyfile`. Caddy auto-provisions
-TLS certificates from Let's Encrypt — no manual cert handling.
+Reload: `caddy reload --config /etc/caddy/Caddyfile`. Caddy will try
+to auto-provision TLS for the hostname; on a LAN-only deploy use
+`tls internal` (Caddy's built-in CA) or supply a cert from your own
+CA / mkcert.
 
 ### nginx
 
 ```nginx
 server {
-    listen 443 ssl http2;
-    server_name pi.example.com;
+    listen 80;
+    server_name pi-forge.local;
 
-    ssl_certificate     /etc/letsencrypt/live/pi.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/pi.example.com/privkey.pem;
-
-    # SSE: disable buffering, allow long-lived connections
     location / {
         proxy_pass         http://127.0.0.1:3000;
         proxy_http_version 1.1;
 
-        # Forwarded headers — TRUST_PROXY=true on the pi-forge reads these
+        # Forwarded headers (TRUST_PROXY=true reads these)
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
@@ -130,136 +129,93 @@ server {
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
 
-        # File upload cap matches the pi-forge's 50 MB per-file
         client_max_body_size 100M;
     }
 }
 
-map $http_upgrade $http_connection {
-    default upgrade;
-    ""      "";
-}
-
-# HTTP → HTTPS redirect
-server {
-    listen 80;
-    server_name pi.example.com;
-    return 301 https://$host$request_uri;
-}
+map $http_upgrade $http_connection { default upgrade; "" ""; }
 ```
 
-Reload: `nginx -t && nginx -s reload`. Use `certbot --nginx` for cert
-auto-provisioning.
+For HTTPS, add a `listen 443 ssl http2;` block with `ssl_certificate` /
+`ssl_certificate_key` pointing at certs from your internal CA or
+mkcert. Same `location` block contents.
 
 ### Traefik (Docker labels)
 
 ```yaml
-# docker/docker-compose.yml additions for Traefik
 services:
   pi-forge:
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.pi-forge.rule=Host(`pi.example.com`)"
-      - "traefik.http.routers.pi-forge.entrypoints=websecure"
-      - "traefik.http.routers.pi-forge.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.pi-forge.rule=Host(`pi-forge.local`)"
+      - "traefik.http.routers.pi-forge.entrypoints=web"
       - "traefik.http.services.pi-forge.loadbalancer.server.port=3000"
-
-      # SSE / long-running response support
-      - "traefik.http.middlewares.long-timeout.forwardauth.responseheaders=Cache-Control,X-Accel-Buffering"
 ```
 
-In your Traefik static config, set
-`entryPoints.websecure.transport.respondingTimeouts.readTimeout = 3600s`
-so SSE streams don't terminate after the default 60 s. Traefik handles
-WebSocket upgrades transparently.
+In Traefik's static config, lift
+`entryPoints.web.transport.respondingTimeouts.readTimeout` to
+`3600s` so SSE streams aren't terminated at the default 60 s.
+WebSocket upgrades are handled transparently.
 
-## Production environment variables
+## Network-deploy env-var overrides
 
-The full reference is in [`configuration.md`](./configuration.md#environment-variables).
-Production-relevant guidance:
+Full reference: [`configuration.md`](./configuration.md#environment-variables).
+Values to override defaults when other devices on the LAN can reach
+pi-forge:
 
-| Variable | Production value | Why |
+| Variable | Value | Why |
 |---|---|---|
-| `UI_PASSWORD` | A strong shared secret if multiple humans share the deploy, OR a personal password for solo use | Required for browser login. |
-| `JWT_SECRET` | (leave empty for auto-generation) or `$(openssl rand -hex 32)` to override | Signing key for browser session JWTs. When `UI_PASSWORD` is set and `JWT_SECRET` is empty, the server generates one and persists it to `${FORGE_DATA_DIR}/jwt-secret` (mode 0600); the data dir is already a PVC / bind-mount so tokens survive restarts. Rotate by deleting the file (or rotating the env value). |
-| `API_KEY` | `$(openssl rand -hex 32)` | Static bearer token for scripts / CI. Different secret than the browser login. |
-| `JWT_EXPIRES_IN_SECONDS` | `86400` (24 h) for higher-trust environments, or leave at default `604800` (7 d) | Shorter = re-login more often = smaller blast radius if a token leaks. |
-| `RATE_LIMIT_LOGIN_MAX` | `5` if you're paranoid; default `10` is fine for most | Per-IP login attempts per minute. |
-| `RATE_LIMIT_LOGIN_WINDOW_MS` | Default `60000` | Rate-limit window. |
-| `TRUST_PROXY` | `true` | Required when behind any reverse proxy so the rate-limit sees real client IPs. |
-| `CORS_ORIGIN` | Your exact domain, e.g. `https://pi.example.com` | Pinning prevents same-network attackers from making cross-origin requests using the user's credentials. |
-| `LOG_LEVEL` | `info` (default) or `warn` if logs are noisy | `debug` / `trace` are useful during incidents but produce a lot. |
-| `MINIMAL_UI` | `true` if your users shouldn't have terminal / git / settings access | Frontend-only gate; doesn't change server route exposure. |
+| `TRUST_PROXY` | `true` | Required when behind a reverse proxy so the login rate-limit sees real client IPs |
+| `CORS_ORIGIN` | the URL you reach pi-forge at, e.g. `http://pi-forge.local:3000` | Pinning stops other LAN origins from making cross-origin requests with the user's credentials |
+| `JWT_EXPIRES_IN_SECONDS` | `86400` (24 h) for shared-LAN deploys; default `604800` (7 d) for single-user | Shorter = smaller blast radius if a token leaks |
+| `RATE_LIMIT_LOGIN_MAX` | default `10` is fine | Per-IP login attempts per minute |
+| `LOG_LEVEL` | `info` (default) or `warn` if noisy | `debug` / `trace` are useful during incidents |
+| `MINIMAL_UI` | `true` to hide terminal / git / settings from non-admin users | Frontend gate; server routes unchanged |
 
-### Setting auth correctly
+For multiple users on the same host, run separate pi-forge instances
+(single-tenant by design) — see "Multi-deploy patterns" below.
 
-Either browser auth, API key, or both. Never neither for a network-
-exposed deploy.
+### Auth setup
+
+Pick one shape based on who needs access:
 
 ```bash
-# .env example for browser-only auth
-UI_PASSWORD=your-strong-password-here
-JWT_SECRET=                          # blank — auto-generated and persisted
-API_KEY=                             # blank — disabled
+# Browser only
+UI_PASSWORD=your-strong-password
+API_KEY=
 
-# .env example for API-only auth (e.g., headless deploys)
+# API only (headless / scripts)
 UI_PASSWORD=
-JWT_SECRET=
-API_KEY=<openssl rand -hex 32 output>
+API_KEY=$(openssl rand -hex 32)
 
-# .env example for both — most common for "humans + scripts share the deploy"
-UI_PASSWORD=your-strong-password-here
-JWT_SECRET=                          # blank — auto-generated and persisted
-API_KEY=<openssl rand -hex 32 output>
+# Both — humans + scripts share the deploy
+UI_PASSWORD=your-strong-password
+API_KEY=$(openssl rand -hex 32)
 ```
 
-When `UI_PASSWORD` is set and `JWT_SECRET` is empty, the server
-generates a 48-byte random secret on first boot and persists it to
-`${FORGE_DATA_DIR}/jwt-secret` (mode 0600). Because `FORGE_DATA_DIR`
-is already a PVC / bind-mount in K8s and Docker, the secret survives
-restarts and tokens issued before a restart keep working. Set
-`JWT_SECRET` explicitly only if you want to manage rotation out-of-band
-(e.g. centrally rotated K8s `Secret`). Delete the file to rotate
-in-place.
+`JWT_SECRET` is empty in all three — the server auto-generates and
+persists it to `${FORGE_DATA_DIR}/jwt-secret`. Override only if
+managing rotation out-of-band (e.g. centrally rotated K8s `Secret`).
 
-## Backup recommendations
+## Backups
 
-Three things worth backing up:
+Back up these three host paths:
 
-1. **`${WORKSPACE_HOST_PATH}`** — your code. The agent's writes live here.
-   Use whatever you'd use for any code repo: rsync, restic, borg, S3 sync,
-   etc. Snapshot via filesystem (ZFS / Btrfs) or storage layer (EBS
-   snapshots) if available.
-2. **`${WORKSPACE_HOST_PATH}/.pi/sessions/`** — session JSONLs (default
-   `${SESSION_DIR}` lives inside the workspace mount). These are the
-   complete record of every prompt / response / tool call. Treat as
-   sensitive — they contain everything the agent saw.
-3. **`${PI_CONFIG_HOST_PATH}`** — provider API keys + custom provider
-   definitions. Encrypted at rest if your backup tooling supports it
-   (most do).
-
-`projects.json` (under `${FORGE_DATA_HOST_PATH}`) is recoverable
-from disk by re-adding projects manually, so it's lower priority — but
-also tiny, so back it up anyway.
+1. **`${WORKSPACE_HOST_PATH}`** — your code + session JSONLs (under
+   `.pi/sessions/`). Treat sessions as sensitive — they contain
+   everything the agent saw.
+2. **`${PI_CONFIG_HOST_PATH}`** — provider API keys + custom provider
+   definitions. Encrypted at rest if your tooling supports it.
+3. **`${FORGE_DATA_HOST_PATH}`** — `projects.json`, MCP / overrides
+   files, `jwt-secret`, `password-hash`. Smallest of the three but
+   loses your project list + invalidates browser sessions if dropped.
 
 ## Update / rollback
 
-```bash
-# Update
-git pull origin main
-cd docker && docker compose up -d --build
-
-# Rollback (assumes you tagged the deployed version locally)
-git checkout v0.X.Y
-cd docker && docker compose up -d --build
-```
-
-Workspace, sessions, and pi config are on bind mounts — they survive
-container rebuilds. The only state lost during update is in-memory
-(active SSE connections, live PTY processes). SSE clients reconnect
-automatically with backoff; PTYs from before the restart are reaped
-(see `pty-manager.ts` IDLE_REAP_MS) and replaced with fresh shells on
-reconnect.
+See [`containers.md`](./containers.md#updating). Bind-mounted state
+(workspace, sessions, configs) survives rebuilds. The only state lost
+is in-memory — SSE clients reconnect with backoff; PTYs are replaced
+with fresh shells on the next attach.
 
 ## Multi-deploy patterns
 
@@ -299,10 +255,10 @@ services:
 Then route each via the proxy:
 
 ```caddy
-alice.pi.example.com {
+alice.pi-forge.local {
     reverse_proxy localhost:3001 { flush_interval -1; transport http { read_timeout 30m } }
 }
-bob.pi.example.com {
+bob.pi-forge.local {
     reverse_proxy localhost:3002 { flush_interval -1; transport http { read_timeout 30m } }
 }
 ```
@@ -320,9 +276,9 @@ curl -s http://localhost:3000/api/v1/health
 ```
 
 The container's `HEALTHCHECK` directive uses this (see
-[`docs/CONTAINERS.md`](./CONTAINERS.md#health-check)).
+[`docs/containers.md`](./containers.md#health-check)).
 
-For deeper observability, the pi-forge logs to stdout in pino's JSON
+For deeper observability, pi-forge logs to stdout in pino's JSON
 format. Pipe through your log aggregator of choice:
 
 ```bash
@@ -353,7 +309,7 @@ if you care.
 
 ## See also
 
-- [`docs/CONTAINERS.md`](./CONTAINERS.md) — Docker image internals,
+- [`docs/containers.md`](./containers.md) — Docker image internals,
   resources, troubleshooting
 - [`docs/configuration.md`](./configuration.md) — pi config files
   (auth, models, settings) + custom providers

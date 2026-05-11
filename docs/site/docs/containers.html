@@ -41,6 +41,7 @@
         <a href="configuration.html">Configuration</a>
         <a href="containers.html" class="active">Containers</a>
         <a href="deployment.html">Deployment</a>
+        <a href="mobile.html">Mobile</a>
         <a href="api.html">API Examples</a>
         <a href="mcp.html">MCP Servers</a>
         <a href="sse-events.html">SSE Events</a>
@@ -56,28 +57,18 @@
     <main class="docs-main">
       <h1>Containers</h1>
       <p class="docs-subtitle">What's inside the Docker image, how it's structured, and why.</p>
-<p>This document covers everything you need to know about running pi-forge
-in a container — the shipped Docker image, the compose recipe, the volume
-layout, the security model, and how to tune resources for your workload.</p>
-<p>For Kubernetes / OpenShift deployments, see <a href="../kubernetes/DEPLOY.md"><code>kubernetes/DEPLOY.md</code></a>.
-For non-container reverse-proxy + TLS recipes, see
-<a href="./deployment.md"><code>docs/deployment.md</code></a>.</p>
+<p>The shipped Docker image, compose recipe, volume layout, security model,
+and resource tuning. For Kubernetes / OpenShift, see
+<a href="../kubernetes/DEPLOY.md"><code>kubernetes/DEPLOY.md</code></a>. For non-container
+reverse-proxy + TLS recipes, see <a href="./deployment.md"><code>deployment.md</code></a>.</p>
 <h2>Why containers</h2>
-<p>pi-forge is <strong>single-tenant by design</strong> and the container is the unit of
-isolation. The agent&#39;s <code>bash</code> tool is a real shell, the <code>write</code> and <code>edit</code>
-tools touch the workspace filesystem, and the integrated terminal spawns
-a PTY with the pi-forge process&#39;s permissions. Running in a container:</p>
-<ul>
-<li>Bounds what the agent can damage (only the bind-mounted workspace + the
-container&#39;s filesystem, which is rebuilt on rebuild)</li>
-<li>Pins the runtime (Node major, native bindings) so terminals don&#39;t break
-when you upgrade the host&#39;s Node version</li>
-<li>Makes deploys reproducible across hosts</li>
-<li>Gives you a clean reset — <code>docker compose down &amp;&amp; docker compose up -d</code> =
-fresh container, persisted workspace + config</li>
-</ul>
+<p>Pi-forge is single-tenant. The agent&#39;s <code>bash</code> tool is a real shell;
+<code>write</code> / <code>edit</code> touch the workspace; the integrated terminal spawns a
+PTY with the server&#39;s permissions. The container bounds the blast
+radius (workspace bind mount + ephemeral container fs), pins the
+runtime (Node + native bindings), and makes deploys reproducible.</p>
 <h2>Image overview</h2>
-<p>The Dockerfile (<code>docker/Dockerfile</code>) is multi-stage:</p>
+<p><code>docker/Dockerfile</code> is multi-stage:</p>
 <table>
 <thead>
 <tr>
@@ -89,150 +80,97 @@ fresh container, persisted workspace + config</li>
 <tbody><tr>
 <td><code>builder</code></td>
 <td><code>node:22-bookworm-slim</code></td>
-<td>Installs all deps (incl. devDeps), compiles native bindings (<code>node-pty</code>) against the runtime Node, runs <code>npm run build</code> for both packages</td>
+<td>Installs all deps including devDeps, compiles native bindings (<code>node-pty</code>), runs <code>npm run build</code> for both packages</td>
 </tr>
 <tr>
 <td><code>runtime</code></td>
 <td><code>node:22-bookworm-slim</code></td>
-<td>Copies only the production deps + built artifacts. Adds <code>git</code>, <code>ripgrep</code>, <code>bash</code>, <code>curl</code>, <code>less</code>, <code>procps</code> for the agent&#39;s tools and the integrated terminal. Switches to a non-root <code>pi</code> user; sets <code>SHELL=/bin/bash</code> so xterm sessions land in bash rather than dash.</td>
+<td>Production deps + built artifacts only. Adds <code>git</code>, <code>ripgrep</code>, <code>bash</code>, <code>curl</code>, <code>less</code>, <code>procps</code>. Runs as non-root <code>pi</code>; <code>SHELL=/bin/bash</code> so xterm sessions land in bash, not dash</td>
 </tr>
 </tbody></table>
-<p>Final image is ~330 MB (Debian slim + Node runtime + production deps + interactive
-shell tools). The base was switched from <code>node:22-alpine</code> to <code>node:22-bookworm-slim</code>
-because the Node native-module ecosystem (node-pty, bcrypt, sharp, …) ships
-prebuilt binaries against glibc; on musl/alpine, those packages fall back to
-source builds, which is both slower and a frequent install-failure mode. No build
-toolchain or devDeps in the runtime image.</p>
-<h3>What&#39;s installed at runtime</h3>
+<p>Final image is ~330 MB. Debian-based (not Alpine) because the Node
+native-module ecosystem ships glibc prebuilds; on musl, those packages
+fall back to source builds.</p>
+<p>Installed at runtime:</p>
 <ul>
-<li><strong>Node.js 22</strong> (Alpine package)</li>
-<li><strong><code>tini</code></strong> — minimal init for proper signal handling and zombie reaping</li>
-<li><strong><code>git</code></strong> — required by the agent&#39;s bash tool, the file-manager git diffs,
-and the GitPanel routes</li>
-<li><strong><code>ripgrep</code></strong> — pi&#39;s <code>grep</code> tool delegates to <code>rg</code> when present; without
-it, code search inside the agent silently degrades</li>
+<li><strong>Node.js 22</strong></li>
+<li><strong><code>tini</code></strong> — init for signal forwarding + zombie reaping</li>
+<li><strong><code>git</code></strong> — required by the agent&#39;s <code>bash</code> tool and the GitPanel routes</li>
+<li><strong><code>ripgrep</code></strong> — pi&#39;s <code>grep</code> tool delegates to <code>rg</code> when present;
+silently degrades to a Node walker without it</li>
 </ul>
 <h3>User and permissions</h3>
-<p>The image creates a <code>pi</code> user (uid/gid configurable via <code>PUID</code> / <code>PGID</code>
-build args; default <code>1000:1000</code>) and runs the pi-forge as that user.</p>
-<p>For bind mounts to be writable, the <code>pi</code> user inside the container must
-match the host user that owns the mounted directory. On Linux:</p>
+<p>The image creates a <code>pi</code> user (uid/gid configurable via <code>PUID</code> /
+<code>PGID</code> build args; default <code>1000:1000</code>). For bind mounts to be
+writable, the container <code>pi</code> user must match the host owner of the
+mounted directory. On Linux:</p>
 <pre><code class="language-bash">PUID=$(id -u) PGID=$(id -g) docker compose -f docker/docker-compose.yml up -d --build
 </code></pre>
-<p>On Docker Desktop for macOS, UID translation is automatic — defaults
-usually work.</p>
+<p>On Docker Desktop for macOS, UID translation is automatic.</p>
 <h2>Volumes</h2>
-<p>The container expects three bind-mounted volumes:</p>
+<p>Three bind-mounted volumes:</p>
 <table>
 <thead>
 <tr>
 <th>Container path</th>
-<th>Compose env var</th>
-<th>Purpose</th>
+<th>Compose env var (default)</th>
+<th>Contents</th>
 </tr>
 </thead>
 <tbody><tr>
 <td><code>/workspace</code></td>
-<td><code>WORKSPACE_HOST_PATH</code> (default <code>../workspace</code>)</td>
-<td>User&#39;s project source code. Projects live as subfolders.</td>
+<td><code>WORKSPACE_HOST_PATH</code> (<code>../workspace</code>)</td>
+<td>User&#39;s project source. Projects are subfolders</td>
 </tr>
 <tr>
 <td><code>/home/pi/.pi/agent</code></td>
-<td><code>PI_CONFIG_HOST_PATH</code> (default <code>~/.pi/agent</code>)</td>
-<td>Pi SDK config — <code>auth.json</code>, <code>models.json</code>, <code>settings.json</code>. Bind-mounting from the host means the container inherits provider auth without copying secrets into the image.</td>
+<td><code>PI_CONFIG_HOST_PATH</code> (<code>~/.pi/agent</code>)</td>
+<td>Pi SDK config — provider keys, models, settings. Shared with host pi CLI by default so secrets aren&#39;t copied into the image</td>
 </tr>
 <tr>
 <td><code>/home/pi/.pi-forge</code></td>
-<td><code>FORGE_DATA_HOST_PATH</code> (default <code>~/.pi-forge-docker</code>)</td>
-<td>pi-forge-owned state — <code>projects.json</code>. <strong>Different default</strong> than <code>PI_CONFIG_HOST_PATH</code> so the container has its own project list independent of host CLI use.</td>
+<td><code>FORGE_DATA_HOST_PATH</code> (<code>~/.pi-forge-docker</code>)</td>
+<td>Forge state — <code>projects.json</code>, MCP / overrides / <code>jwt-secret</code> / <code>password-hash</code>. <strong>Separate default</strong> from the host path so the container has its own project list (host paths wouldn&#39;t resolve inside the container anyway)</td>
 </tr>
 </tbody></table>
-<h3>Why three volumes</h3>
-<ul>
-<li><strong>Workspace</strong> is your code; you back it up.</li>
-<li><strong><code>pi</code> config</strong> is your provider credentials; sharing with the host means
-you don&#39;t have to re-enter API keys after rebuild.</li>
-<li><strong>pi-forge data</strong> is the project registry — sharing host vs container
-means coordinating two project lists. Defaulting to a separate host path
-(<code>~/.pi-forge-docker</code>) keeps them isolated. Set both to the same
-path if you want a shared registry.</li>
-</ul>
-<h3>Sessions live inside the workspace</h3>
-<p>Session JSONLs default to <code>${WORKSPACE_PATH}/.pi/sessions/&lt;projectId&gt;/*.jsonl</code>
-inside the container, which means they live on the workspace bind mount.
-Backing up the workspace = backing up your conversation history. Override
-with the <code>SESSION_DIR</code> env var if you want them elsewhere.</p>
+<p>Session JSONLs default to <code>${WORKSPACE_PATH}/.pi/sessions/</code> so they
+live on the workspace bind mount — backing up the workspace backs up
+conversation history. Override with <code>SESSION_DIR</code> to relocate.</p>
 <h2>Environment variables</h2>
-<p>The compose file forwards every env var pi-forge reads. See the full
-reference in <a href="./configuration.md#environment-variables"><code>configuration.md</code></a>; the
-container-relevant ones:</p>
+<p>The full env-var reference lives in
+<a href="./configuration.md#environment-variables"><code>configuration.md</code></a>. The
+container fixes the path-related vars; everything else is yours to set
+in <code>docker/.env</code>:</p>
 <table>
 <thead>
 <tr>
 <th>Variable</th>
-<th>Container default</th>
-<th>Notes</th>
+<th>Container value</th>
 </tr>
 </thead>
 <tbody><tr>
 <td><code>PORT</code></td>
-<td><code>3000</code></td>
-<td>Internal port; map to host via <code>HOST_PORT</code>.</td>
+<td><code>3000</code> (map to host via <code>HOST_PORT</code>)</td>
+</tr>
+<tr>
+<td><code>HOST</code></td>
+<td><code>0.0.0.0</code> (forced — required for Docker port-forward to work)</td>
 </tr>
 <tr>
 <td><code>WORKSPACE_PATH</code></td>
 <td><code>/workspace</code></td>
-<td>Fixed inside the container.</td>
 </tr>
 <tr>
 <td><code>PI_CONFIG_DIR</code></td>
 <td><code>/home/pi/.pi/agent</code></td>
-<td>Fixed inside the container.</td>
 </tr>
 <tr>
 <td><code>FORGE_DATA_DIR</code></td>
 <td><code>/home/pi/.pi-forge</code></td>
-<td>Fixed inside the container.</td>
-</tr>
-<tr>
-<td><code>UI_PASSWORD</code></td>
-<td>(unset)</td>
-<td>Browser login password. <code>JWT_SECRET</code> auto-generates if not set.</td>
-</tr>
-<tr>
-<td><code>JWT_SECRET</code></td>
-<td>(unset, auto-generated)</td>
-<td>HS256 signing key. When <code>UI_PASSWORD</code> is set and this is empty, persisted to <code>${FORGE_DATA_DIR}/jwt-secret</code> on first boot. Override by setting this env (<code>openssl rand -hex 32</code>).</td>
-</tr>
-<tr>
-<td><code>API_KEY</code></td>
-<td>(unset)</td>
-<td>Static bearer token for programmatic clients.</td>
-</tr>
-<tr>
-<td><code>LOG_LEVEL</code></td>
-<td><code>info</code></td>
-<td>Pino level: <code>trace</code> / <code>debug</code> / <code>info</code> / <code>warn</code> / <code>error</code>.</td>
-</tr>
-<tr>
-<td><code>TRUST_PROXY</code></td>
-<td><code>false</code></td>
-<td>Set to <code>true</code> when behind a reverse proxy so login rate-limit applies per real client IP.</td>
-</tr>
-<tr>
-<td><code>CORS_ORIGIN</code></td>
-<td>(reflect)</td>
-<td>Pin in production, e.g. <code>https://pi.example.com</code>.</td>
-</tr>
-<tr>
-<td><code>MINIMAL_UI</code></td>
-<td><code>false</code></td>
-<td>Hide terminal / git / last-turn / providers / agent settings. See <a href="../README.md"><code>README.md</code></a>.</td>
 </tr>
 </tbody></table>
-<p><strong>Auth is opt-in.</strong> With both <code>UI_PASSWORD</code> and <code>API_KEY</code> unset, the API is
-unauthenticated. That&#39;s fine for <code>127.0.0.1</code>-only deploys; it is <strong>never</strong>
-fine when the container is reachable on a routable interface.</p>
+<p>Set <code>UI_PASSWORD</code> and / or <code>API_KEY</code> in <code>.env</code> for any non-loopback
+deploy — without them, auth is disabled.</p>
 <h2>Compose recipe</h2>
 <p>The shipped compose file (<code>docker/docker-compose.yml</code>) covers a typical
 single-host deploy. Quickstart:</p>
@@ -288,46 +226,24 @@ memory; compaction trims it but cycles in and out</li>
 <p>CPU is rarely the bottleneck — most pi-forge CPU is forwarding bytes
 between the LLM provider and the browser.</p>
 <h2>Networking</h2>
-<p>The container exposes port 3000 internally. The compose file maps it to
-<code>${HOST_PORT}</code> on the host (default 3000). Bind to a specific host
-interface to limit exposure:</p>
-<pre><code class="language-yaml">ports:
-  - &quot;127.0.0.1:${HOST_PORT}:3000&quot;   # loopback only
-</code></pre>
-<p>For production behind a reverse proxy on the same host, this is the
-recommended posture: only the proxy can reach the pi-forge, and the
-proxy terminates TLS + handles auth headers.</p>
-<p>For multi-host deployments, put the pi-forge on a private network the
-proxy can reach. Avoid <code>0.0.0.0:3000:3000</code> on a host whose port 3000 is
-internet-routable.</p>
-<h3>SSE through proxies</h3>
-<p>Server-Sent Events are long-lived HTTP responses. Most proxies need
-explicit configuration to not buffer them:</p>
-<ul>
-<li><strong>nginx:</strong> <code>proxy_buffering off; proxy_read_timeout 3600s;</code></li>
-<li><strong>Caddy:</strong> <code>flush_interval -1</code> + <code>read_timeout 30m</code> (full snippet in
-<a href="../README.md"><code>README.md</code></a>)</li>
-<li><strong>Traefik:</strong> SSE-friendly out of the box (no buffering by default), but
-set <code>transport.respondingTimeouts.readTimeout = 3600s</code> for long agent
-runs</li>
-</ul>
-<p>WebSocket support (terminal route) requires the same upgrade-handling on
-the proxy side; both nginx and Caddy do this transparently in their
-default reverse-proxy directives.</p>
+<p>The compose file binds host-side to <code>127.0.0.1:${HOST_PORT}:3000</code> by
+default — only the host can reach the container. To expose to the LAN,
+remove the <code>127.0.0.1:</code> prefix; for production, leave it loopback-only
+and front with a reverse proxy on the same host.</p>
+<p>Reverse-proxy + TLS recipes (nginx, Caddy, Traefik) including the
+SSE-buffering and WebSocket-upgrade settings live in
+<a href="./deployment.md"><code>deployment.md</code></a>.</p>
 <h2>Security inside the container</h2>
 <ul>
-<li><strong>Non-root user.</strong> The pi-forge runs as <code>pi:pi</code>, never as root. The
-<code>tini</code> init handles signal forwarding so the container shuts down
-cleanly on <code>docker stop</code>.</li>
-<li><strong>No new privileges.</strong> The image has no capabilities beyond what the
-base Alpine install provides. The container does not need privileged
-mode, host PID, or <code>--cap-add</code>. If you find yourself adding any of
-these, you&#39;re working around the threat model — open an issue first.</li>
-<li><strong>Read-only root filesystem (optional).</strong> You can add
-<code>read_only: true</code> to the compose file with appropriate <code>tmpfs</code> mounts
-for <code>/tmp</code> and <code>/home/pi/.npm</code> if you want a hardened deploy. Native
-modules and node_modules live in the image (read-only at runtime by
-default), so this works.</li>
+<li><strong>Non-root.</strong> Runs as <code>pi:pi</code>. <code>tini</code> forwards signals so
+<code>docker stop</code> shuts down cleanly.</li>
+<li><strong>No extra capabilities.</strong> No privileged mode, host PID, or
+<code>--cap-add</code> needed. If you find yourself adding any, you&#39;re working
+around the threat model — open an issue first.</li>
+<li><strong>Read-only root filesystem (optional).</strong> Add <code>read_only: true</code> to
+compose with <code>tmpfs</code> mounts for <code>/tmp</code> and <code>/home/pi/.npm</code> if you
+want a hardened deploy. Native modules + node_modules live in the
+image, so they&#39;re already read-only.</li>
 </ul>
 <h2>Updating</h2>
 <p>The image is <strong>not</strong> auto-updating. To pull a new release:</p>

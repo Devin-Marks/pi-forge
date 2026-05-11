@@ -1,0 +1,233 @@
+# Containers
+
+The shipped Docker image, compose recipe, volume layout, security model,
+and resource tuning. For Kubernetes / OpenShift, see
+[`kubernetes/DEPLOY.md`](../kubernetes/DEPLOY.md). For non-container
+reverse-proxy + TLS recipes, see [`deployment.md`](./deployment.md).
+
+## Why containers
+
+Pi-forge is single-tenant. The agent's `bash` tool is a real shell;
+`write` / `edit` touch the workspace; the integrated terminal spawns a
+PTY with the server's permissions. The container bounds the blast
+radius (workspace bind mount + ephemeral container fs), pins the
+runtime (Node + native bindings), and makes deploys reproducible.
+
+## Image overview
+
+`docker/Dockerfile` is multi-stage:
+
+| Stage | Base | Purpose |
+|---|---|---|
+| `builder` | `node:22-bookworm-slim` | Installs all deps including devDeps, compiles native bindings (`node-pty`), runs `npm run build` for both packages |
+| `runtime` | `node:22-bookworm-slim` | Production deps + built artifacts only. Adds `git`, `ripgrep`, `bash`, `curl`, `less`, `procps`. Runs as non-root `pi`; `SHELL=/bin/bash` so xterm sessions land in bash, not dash |
+
+Final image is ~330 MB. Debian-based (not Alpine) because the Node
+native-module ecosystem ships glibc prebuilds; on musl, those packages
+fall back to source builds.
+
+Installed at runtime:
+
+- **Node.js 22**
+- **`tini`** — init for signal forwarding + zombie reaping
+- **`git`** — required by the agent's `bash` tool and the GitPanel routes
+- **`ripgrep`** — pi's `grep` tool delegates to `rg` when present;
+  silently degrades to a Node walker without it
+
+### User and permissions
+
+The image creates a `pi` user (uid/gid configurable via `PUID` /
+`PGID` build args; default `1000:1000`). For bind mounts to be
+writable, the container `pi` user must match the host owner of the
+mounted directory. On Linux:
+
+```bash
+PUID=$(id -u) PGID=$(id -g) docker compose -f docker/docker-compose.yml up -d --build
+```
+
+On Docker Desktop for macOS, UID translation is automatic.
+
+## Volumes
+
+Three bind-mounted volumes:
+
+| Container path | Compose env var (default) | Contents |
+|---|---|---|
+| `/workspace` | `WORKSPACE_HOST_PATH` (`../workspace`) | User's project source. Projects are subfolders |
+| `/home/pi/.pi/agent` | `PI_CONFIG_HOST_PATH` (`~/.pi/agent`) | Pi SDK config — provider keys, models, settings. Shared with host pi CLI by default so secrets aren't copied into the image |
+| `/home/pi/.pi-forge` | `FORGE_DATA_HOST_PATH` (`~/.pi-forge-docker`) | Forge state — `projects.json`, MCP / overrides / `jwt-secret` / `password-hash`. **Separate default** from the host path so the container has its own project list (host paths wouldn't resolve inside the container anyway) |
+
+Session JSONLs default to `${WORKSPACE_PATH}/.pi/sessions/` so they
+live on the workspace bind mount — backing up the workspace backs up
+conversation history. Override with `SESSION_DIR` to relocate.
+
+## Environment variables
+
+The full env-var reference lives in
+[`configuration.md`](./configuration.md#environment-variables). The
+container fixes the path-related vars; everything else is yours to set
+in `docker/.env`:
+
+| Variable | Container value |
+|---|---|
+| `PORT` | `3000` (map to host via `HOST_PORT`) |
+| `HOST` | `0.0.0.0` (forced — required for Docker port-forward to work) |
+| `WORKSPACE_PATH` | `/workspace` |
+| `PI_CONFIG_DIR` | `/home/pi/.pi/agent` |
+| `FORGE_DATA_DIR` | `/home/pi/.pi-forge` |
+
+Set `UI_PASSWORD` and / or `API_KEY` in `.env` for any non-loopback
+deploy — without them, auth is disabled.
+
+## Compose recipe
+
+The shipped compose file (`docker/docker-compose.yml`) covers a typical
+single-host deploy. Quickstart:
+
+```bash
+cp docker/.env.example docker/.env
+# edit docker/.env — at minimum set HOST_PORT and (for any non-loopback
+# deploy) UI_PASSWORD (JWT_SECRET auto-generates), or API_KEY
+cd docker && docker compose up -d --build
+```
+
+### Operations
+
+```bash
+# Logs (follow)
+docker compose -f docker/docker-compose.yml logs -f
+
+# Restart after editing .env
+docker compose -f docker/docker-compose.yml restart
+
+# Rebuild on code change
+docker compose -f docker/docker-compose.yml up -d --build
+
+# Tear down (preserves volumes)
+docker compose -f docker/docker-compose.yml down
+
+# Tear down + delete the named volumes (workspace stays — that's a bind mount)
+docker compose -f docker/docker-compose.yml down -v
+```
+
+### Health check
+
+The container has a baked-in health check that `fetch`s
+`http://127.0.0.1:3000/api/v1/health` every 30 s. After the start period,
+three failures in a row mark it unhealthy. `docker compose ps` reports the
+health state.
+
+## Resource recommendations
+
+Default `docker-compose.yml` doesn't pin CPU / memory limits — pi-forge
+is lightweight at idle and the agent's resource use depends entirely on
+what your prompts ask for. Reasonable starting points:
+
+```yaml
+services:
+  pi-forge:
+    deploy:
+      resources:
+        limits:
+          memory: 2G    # base + room for buffered SSE / one PTY
+        reservations:
+          memory: 512M
+```
+
+Bump if you:
+
+- **Run heavy build commands inside the integrated terminal** (npm builds,
+  cargo, etc.) — terminal output is buffered in the agent's session
+  history, which lives in memory until the SSE clients drain it
+- **Open many terminals** — each PTY is a separate node-pty + child shell,
+  ~5-15 MB per shell at rest, more if you `tail -f` something
+- **Have very long running sessions** — pi accumulates message history in
+  memory; compaction trims it but cycles in and out
+
+CPU is rarely the bottleneck — most pi-forge CPU is forwarding bytes
+between the LLM provider and the browser.
+
+## Networking
+
+The compose file binds host-side to `127.0.0.1:${HOST_PORT}:3000` by
+default — only the host can reach the container. To expose to the LAN,
+remove the `127.0.0.1:` prefix; for production, leave it loopback-only
+and front with a reverse proxy on the same host.
+
+Reverse-proxy + TLS recipes (nginx, Caddy, Traefik) including the
+SSE-buffering and WebSocket-upgrade settings live in
+[`deployment.md`](./deployment.md).
+
+## Security inside the container
+
+- **Non-root.** Runs as `pi:pi`. `tini` forwards signals so
+  `docker stop` shuts down cleanly.
+- **No extra capabilities.** No privileged mode, host PID, or
+  `--cap-add` needed. If you find yourself adding any, you're working
+  around the threat model — open an issue first.
+- **Read-only root filesystem (optional).** Add `read_only: true` to
+  compose with `tmpfs` mounts for `/tmp` and `/home/pi/.npm` if you
+  want a hardened deploy. Native modules + node_modules live in the
+  image, so they're already read-only.
+
+## Updating
+
+The image is **not** auto-updating. To pull a new release:
+
+```bash
+git pull origin main
+cd docker && docker compose up -d --build
+```
+
+The build is incremental — npm dep resolution caches; only changed source
+files trigger a rebuild. Cold builds are ~3-5 minutes; warm rebuilds are
+~30 seconds.
+
+If you've forked the project, pin to your fork's image tag in the compose
+file and update the tag explicitly.
+
+## Troubleshooting
+
+### Container starts but can't write to `/workspace`
+
+UID mismatch. Check the host owner (`ls -ln <host-workspace-path>`) and
+either:
+
+- Rebuild with matching `PUID` / `PGID` build args, OR
+- `chown -R $(id -u):$(id -g) <host-workspace-path>` to match the
+  container's defaults
+
+### Terminal fails to spawn (`posix_spawnp failed`)
+
+The native `node-pty` binding doesn't match the runtime Node version.
+This is a host-only issue (the Docker image rebuilds the binding during
+its build stage). If you somehow hit it inside the container, your
+local image is stale — `docker compose up -d --build` (note `--build`).
+
+### Health check failing on first start
+
+The first request lazy-loads the project registry from disk, which on a
+slow filesystem (NFS, network bind mount) can take a few seconds. The
+health check has a 10 s start period; tune `start_period` in the compose
+file's `healthcheck` block if needed.
+
+### Container can't reach LLM provider
+
+The container needs egress to whatever provider domain you've configured
+(`api.anthropic.com`, `api.openai.com`, etc.). On corporate networks behind
+an HTTP proxy, set `HTTPS_PROXY` in the environment block.
+
+### `git` commands fail with "fatal: detected dubious ownership"
+
+Recent git versions reject working trees owned by a different UID than
+the running process. Either match UIDs (per the bind-mount section
+above) or run inside the container:
+
+```bash
+docker compose exec pi-forge git config --global --add safe.directory /workspace/<project>
+```
+
+The setting persists across container restarts because it lives in the
+`pi` user's git config inside `/home/pi/.gitconfig`, which is on the
+container filesystem — not on a bind mount. To persist across rebuilds,
+add it to the Dockerfile (or use a config-only bind mount).

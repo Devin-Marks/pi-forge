@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SSE Events — pi-forge</title>
-  <meta name="description" content="The agent event stream: every event type, payload, and UI affordance.">
+  <meta name="description" content="The agent event stream — every event type, payload, and UI affordance.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='1' y='1' width='30' height='30' rx='7' fill='%230d0d10'/><path d='M12 13 H20 M14 13 V21 M18 13 V21' stroke='%23e6e7eb' stroke-width='1.6' stroke-linecap='round' fill='none'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -41,6 +41,7 @@
         <a href="configuration.html">Configuration</a>
         <a href="containers.html">Containers</a>
         <a href="deployment.html">Deployment</a>
+        <a href="mobile.html">Mobile</a>
         <a href="api.html">API Examples</a>
         <a href="mcp.html">MCP Servers</a>
         <a href="sse-events.html" class="active">SSE Events</a>
@@ -55,22 +56,23 @@
 
     <main class="docs-main">
       <h1>SSE Events</h1>
-      <p class="docs-subtitle">The agent event stream: every event type, payload, and UI affordance.</p>
+      <p class="docs-subtitle">The agent event stream — every event type, payload, and UI affordance.</p>
 <p>Server-Sent Events stream from <code>GET /api/v1/sessions/:id/stream</code>. Every
 client (the React UI, your scripts, your dashboards) consumes the same
 stream. This document catalogues every event type, full example payloads,
 ordering guarantees, and how to consume the stream from Python and Node.</p>
 <h2>Wire format</h2>
-<p>Standard SSE: each event is one <code>data:</code> line with a JSON-serialized
-payload, followed by a blank line.</p>
+<p>Standard SSE — one <code>data:</code> line per event with a JSON payload, blank
+line between events:</p>
 <pre><code>data: {&quot;type&quot;:&quot;agent_start&quot;,&quot;sessionId&quot;:&quot;...&quot;}
 
 data: {&quot;type&quot;:&quot;message_update&quot;,&quot;assistantMessageEvent&quot;:{&quot;type&quot;:&quot;text_delta&quot;,&quot;delta&quot;:&quot;Hello&quot;}}
 
 data: {&quot;type&quot;:&quot;agent_end&quot;,&quot;sessionId&quot;:&quot;...&quot;}
 </code></pre>
-<p>The endpoint sets <code>Content-Type: text/event-stream</code> and <code>Cache-Control: no-cache, no-transform</code>. Reverse proxies must NOT buffer (<code>X-Accel-Buffering: no</code> is set by the server, plus Caddy&#39;s <code>flush_interval -1</code>, plus nginx&#39;s
-<code>proxy_buffering off</code> — see <a href="./deployment.md"><code>docs/deployment.md</code></a>).</p>
+<p><code>Content-Type: text/event-stream</code>, <code>Cache-Control: no-cache, no-transform</code>, <code>X-Accel-Buffering: no</code>. Reverse-proxy buffering must
+be off — see <a href="./deployment.md"><code>deployment.md</code></a> for nginx / Caddy /
+Traefik snippets.</p>
 <h2>Connection lifecycle</h2>
 <pre><code>Client                                                    Server
   │                                                          │
@@ -91,11 +93,11 @@ data: {&quot;type&quot;:&quot;agent_end&quot;,&quot;sessionId&quot;:&quot;...&qu
   │   (idle — connection stays open; next agent activity     │
   │    flows straight through)                               │
 </code></pre>
-<p>The server holds the connection open indefinitely. The client closes by
-disconnecting; the server cleans up the <code>LiveSession.clients</code> Set entry
-on <code>req.raw.on(&quot;close&quot;)</code>. There is no server-side keepalive/heartbeat
-event today — long idle periods on aggressive proxies may need a
-keepalive comment line; track that as a polish item if it bites.</p>
+<p>The server holds the connection open indefinitely; the client closes
+by disconnecting. There is no server-side keepalive/heartbeat — long
+idle periods on aggressive proxies may drop the connection. The
+client&#39;s reconnect-with-backoff (described below) recovers
+transparently.</p>
 <h2>Always-first event: <code>snapshot</code></h2>
 <p>Every new SSE connection receives a <code>snapshot</code> as its first event. This
 hydrates a freshly-connected client&#39;s view without requiring a separate
@@ -278,9 +280,9 @@ stdout).</p>
   }
 }
 </code></pre>
-<p><code>details</code> is tool-specific. For <code>edit</code> tools it includes a unified diff
-string under a tool-specific field — the pi-forge&#39;s
-<code>turn-diff-builder.ts</code> extracts these for the Last Turn pane.</p>
+<p><code>details</code> is tool-specific. For <code>edit</code> tools it includes a unified
+diff string; <code>turn-diff-builder.ts</code> extracts these for the Last Turn
+pane.</p>
 <h2>Steering / queue events</h2>
 <h3><code>queue_update</code></h3>
 <p>The pending steer / followUp queue changed. Pi clears delivered queue

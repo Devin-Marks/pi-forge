@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mobile — pi-forge</title>
+  <meta name="description" content="Mobile-tuned chat surface and PWA install on iOS / Android.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='1' y='1' width='30' height='30' rx='7' fill='%230d0d10'/><path d='M12 13 H20 M14 13 V21 M18 13 V21' stroke='%23e6e7eb' stroke-width='1.6' stroke-linecap='round' fill='none'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="../index.html" class="logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="#0d0d10"/>
+  <path d="M9 11 L6 16 L9 21" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M23 11 L26 16 L23 21" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M12 13 H20 M14 13 V21 M18 13 V21" stroke="#e6e7eb" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
+        pi-forge
+      </a>
+      <nav class="nav-links" id="navLinks">
+        <a href="../index.html#features">Features</a>
+        <a href="../index.html#quickstart">Quick Start</a>
+        <a href="architecture.html">Docs</a>
+        <a href="https://github.com/Devin-Marks/pi-forge" class="nav-cta">GitHub</a>
+      </nav>
+      <button class="mobile-toggle" id="mobileToggle" aria-label="Toggle menu">&#9776;</button>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+    <aside class="docs-sidebar" id="docsSidebar">
+      <div class="sidebar-section">
+        <h4>Documentation</h4>
+        <a href="architecture.html">Architecture</a>
+        <a href="configuration.html">Configuration</a>
+        <a href="containers.html">Containers</a>
+        <a href="deployment.html">Deployment</a>
+        <a href="mobile.html" class="active">Mobile</a>
+        <a href="api.html">API Examples</a>
+        <a href="mcp.html">MCP Servers</a>
+        <a href="sse-events.html">SSE Events</a>
+      </div>
+      <div class="sidebar-section">
+        <h4>Project</h4>
+        <a href="https://github.com/Devin-Marks/pi-forge">GitHub</a>
+        <a href="https://github.com/Devin-Marks/pi-forge/blob/main/CHANGELOG.md">Changelog</a>
+        <a href="https://github.com/Devin-Marks/pi-forge/blob/main/SECURITY.md">Security</a>
+      </div>
+    </aside>
+
+    <main class="docs-main">
+      <h1>Mobile</h1>
+      <p class="docs-subtitle">Mobile-tuned chat surface and PWA install on iOS / Android.</p>
+<p>pi-forge is an installable PWA with a mobile-tuned chat surface —
+talk to the agent and monitor what it&#39;s doing from your phone.</p>
+<h2>What works on mobile</h2>
+<p>The phone surface is <strong>chat + project monitoring</strong>:</p>
+<ul>
+<li>Send prompts, watch the streaming reply</li>
+<li>Switch projects and sessions via the slide-in drawer</li>
+<li>Slash commands and <code>@</code> file references with phone-tuned popovers</li>
+<li>Attach photos from gallery / camera, or files from the system file
+manager</li>
+<li>Abort an in-flight agent run</li>
+</ul>
+<p>Hidden (and unmounted, not just <code>display: none</code>) on mobile so they
+don&#39;t load CodeMirror or hold a server-side PTY:</p>
+<ul>
+<li>File browser tree</li>
+<li>Per-turn diff panel</li>
+<li>Git panel</li>
+<li>File editor</li>
+<li>Integrated terminal</li>
+</ul>
+<p>To get the desktop layout on a phone, use your browser&#39;s <strong>&quot;Request
+Desktop Site&quot;</strong> toggle — the mobile breakpoint reacts to viewport
+width, not user-agent, so the layout snaps back to full desktop.</p>
+<h2>Installing as a PWA</h2>
+<p>Once installed, pi-forge runs fullscreen with no browser chrome and
+respects your phone&#39;s safe-area insets.</p>
+<p><strong>iOS Safari.</strong> First visit shows a hint: <em>&quot;Install: tap Share, then
+Add to Home Screen.&quot;</em> iOS doesn&#39;t fire <code>beforeinstallprompt</code> — there&#39;s
+no Install button, only the Share-sheet flow. If you dismiss the hint,
+reach the same flow via the share button (square with up-arrow).</p>
+<p><strong>Android Chrome / Brave / Edge.</strong> First visit shows a banner with an
+<strong>Install</strong> button. If you dismiss it, install via the browser menu →
+<strong>Install app</strong> (or <strong>Add to Home Screen</strong>).</p>
+<h2>HTTPS is required for install (operator gotcha)</h2>
+<p>Both Chrome and Safari only treat a site as installable over <strong>HTTPS</strong>
+(or <code>http://localhost</code>). A LAN-IP <code>http://</code> instance — including the
+<code>npm run dev:remote</code> flow at <code>http://10.0.0.5:5173</code> — won&#39;t show an
+install option even with a valid manifest and service worker.</p>
+<p>Production deployments behind a TLS-terminating reverse proxy (Caddy,
+nginx, Traefik) get install for free. For local testing, two paths:</p>
+<ul>
+<li><p><strong>ngrok</strong> (easiest):</p>
+<pre><code class="language-bash">npm run build
+HOST=127.0.0.1 UI_PASSWORD=&#39;your-pw&#39; node packages/server/dist/index.js &amp;
+ngrok http 3000
+</code></pre>
+<p>Visit the <code>https://….ngrok.io</code> URL on your phone.</p>
+</li>
+<li><p><strong>Chrome&#39;s insecure-origin-as-secure flag.</strong> On the phone, visit
+<code>chrome://flags#unsafely-treat-insecure-origin-as-secure</code>, add your
+LAN URL, enable, restart Chrome. Brave has the same flag at
+<code>brave://flags</code>.</p>
+</li>
+</ul>
+<p><code>npm run dev</code> / <code>dev:remote</code> also disables the service worker
+(<code>devOptions: { enabled: false }</code> in <code>vite.config.ts</code>) so HMR works —
+that&#39;s a second reason install won&#39;t work in dev. You need a
+production build (<code>npm run build</code>) for the SW to be active.</p>
+<h2>Mobile-specific behaviors</h2>
+<ul>
+<li><strong>Enter inserts a newline.</strong> Mobile virtual keyboards don&#39;t surface
+Shift, so the desktop &quot;Shift+Enter for newline&quot; rule is unusable.
+Send via the explicit Send button. The slash and <code>@</code> palettes still
+own Enter when open.</li>
+<li><strong>Keyboard auto-dismisses on send</strong> so the streaming reply isn&#39;t
+hidden behind half a screen of keyboard.</li>
+<li><strong>Textarea auto-grows</strong> with input, capped at 30 vh, then scrolls
+internally.</li>
+<li><strong>Composer rides above the keyboard</strong> via the
+<code>interactive-widget=resizes-content</code> viewport hint — no JS, just
+CSS reacting to the shrunk visual viewport.</li>
+<li><strong>Attach button</strong> (paperclip) opens a popover: <strong>Photo</strong> for
+gallery + camera, <strong>File</strong> for the system file manager.</li>
+<li><strong>Drawer.</strong> Hamburger button at top-left, or swipe right from the
+left edge. Tap the backdrop or pick a project / session to close.</li>
+<li><strong>Theme-aware browser chrome</strong> — Android Chrome&#39;s address bar
+follows the active theme via the <code>theme-color</code> meta tag, updated on
+every theme switch.</li>
+<li><strong>Background streaming.</strong> If you close the tab mid-stream the agent
+keeps running server-side, but updates don&#39;t reach you until you
+reopen pi-forge (no push notifications).</li>
+</ul>
+<h2>See also</h2>
+<ul>
+<li><a href="./configuration.md"><code>configuration.md</code></a> — env vars + CLI flags,
+including <code>MINIMAL_UI</code> which mirrors most mobile-mode hides for
+locked-down desktop deploys</li>
+<li><a href="./deployment.md"><code>deployment.md</code></a> — TLS at a reverse proxy (the
+prerequisite for PWA install)</li>
+<li><a href="../packages/client/src/lib/theme.ts"><code>packages/client/src/lib/theme.ts</code></a> — theme registry + <code>THEME_CHROME</code> table</li>
+<li><a href="../packages/client/src/components/InstallPrompt.tsx"><code>packages/client/src/components/InstallPrompt.tsx</code></a> — install-banner component (iOS vs Android branching)</li>
+</ul>
+
+    </main>
+  </div>
+
+  <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">&#9776;</button>
+
+  <script>
+    document.getElementById('mobileToggle').addEventListener('click', () => {
+      document.getElementById('navLinks').classList.toggle('open');
+    });
+    document.getElementById('sidebarToggle').addEventListener('click', () => {
+      document.getElementById('docsSidebar').classList.toggle('open');
+    });
+  </script>
+</body>
+</html>

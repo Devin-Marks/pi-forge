@@ -2,141 +2,110 @@
 
 ## Supported versions
 
-pi-forge follows a rolling-release model from `main`. The latest
-tagged release receives security fixes; older releases do not.
-
-| Version | Supported |
-|---|---|
-| Latest tag (`main`) | ✅ |
-| Older tags | ❌ |
-
-When a security fix lands, it ships in the next tagged release. There is
-no LTS branch.
+Only the latest tagged release receives security fixes. No LTS branch.
 
 ## Threat model
 
 pi-forge is **single-tenant** by design — one deploy, one user, one
-workspace root. The threat model assumes:
+workspace root. Assumptions:
 
-- The pi-forge process trusts its own user. There is no isolation between
-  the user and the agent's filesystem / shell access; the agent runs with
-  full permissions of the pi-forge process.
-- The container is the unit of isolation. Run pi-forge in Docker (or
-  another container runtime) so the agent's bash tool can't damage the
-  host outside the bind-mounted workspace.
-- The HTTP surface is **not** safe to expose to the public internet over
-  plain HTTP. Always terminate TLS at a reverse proxy (Caddy, nginx,
-  Traefik) when network-exposing pi-forge, and always set
-  `UI_PASSWORD` (or `API_KEY`) for any non-loopback deployment.
-  `JWT_SECRET` is auto-generated and persisted to the data-dir PVC /
-  bind-mount on first boot — set it explicitly only to override.
-- Cross-project / cross-tenant isolation is **out of scope**. The project
-  registry trusts every project path the user adds; once added, the agent
-  can read and modify anything inside that path.
+- **Pi-forge trusts its own user.** No isolation between the user and
+  the agent's filesystem / shell access; the agent runs with the
+  process's full permissions.
+- **The container is the unit of isolation.** Run pi-forge in Docker
+  so the agent's `bash` tool can't damage anything outside the
+  bind-mounted workspace.
+- **No plain HTTP on a routable interface.** Terminate TLS at a
+  reverse proxy and set `UI_PASSWORD` (or `API_KEY`) for any
+  non-loopback deployment. `JWT_SECRET` auto-generates on first boot;
+  set it explicitly only to override.
+- **No cross-project isolation.** The project registry trusts every
+  path the user adds; the agent can read / modify anything inside.
 
 ## What the project tries to defend against
 
-- **Path traversal** in route handlers. Every filesystem operation goes
-  through `packages/server/src/file-manager.ts`, which validates the
-  resolved absolute path is inside the project root before touching disk
-  (symlink-followed via `realpath` walk; rejects with a typed
-  `PathOutsideRootError` → 403).
-- **Auth bypass** on routes. Every route under `/api/v1/` (except the
-  explicitly-public `/health`, `/auth/*`, `/ui-config`, and `/terminal`
-  WebSocket handshake) goes through the global JWT/API-key check. New
-  routes that should be public must explicitly opt in via
-  `config: { public: true }`.
-- **Brute-force login** on `/api/v1/auth/login`. Rate-limited per IP
-  (defaults: 10 attempts per 60 s, configurable via `RATE_LIMIT_LOGIN_*`).
-  When behind a reverse proxy, set `TRUST_PROXY=true` so the limit
-  applies per real client IP.
-- **JWT token leaks via logs**. The terminal WS upgrade URL contains
-  `?token=...` because browsers can't attach `Authorization` headers on
-  WebSocket connects. Pino's `req` serializer redacts `token=...` query
-  params globally before any log line is emitted.
-- **Malicious file uploads** in the file browser. Uploads go through the
-  same path validation as everything else, plus a per-file (500 MB) and
-  aggregate (2 GB) cap, a 16-files-per-request cap, plus a SHA-256
-  round-trip check (client computes, server verifies).
-- **Prompt-injection via attached text files**. The chat input's text-file
-  attachment path uses fenced-code-block insertion with a fence longer than
-  the longest backtick-run in the file contents. A hostile attached file
-  can't escape the fence to inject instructions to the LLM.
-- **Host env-var inheritance into the spawned shell**. The integrated
-  terminal and the `!` exec route start from a small allowlist of harmless
-  system vars (`PATH`, `HOME`, `USER`, `SHELL`, `TERM`, `LANG`/`LC_*`, `TZ`,
-  …). Everything else — pi-forge secrets (`JWT_SECRET`, `API_KEY`,
-  `UI_PASSWORD`), provider keys (`*_API_KEY`), cloud credentials (`AWS_*`,
-  `KUBECONFIG`, `GH_TOKEN`, …), or any other host-env var — is dropped
-  before spawn so an authenticated user can't `printenv` / `echo $X` to read
-  them. Operators who legitimately need a specific var in-shell opt it back
-  in via `TERMINAL_PASSTHROUGH_ENV` (comma- or whitespace-separated). The
-  list lives in `packages/server/src/pty-manager.ts#TERMINAL_ENV_ALLOWLIST`.
-- **Accidental secret disclosure by the agent (opt-in).** The agent's
-  autonomous `bash` tool DOES inherit the pi-forge process env
-  (deliberately — skills often legitimately need `$GITHUB_TOKEN`,
-  `$AWS_*`, etc. to do their job). The realistic failure mode is the
-  model deciding on its own to `printenv` while debugging and dumping
-  secrets into the assistant transcript (which the user may screen-share,
-  log, or paste into a bug report). Operators worried about this can opt
-  in to a system-prompt addendum that asks the model to treat env-var
-  values as credentials by default and reference them by name (`$X`)
-  rather than expanding them inline. Enable by setting:
+- **Path traversal.** Every filesystem op goes through
+  `packages/server/src/file-manager.ts`, which validates the resolved
+  absolute path is inside the project root via a `realpath` walk and
+  rejects with a 403.
+- **Auth bypass.** Every route under `/api/v1/` (except the
+  explicitly-public `/health`, `/auth/*`, `/ui-config`, and the
+  `/terminal` WS handshake) goes through the global JWT / API-key
+  check. New public routes must opt in via `config: { public: true }`.
+- **Brute-force login.** Rate-limited per IP (10 / 60 s default,
+  configurable via `RATE_LIMIT_LOGIN_*`). Behind a reverse proxy, set
+  `TRUST_PROXY=true` so the limit sees real client IPs.
+- **Token leaks via logs.** The terminal WS upgrade URL carries
+  `?token=...` because browsers can't attach headers on WS connects.
+  Pino's `req` serializer redacts `token=...` from query params before
+  any log line is emitted.
+- **Malicious uploads.** Path-validated like everything else, plus
+  per-file (500 MB), aggregate (2 GB), and per-request file-count (16)
+  caps, plus SHA-256 round-trip verification.
+- **Prompt-injection via attached text files.** Inserted into prompts
+  inside fenced code blocks with a fence longer than the longest
+  backtick-run in the file — a hostile file can't escape the fence.
+- **Host env-var leakage to the integrated terminal.** The terminal
+  and the `!` exec route start from a small allowlist of harmless
+  system vars (`PATH`, `HOME`, `USER`, `SHELL`, `TERM`, `LANG`,
+  `LC_*`, `TZ`). Everything else — pi-forge secrets, provider keys
+  (`*_API_KEY`), cloud credentials (`AWS_*`, `KUBECONFIG`, `GH_TOKEN`)
+  — is dropped before spawn. Opt vars back in via
+  `TERMINAL_PASSTHROUGH_ENV`. Allowlist lives in
+  `pty-manager.ts#TERMINAL_ENV_ALLOWLIST`.
 
-  ```
-  AGENT_SECRET_HYGIENE_RULE=true
-  ```
+### Optional: agent secret-hygiene system-prompt nudge
 
-  The exact rule text lives in
-  `packages/server/src/agent-resource-loader.ts#FORGE_SECRET_HYGIENE_RULE`.
+The agent's autonomous `bash` tool **does** inherit pi-forge's process
+env (deliberate — skills legitimately need `$GITHUB_TOKEN`,
+`$AWS_*`, etc.). The failure mode: the model `printenv`'s while
+debugging and dumps secrets into the transcript (which the user may
+screen-share, log, or paste into a bug report).
 
-  **Important caveats — read before enabling.** This is a *behavioral
-  nudge, not a control*. The model can be talked out of it by a
-  determined user ("show me $X"), by a prompt injection landed in a
-  tool result, or by its own reasoning that "the user clearly wants
-  me to print this var." Skills and one-off prompts that legitimately
-  need to display a value can still do so by asking explicitly — the
-  rule says "unless the user explicitly asked." Operators with
-  adversarial threat models should pair it with the deployment
-  posture below (don't put sensitive env vars in `process.env` if
-  the agent doesn't need them; prefer `~/.pi/agent/auth.json` for
-  provider credentials, since those are read by the SDK before tool
-  spawn rather than inherited at spawn). The flag is intentionally
-  not surfaced in `docker-compose.yml` or `.env.example` so operators
-  meet the rule the same time they meet these caveats.
+Enable a system-prompt addendum that asks the model to treat env-var
+values as credentials and reference them by name rather than
+expanding them inline:
 
-## Known limitations
+```
+AGENT_SECRET_HYGIENE_RULE=true
+```
 
-These are documented gaps, not bugs — they reflect deliberate scope
-choices that operators should know about when planning a deployment.
+Exact rule text in
+`packages/server/src/agent-resource-loader.ts#FORGE_SECRET_HYGIENE_RULE`.
+**This is a behavioral nudge, not a control** — the model can be
+talked out of it by a determined user, a prompt injection in a tool
+result, or its own reasoning. Pair with the rest of the threat model
+(don't put sensitive env vars in `process.env` if the agent doesn't
+need them; prefer `~/.pi/agent/auth.json` for provider keys — read
+by the SDK before tool spawn, not inherited at spawn). Intentionally
+not surfaced in `docker-compose.yml` so operators meet the rule and
+its caveats together.
 
-- **Terminal can read pi config files.** The integrated terminal runs as a
-  real shell with the pi-forge process's filesystem access. The pi-coding-
-  agent SDK requires the pi-forge process to read its own config dir
-  (`PI_CONFIG_DIR`, default `~/.pi/agent`: `auth.json`, `models.json`,
-  `settings.json`), so a shell running under the same UID can also read
-  them — meaning an authenticated user can `cat ~/.pi/agent/auth.json` and
-  see any persisted provider API keys / OAuth tokens. Path-based blocking
-  inside the shell is trivially bypassable (`cat $(echo ~)/.pi/...`,
-  `python -c "print(open('...').read())"`, `dd if=...`) and would offer
-  false confidence. The actual mitigation is OS-level: run pi-forge
-  process and the shell as **separate UIDs**, with `auth.json` mode 600
-  owned by the pi-forge UID. This is achievable in custom Docker
-  deployments today; pi-forge's stock image runs both as the same
-  user. If your threat model includes "an authenticated pi-forge user
-  must not be able to read provider credentials," prefer OAuth (where
-  losing a token costs you a re-auth, not a key rotation) and rotate API
-  keys whenever you suspect terminal access has been abused.
+## Known technical limitations
 
-## What is explicitly out of scope
+- **Terminal can read pi config files.** The integrated terminal
+  runs with pi-forge's filesystem access. The pi SDK needs to read
+  `~/.pi/agent/auth.json`, so a shell running under the same UID can
+  read it too — an authenticated user can `cat` provider API keys /
+  OAuth tokens. Path-based blocking inside the shell is trivially
+  bypassable (`cat $(echo ~)/...`, `python -c "open(...)"`, `dd
+  if=...`) and would offer false confidence. The real mitigation is
+  OS-level: run pi-forge and the shell as **separate UIDs** with
+  `auth.json` mode 0600 owned by pi-forge's UID. Achievable in
+  custom Docker setups; the stock image runs both as the same user.
+  If your threat model includes "authenticated user must not be
+  able to read provider credentials," prefer OAuth (re-auth costs
+  less than key rotation) and rotate API keys when you suspect
+  terminal access was abused.
 
-- **A trusted user running malicious commands.** The agent's `bash` tool
-  is a real shell. If your workspace has secrets you don't want the agent
-  to read, don't add it as a project.
-- **A compromised provider.** The pi-forge passes user prompts to whichever
-  LLM provider you've configured. If that provider is malicious or
-  compromised, model output can include arbitrary content.
-- **Mass user / cross-tenant attacks.** There IS no multi-user model.
+## Explicitly out of scope
+
+- **Trusted user running malicious commands.** The agent's `bash`
+  tool is a real shell. Don't add a project containing secrets you
+  don't want the agent to read.
+- **Compromised LLM provider.** Pi-forge forwards prompts to the
+  configured provider; malicious provider output is on the provider.
+- **Mass user / cross-tenant attacks.** There is no multi-user model.
 
 ## Reporting a vulnerability
 
@@ -162,32 +131,19 @@ Encrypt with the project's PGP key if one is published in the GitHub profile.
 
 ### Response window
 
-pi-forge is maintained on a best-effort basis. The maintainer aims for
-the following response targets, but they are guidelines rather than
-guarantees — actual timing depends on maintainer availability, severity,
-upstream dependencies, and the complexity of the fix:
+Best-effort, not contractual SLAs. The maintainer aims for:
 
-- **Acknowledge** the report within roughly 5 business days when reasonably
-  possible.
-- **Triage** (confirm reproducibility, assess severity) on a similar
-  best-effort basis, typically within a couple of weeks.
-- **Fix and disclose** on a timeline proportional to severity:
-  - Critical (e.g. RCE, auth bypass, container escape): prioritized for the
-    next patched release, with coordinated public disclosure shortly after
-    the patch ships when feasible.
-  - High (e.g. path traversal, auth-required RCE, sensitive data exposure):
-    aimed for the next reasonable release window, with public disclosure
-    alongside the patch.
-  - Medium / Low: included in the next regular release and noted in the
-    release notes.
+- **Acknowledge** within ~5 business days
+- **Triage** within a couple of weeks
+- **Fix + disclose**: Critical (RCE, auth bypass, container escape)
+  prioritized for the next patched release with coordinated
+  disclosure; High (path traversal, auth-required RCE, sensitive data
+  exposure) at the next release window; Medium / Low in the next
+  regular release.
 
-A CVE may be requested through GitHub's advisory pipeline for confirmed
-Critical or High severity issues, at the maintainer's discretion.
-
-These targets describe intent, not contractual service levels. The project
-is provided under MIT and offers no warranty or support obligation — see
-the [LICENSE](./LICENSE) and the **Risks & disclaimer** section in
-[README.md](./README.md).
+CVEs may be requested via GitHub's advisory pipeline for Critical /
+High issues at the maintainer's discretion. MIT-licensed software, no
+warranty — see [LICENSE](./LICENSE) and the README's risks section.
 
 ## Out of scope
 

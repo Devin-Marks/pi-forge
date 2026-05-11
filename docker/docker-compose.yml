@@ -1,14 +1,9 @@
-# Single-tenant pi-forge. Run from the repo root:
+# Single-tenant pi-forge.
+#   cp docker/.env.example docker/.env   # edit secrets first time
+#   cd docker && docker compose up -d --build
 #
-#   cp docker/.env.example docker/.env   # first time only — edit secrets
-#   docker compose -f docker/docker-compose.yml --env-file docker/.env up -d --build
-#
-# Or `cd docker && docker compose up -d --build` — Compose auto-loads the
-# .env file sitting next to the compose file.
-#
-# The build context is the repo root (..) so the Dockerfile sees the
-# whole monorepo. .dockerignore at the root keeps node_modules / .git /
-# dist out of the build context.
+# Bind mounts, env-var rationale, and operator trade-offs:
+# see ../docs/containers.md.
 
 services:
   pi-forge:
@@ -16,35 +11,21 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
       args:
-        # Match the container `pi` user to the host UID/GID so bind
-        # mounts under /workspace and /home/pi/.pi-forge are
-        # writable. Default 1000:1000 covers most interactive Linux
-        # accounts; override in `.env` to match `id -u` / `id -g`.
+        # Override in .env to match `id -u` / `id -g` for writable bind mounts.
         PUID: ${PUID:-1000}
         PGID: ${PGID:-1000}
     image: pi-forge:latest
     container_name: ${CONTAINER_NAME:-pi-forge}
     restart: unless-stopped
     ports:
-      # Bind to localhost ONLY by default. Operators who want LAN access
-      # can change this to "${HOST_PORT:-3000}:3000" (no 127.0.0.1: prefix)
-      # — but should ALSO set UI_PASSWORD (or API_KEY) first,
-      # since the container speaks plain HTTP. Per SECURITY.md, never
-      # network-expose without TLS at a reverse proxy.
+      # Loopback only by default — drop the `127.0.0.1:` prefix to expose
+      # to the LAN (and set UI_PASSWORD or API_KEY first; see SECURITY.md).
       - "127.0.0.1:${HOST_PORT:-3000}:3000"
     volumes:
-      # User code lives here. Projects are subfolders. Keep this on a
-      # disk you back up.
       - ${WORKSPACE_HOST_PATH:-../workspace}:/workspace
-      # Share the host's pi config so the container inherits provider
-      # auth and models.json without duplication. Inside the container
-      # this resolves to /home/pi/.pi/agent (matching PI_CONFIG_DIR).
       - ${PI_CONFIG_HOST_PATH:-~/.pi/agent}:/home/pi/.pi/agent
-      # Forge-owned state (projects.json). Kept in its own dir so
-      # we don't mix our state into the pi SDK's config layout. Default
-      # gives the container its OWN project list — host vs container
-      # are isolated. Point both at the same host path if you want the
-      # registry shared.
+      # Default differs from the host pi-forge dir so the container has
+      # its own project list — see containers.md.
       - ${FORGE_DATA_HOST_PATH:-~/.pi-forge-docker}:/home/pi/.pi-forge
     environment:
       # Container-internal paths — fixed.
@@ -52,13 +33,7 @@ services:
       - PI_CONFIG_DIR=/home/pi/.pi/agent
       - FORGE_DATA_DIR=/home/pi/.pi-forge
       - PORT=3000
-      # Auth — read from .env. Empty values keep auth disabled.
-      # UI_PASSWORD is the INITIAL password; once changed via the UI
-      # the scrypt hash at ${FORGE_DATA_DIR}/password-hash takes
-      # over and this env value is ignored. REQUIRE_PASSWORD_CHANGE
-      # (default false) opt-in flag for sealed-secret deployments —
-      # set to true when UI_PASSWORD comes from helm/vault and the
-      # operator should rotate it on first login.
+      # Auth — read from .env. Both empty = auth disabled.
       - UI_PASSWORD=${UI_PASSWORD:-}
       - REQUIRE_PASSWORD_CHANGE=${REQUIRE_PASSWORD_CHANGE:-false}
       - JWT_SECRET=${JWT_SECRET:-}
@@ -67,37 +42,16 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - TRUST_PROXY=${TRUST_PROXY:-false}
       - CORS_ORIGIN=${CORS_ORIGIN:-}
-      # Frontend "minimal" mode — hides terminal, git pane, last-turn
-      # pane, and providers/agent settings; project create asks for a
-      # name only and auto-mkdirs under WORKSPACE_PATH. Server routes
-      # are unchanged. Use for locked-down deployments where provider
-      # config is managed at the deploy level.
       - MINIMAL_UI=${MINIMAL_UI:-false}
-    # Container hardening (mirrors what the k8s manifests already apply).
-    # Skipping `read_only: true` because the agent's bash tool commonly
-    # needs to write to /home/pi/.npm, /home/pi/.cache, /tmp, etc. for
-    # `npm install`, `pip install`, `git clone`. Operators with a more
-    # restricted use case can add `read_only: true` + a tmpfs for /tmp,
-    # /home/pi/.npm at their discretion.
+    # Hardening (mirrors the k8s manifests). Not read-only because the
+    # agent's bash tool needs to write to /home/pi/.npm, /tmp, etc.
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    # Cap process count to defang fork-bombs from a runaway agent
-    # process or a hostile bash command. 512 is well above any realistic
-    # interactive shell + tool subprocess depth.
     pids_limit: 512
-    # Resource limits — keep a misbehaving agent from filling the host's
-    # memory or starving the host CPU. Operators with heavier needs can
-    # raise these via override or a docker-compose.override.yml.
     mem_limit: 2g
     cpus: "1.0"
-    # ~/.pi/agent is bind-mounted read-write so pi-forge can update
-    # auth.json. This means a container escape (kernel CVE, runc CVE)
-    # would gain write access to every provider key the operator has
-    # configured. Documented trade-off; the alternative (read-only mount
-    # + out-of-band key updates) is too friction-heavy for the typical
-    # single-tenant workflow.
     healthcheck:
       test:
         [

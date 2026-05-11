@@ -7,8 +7,8 @@ ordering guarantees, and how to consume the stream from Python and Node.
 
 ## Wire format
 
-Standard SSE: each event is one `data:` line with a JSON-serialized
-payload, followed by a blank line.
+Standard SSE — one `data:` line per event with a JSON payload, blank
+line between events:
 
 ```
 data: {"type":"agent_start","sessionId":"..."}
@@ -19,10 +19,10 @@ data: {"type":"agent_end","sessionId":"..."}
 
 ```
 
-The endpoint sets `Content-Type: text/event-stream` and `Cache-Control:
-no-cache, no-transform`. Reverse proxies must NOT buffer (`X-Accel-Buffering:
-no` is set by the server, plus Caddy's `flush_interval -1`, plus nginx's
-`proxy_buffering off` — see [`docs/deployment.md`](./deployment.md)).
+`Content-Type: text/event-stream`, `Cache-Control: no-cache,
+no-transform`, `X-Accel-Buffering: no`. Reverse-proxy buffering must
+be off — see [`deployment.md`](./deployment.md) for nginx / Caddy /
+Traefik snippets.
 
 ## Connection lifecycle
 
@@ -47,11 +47,11 @@ Client                                                    Server
   │    flows straight through)                               │
 ```
 
-The server holds the connection open indefinitely. The client closes by
-disconnecting; the server cleans up the `LiveSession.clients` Set entry
-on `req.raw.on("close")`. There is no server-side keepalive/heartbeat
-event today — long idle periods on aggressive proxies may need a
-keepalive comment line; track that as a polish item if it bites.
+The server holds the connection open indefinitely; the client closes
+by disconnecting. There is no server-side keepalive/heartbeat — long
+idle periods on aggressive proxies may drop the connection. The
+client's reconnect-with-backoff (described below) recovers
+transparently.
 
 ## Always-first event: `snapshot`
 
@@ -240,9 +240,9 @@ The tool's result message has been added to the session.
 }
 ```
 
-`details` is tool-specific. For `edit` tools it includes a unified diff
-string under a tool-specific field — the pi-forge's
-`turn-diff-builder.ts` extracts these for the Last Turn pane.
+`details` is tool-specific. For `edit` tools it includes a unified
+diff string; `turn-diff-builder.ts` extracts these for the Last Turn
+pane.
 
 ## Steering / queue events
 

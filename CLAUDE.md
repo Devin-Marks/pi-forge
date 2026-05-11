@@ -1,4 +1,3 @@
-```markdown
 # AGENTS.md
 
 This file is the primary reference for any coding agent (or human) working on this
@@ -26,53 +25,71 @@ auth or isolation is needed or planned.
 ```
 pi-forge/
 ├── packages/
-│   ├── server/               # Fastify HTTP server (Node.js + TypeScript)
+│   ├── server/                          # Fastify HTTP server (Node.js + TypeScript)
 │   │   ├── src/
-│   │   │   ├── index.ts          # App entry: registers plugins + routes, starts server
-│   │   │   ├── config.ts         # All env var reads — import config from here, nowhere else
-│   │   │   ├── auth.ts           # JWT generation and verification
-│   │   │   ├── session-registry.ts  # In-memory AgentSession store — THE central module
-│   │   │   ├── sse-bridge.ts     # AgentSessionEvent → SSE serialization
-│   │   │   ├── project-manager.ts   # projects.json read/write
-│   │   │   ├── config-manager.ts    # pi config files read/write (models/auth/settings)
-│   │   │   ├── file-manager.ts      # Workspace filesystem operations
-│   │   │   ├── git-runner.ts        # git command execution wrapper
-│   │   │   ├── turn-diff-builder.ts # Aggregate file diff from session turn
-│   │   │   ├── file-searcher.ts     # Workspace ripgrep wrapper (file content search)
-│   │   │   ├── pty-manager.ts       # node-pty lifecycle management for terminal
-│   │   │   └── routes/
-│   │   │       ├── auth.ts
-│   │   │       ├── projects.ts
-│   │   │       ├── sessions.ts
-│   │   │       ├── stream.ts
-│   │   │       ├── prompt.ts
-│   │   │       ├── control.ts
-│   │   │       ├── config.ts
-│   │   │       ├── files.ts
-│   │   │       ├── git.ts
-│   │   │       ├── terminal.ts
-│   │   │       └── health.ts
+│   │   │   ├── index.ts                 # App entry: builds Fastify, registers plugins + routes, starts server
+│   │   │   ├── cli.ts                   # CLI arg parser; single source of truth for env↔flag mapping
+│   │   │   ├── config.ts                # ALL process.env reads — import `config` from here, nowhere else
+│   │   │   ├── auth.ts                  # JWT sign/verify + scrypt password hashing
+│   │   │   ├── session-registry.ts      # In-memory AgentSession store — THE central module
+│   │   │   ├── sse-bridge.ts            # AgentSessionEvent → SSE serialization
+│   │   │   ├── project-manager.ts       # projects.json read/write
+│   │   │   ├── config-manager.ts        # pi config files read/write (models/auth/settings)
+│   │   │   ├── config-export.ts         # tar.gz backup export + import (Settings → Backup)
+│   │   │   ├── file-manager.ts          # Workspace filesystem ops — path validation lives HERE
+│   │   │   ├── file-searcher.ts         # Workspace ripgrep wrapper (file content search)
+│   │   │   ├── file-references.ts       # `@path` expansion at prompt-send time
+│   │   │   ├── git-runner.ts            # git command execution wrapper
+│   │   │   ├── turn-diff-builder.ts     # Aggregate file diff from one session turn
+│   │   │   ├── pty-manager.ts           # node-pty lifecycle for the integrated terminal
+│   │   │   ├── diagnostics.ts           # Optional fetch-wrap + agent-event verbose log
+│   │   │   ├── agent-resource-loader.ts # Skills + tools + prompts merged for createAgentSession
+│   │   │   ├── extensions-discovery.ts  # Walks `<dir>/skills/`, `<dir>/prompts/`, etc.
+│   │   │   ├── skill-overrides.ts       # Per-project skill enable/disable (forge-private)
+│   │   │   ├── tool-overrides.ts        # Per-project tool enable/disable (forge-private)
+│   │   │   ├── prompt-overrides.ts      # Per-project pi-prompt enable/disable (forge-private)
+│   │   │   ├── compaction-history.ts    # Per-session compaction event log
+│   │   │   ├── concurrency.ts           # Async-mutex helpers for serialized writes
+│   │   │   ├── attachment-converters.ts # Image/text attachment normalization for prompt route
+│   │   │   ├── skills-export.ts         # Skills archive export
+│   │   │   ├── mcp/                     # MCP client manager + customTools bridge — see docs/mcp.md
+│   │   │   └── routes/                  # auth, config, control, exec, files, git, health,
+│   │   │                                #   mcp, projects, prompt, sessions, stream, terminal,
+│   │   │                                #   _schemas (shared JSON schemas)
 │   │   └── package.json
-│   └── client/               # React + Vite frontend (TypeScript)
+│   └── client/                          # React + Vite frontend (TypeScript)
+│       ├── index.html                   # Viewport meta + theme-color (dark default; updated by theme.ts)
 │       ├── src/
 │       │   ├── main.tsx
-│       │   ├── App.tsx
+│       │   ├── App.tsx                  # Layout shell + mobile drawer/breakpoint chrome
 │       │   ├── lib/
-│       │   │   ├── api-client.ts     # Typed fetch wrapper — all HTTP calls go here
-│       │   │   ├── sse-client.ts     # SSE connection manager
-│       │   │   └── auth-client.ts    # Token storage and attachment
-│       │   ├── store/
-│       │   │   ├── auth-store.ts
-│       │   │   ├── project-store.ts
-│       │   │   └── session-store.ts
-│       │   └── components/
+│       │   │   ├── api-client/          # Typed fetch wrapper — ALL HTTP calls go here
+│       │   │   ├── sse-client.ts        # SSE connection manager (auto-reconnect)
+│       │   │   ├── auth-client.ts       # Token storage and attachment
+│       │   │   ├── theme.ts             # 5-theme registry + per-theme `theme-color` meta sync
+│       │   │   ├── use-is-mobile.ts     # Reactive viewport hook (Tailwind md breakpoint)
+│       │   │   ├── cross-tab.ts         # BroadcastChannel for cross-tab state sync
+│       │   │   ├── diff-parser.ts       # Unified diff → structured hunks
+│       │   │   ├── diff-highlight.ts    # Prism syntax highlighting in diffs
+│       │   │   ├── git-graph.ts         # Branch/commit graph layout
+│       │   │   └── subagent-parser.ts   # pi-subagents tool-result parsing for the rich card
+│       │   ├── store/                   # Zustand stores: auth, project, session, file, mcp,
+│       │   │                            #   terminal, ui, ui-config
+│       │   └── components/              # ChatInput, ChatView, ProjectSidebar, EditorPanel,
+│       │                                #   FileBrowserPanel, GitPanel, TerminalPanel,
+│       │                                #   InstallPrompt (mobile PWA), SettingsPanel, …
 │       └── package.json
 ├── docker/
 │   ├── Dockerfile
-│   └── docker-compose.yml
-├── tests/                    # Integration test scripts (run via `npm run test:ci`)
-├── AGENTS.md                 # This file
-└── CLAUDE.md                 # Symlink to AGENTS.md or identical copy
+│   ├── docker-compose.yml
+│   └── .env.example
+├── docs/                                # User + operator docs — configuration, mobile,
+│                                        #   mcp, deployment, architecture, sse-events, etc.
+├── tests/                               # Integration test scripts (run via `npm run test:ci`)
+├── bin/pi-forge.mjs                     # npm-bin entry; parses CLI args, imports server
+├── scripts/                             # bump-version, build-publish-dir, run-tests
+├── AGENTS.md                            # This file
+└── CLAUDE.md                            # Symlink to AGENTS.md
 ```
 
 ---
@@ -102,31 +119,31 @@ serves the built Vite output as static files — single port, no CORS needed.
 
 ---
 
-## Environment Variables
+## Environment Variables & CLI Flags
 
-All reads are centralized in `packages/server/src/config.ts`. Never read
-`process.env` directly in any other file — always import from config.
+**All `process.env` reads are centralized in `packages/server/src/config.ts`.**
+Never read `process.env` directly in any other server file — always import the
+frozen `config` object from there. The handful of `process.env` reads that DO
+live outside config.ts are debug-only (`DEBUG_FETCH`, `DEBUG_AGENT_EVENTS`,
+`SHELL`) — keep them out of operational config.
 
-Every operationally-relevant env var also has an equivalent CLI flag on
-the `pi-forge` command, surfaced via the bin shim
-(`bin/pi-forge.mjs` → `packages/server/src/cli.ts`). The flag table in
-`cli.ts` is the single source of truth for the env↔flag mapping —
-adding a new env var means adding one row there so it's reachable
-without an env wrapper. Run `pi-forge --help` for the grouped list.
+**Every operationally-relevant env var has an equivalent `--flag`** on the
+`pi-forge` command. The table in `packages/server/src/cli.ts` is the single
+source of truth for the env↔flag mapping. **Adding a new env var means adding
+one row to that table** so the flag surface stays in sync. The bin shim
+(`bin/pi-forge.mjs`) parses argv and writes the resolved values into
+`process.env` BEFORE importing the server, so `config.ts` reads them as if
+they came from the environment.
 
-| Variable | Default | Description |
-|---|---|---|
-| `PORT` | `3000` | Fastify listen port |
-| `WORKSPACE_PATH` | `~/.pi-forge/workspace` | Where project code lives. Docker image overrides to `/workspace` (host bind-mount). Point at an existing dir like `~/Code` to reuse code already on disk. |
-| `PI_CONFIG_DIR` | `~/.pi/agent` | Pi SDK config dir (auth/models/settings — owned by the SDK). Docker image points this at `/home/pi/.pi/agent`. |
-| `FORGE_DATA_DIR` | `~/.pi-forge` | Forge-owned state (projects.json). Separated from `PI_CONFIG_DIR` so we don't write our state into the SDK's directory. Docker image points this at `/home/pi/.pi-forge`. |
-| `SESSION_DIR` | `${WORKSPACE_PATH}/.pi/sessions` | JSONL session storage |
-| `UI_PASSWORD` | (unset) | If set, enables browser JWT auth |
-| `API_KEY` | (unset) | If set, enables static bearer token for programmatic access |
+For the full list with defaults and grouping, point users at:
+
+- `pi-forge --help` — grouped flag table generated from `cli.ts`
+- [`docs/configuration.md`](./docs/configuration.md) — same content with
+  per-variable rationale + Pi SDK config-file context
 
 If both `UI_PASSWORD` and `API_KEY` are unset, auth is disabled entirely.
-In production you should set at minimum `API_KEY`. Setting both is fine and common —
-browser users log in with the password, scripts use the API key.
+Production deploys should set at least one. Setting both is common — browser
+users log in with the password, scripts use the API key.
 
 ---
 
@@ -415,11 +432,19 @@ Never write directly from routes.
 | `PI_CONFIG_DIR/auth.json` | API keys and OAuth tokens for built-in providers |
 | `PI_CONFIG_DIR/settings.json` | Default model, thinking level, steering/followUp mode |
 
-**`FORGE_DATA_DIR` — pi-forge territory.** Managed by `project-manager.ts`.
+**`FORGE_DATA_DIR` — pi-forge territory.** Pi-forge owns every file in this
+directory. Each one has a dedicated reader/writer module (don't `fs.*` from
+route handlers).
 
-| File | Purpose |
-|---|---|
-| `FORGE_DATA_DIR/projects.json` | pi-forge project registry (id/name/path/createdAt) |
+| File | Purpose | Owner module |
+|---|---|---|
+| `projects.json` | Project registry (id/name/path/createdAt) | `project-manager.ts` |
+| `mcp.json` | MCP server registry (forge-private — pi has no native MCP) | `mcp/manager.ts` |
+| `skills-overrides.json` | Per-project skill enable/disable patterns | `skill-overrides.ts` |
+| `tool-overrides.json` | Per-project tool enable/disable (built-ins + MCP) | `tool-overrides.ts` |
+| `prompts-overrides.json` | Per-project pi-prompt enable/disable patterns | `prompt-overrides.ts` |
+| `jwt-secret` | Auto-generated HS256 signing key (mode 0600) | `config.ts` (`loadOrGenerateJwtSecret`) |
+| `password-hash` | scrypt hash of the user's persisted password (mode 0600) | `auth.ts` (`persistPassword`) |
 
 `PI_CONFIG_DIR` defaults to `~/.pi/agent`; `FORGE_DATA_DIR` defaults
 to `~/.pi-forge`. The Docker compose setup mounts the host's
@@ -686,35 +711,32 @@ Every script's filename matches the area it covers. Skim the doc-comment at
 the top for what each verifies; the runner output prints them in order.
 
 ```
-test-api          REST surface + OpenAPI spec
-test-attachments  multipart prompt uploads + size/type guards
-test-auth         password / API-key / JWT flows
-test-config       models.json / auth.json / settings.json / skills overrides
-test-diff         per-turn diff aggregation
-test-docker       full Docker image build + smoke (CI-skipped)
-test-files        file browser + write/read/move/delete + path safety
-test-fork         session.fork + tree navigation
-test-git          git wrapper (status, diff, stage, commit, push)
-test-mcp          MCP server registry + customTools wiring
-test-projects     project CRUD + workspace boundary enforcement
-test-pty-reattach terminal WS reattach across drops
-test-scaffold     baseline server boots + health + auth gate
-test-search       file content search via ripgrep
-test-session      AgentSession registry + dispose / resume / fork
-test-sse          SSE event stream + snapshot-on-connect
-test-terminal     PTY WebSocket + idle-reap
+test-api                  REST surface + OpenAPI spec
+test-attachments          multipart prompt uploads + size/type guards
+test-auth                 password / API-key / JWT flows + persisted-hash regression
+test-cli-flags            argv → env-write parser (parseCliArgs round-trip)
+test-config               models.json / auth.json / settings.json / skills overrides
+test-config-export        backup tar.gz export + import (atomic, partial-failure)
+test-diff                 per-turn diff aggregation
+test-diff-parser          unified-diff hunk parser
+test-docker               full Docker image build + smoke (CI-skipped)
+test-files                file browser + write/read/move/delete + path safety
+test-folder-references    `@<dir>/` chat references — preserved for the model to ls/grep
+test-fork                 session.fork + tree navigation
+test-git                  git wrapper (status, diff, stage, commit, push)
+test-mcp                  MCP server registry + customTools wiring
+test-mcp-truncation       MCP tool-output truncation behavior
+test-projects             project CRUD + workspace boundary enforcement
+test-prompts              pi prompt-template discovery + per-project overrides
+test-pty-reattach         terminal WS reattach across drops
+test-publish-package      published-package shape (publish/ dir + bin shim end-to-end)
+test-scaffold             baseline server boots + health + auth gate
+test-search               file content search via ripgrep
+test-session              AgentSession registry + dispose / resume / fork
+test-sse                  SSE event stream + snapshot-on-connect
+test-subagent-discovery   pi-subagents child-JSONL discovery
+test-subagent-parser      pi-subagents tool-result parsing for the rich card
+test-terminal             PTY WebSocket + idle-reap
+test-tool-overrides       per-project tool enable/disable + cascade
 ```
 
----
-
-## Known Limitations & Deferred Work
-
-- **GitHub integration** — GitHub OAuth, PR creation, issue context. Deferred.
-- **Multi-agent parallel worktrees** — parallel agent runs against git worktrees.
-  Not feasible with current pi SDK without significant custom work. Deferred.
-- **Voice mode** — out of scope for this project.
-- **Background push notifications** — browser push notifications for agent
-  completion. Deferred to post-v1.
-- **Hunk-level git staging** — Phase 12 implements file-level staging only.
-  Hunk-level staging is v2 material.
-```

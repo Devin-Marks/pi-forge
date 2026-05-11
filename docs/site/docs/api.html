@@ -41,6 +41,7 @@
         <a href="configuration.html">Configuration</a>
         <a href="containers.html">Containers</a>
         <a href="deployment.html">Deployment</a>
+        <a href="mobile.html">Mobile</a>
         <a href="api.html" class="active">API Examples</a>
         <a href="mcp.html">MCP Servers</a>
         <a href="sse-events.html">SSE Events</a>
@@ -245,7 +246,7 @@ returns 403 if outside, 409 if a project with that path already exists.</p>
   $BASE/api/v1/projects/$PROJECT_ID \
   -d &#39;{&quot;name&quot;:&quot;new-name&quot;}&#39;
 
-# Plain delete: removes the pi-forge&#39;s record, leaves session JSONLs orphaned
+# Plain delete: removes pi-forge&#39;s record; session JSONLs stay on disk
 curl -s -X DELETE -H &quot;Authorization: Bearer $KEY&quot; $BASE/api/v1/projects/$PROJECT_ID
 
 # Cascade delete: also rm -rf the project&#39;s session directory
@@ -474,21 +475,22 @@ curl -s -X PUT -H &quot;Authorization: Bearer $KEY&quot; -H &quot;Content-Type: 
   -d &#39;{&quot;providers&quot;:{&quot;vllm-local&quot;:{&quot;api&quot;:&quot;openai-completions&quot;,&quot;url&quot;:&quot;http://localhost:8000/v1&quot;,&quot;models&quot;:[...]}}}&#39;
 </code></pre>
 <h3>List / toggle skills</h3>
-<pre><code class="language-bash"># List the merged skills (global from ~/.pi/agent/skills/ + project-local
-# from &lt;project&gt;/.pi/skills/) with per-skill enabled state for the
-# given workspace.
+<pre><code class="language-bash"># Merged skills (global from ~/.pi/agent/skills/ + project-local from
+# &lt;project&gt;/.pi/skills/) with per-skill enabled state for the workspace.
 curl -s -G -H &quot;Authorization: Bearer $KEY&quot; \
   --data-urlencode &quot;workspacePath=/workspace/my-project&quot; \
   $BASE/api/v1/config/skills
-# { skills: [{ name, description, source: &quot;global&quot;|&quot;project&quot;, filePath, enabled, disableModelInvocation }] }
 
-# Enable / disable a skill for the current workspace. Toggles persist in
-# settings.json (skills array) — disabling a skill doesn&#39;t touch the
-# skill .md file itself.
+# Enable / disable for the current workspace. Toggles persist as
+# pattern entries in ${FORGE_DATA_DIR}/skills-overrides.json keyed by
+# project — the skill .md files themselves are untouched.
 curl -s -X PUT -H &quot;Authorization: Bearer $KEY&quot; -H &quot;Content-Type: application/json&quot; \
   &quot;$BASE/api/v1/config/skills/&lt;skill-name&gt;/enabled&quot; \
   -d &#39;{&quot;enabled&quot;:true,&quot;workspacePath&quot;:&quot;/workspace/my-project&quot;}&#39;
 </code></pre>
+<p>Equivalent endpoints exist for tools (<code>/api/v1/config/tools/...</code> →
+<code>tool-overrides.json</code>) and pi prompts (<code>/api/v1/config/prompts/...</code> →
+<code>prompts-overrides.json</code>).</p>
 <h2>UI config (public, no auth)</h2>
 <pre><code class="language-bash">curl -s $BASE/api/v1/ui-config
 # { minimal: false, workspaceRoot: &quot;/workspace&quot; }
@@ -509,55 +511,6 @@ curl -s -X POST -H &quot;Content-Type: application/json&quot; \
 </code></pre>
 <p>JWT tokens default to 7-day expiry; the response&#39;s <code>expiresAt</code> is an ISO
 timestamp. Refresh by logging in again before expiry.</p>
-<h2>Putting it together: a script that opens a session, runs a prompt, and exits when done</h2>
-<pre><code class="language-python">#!/usr/bin/env python3
-&quot;&quot;&quot;Send a one-shot prompt to a pi-forge session and print the response.&quot;&quot;&quot;
-import json
-import sys
-import httpx
-
-BASE = &quot;http://localhost:3000&quot;
-KEY = &quot;&lt;your API_KEY&gt;&quot;
-H = {&quot;Authorization&quot;: f&quot;Bearer {KEY}&quot;}
-
-if len(sys.argv) != 3:
-    print(&quot;usage: send.py &lt;projectId&gt; &#39;&lt;prompt&gt;&#39;&quot;)
-    sys.exit(1)
-
-project_id, prompt = sys.argv[1], sys.argv[2]
-
-# Create a session
-session = httpx.post(f&quot;{BASE}/api/v1/sessions&quot;, headers=H, json={&quot;projectId&quot;: project_id}).json()
-sid = session[&quot;sessionId&quot;]
-
-# Send the prompt
-httpx.post(f&quot;{BASE}/api/v1/sessions/{sid}/prompt&quot;, headers=H, json={&quot;text&quot;: prompt})
-
-# Stream until agent_end
-with httpx.stream(
-    &quot;GET&quot;,
-    f&quot;{BASE}/api/v1/sessions/{sid}/stream&quot;,
-    headers={**H, &quot;Accept&quot;: &quot;text/event-stream&quot;},
-    timeout=None,
-) as r:
-    buffer = &quot;&quot;
-    for chunk in r.iter_text():
-        buffer += chunk
-        while &quot;\n\n&quot; in buffer:
-            event, buffer = buffer.split(&quot;\n\n&quot;, 1)
-            for line in event.splitlines():
-                if not line.startswith(&quot;data: &quot;):
-                    continue
-                p = json.loads(line[6:])
-                if p[&quot;type&quot;] == &quot;message_update&quot;:
-                    e = p.get(&quot;assistantMessageEvent&quot;) or {}
-                    if e.get(&quot;type&quot;) == &quot;text_delta&quot;:
-                        print(e[&quot;delta&quot;], end=&quot;&quot;, flush=True)
-                elif p[&quot;type&quot;] == &quot;agent_end&quot;:
-                    print(&quot;\n&quot;)
-                    sys.exit(0)
-</code></pre>
-<p>Save as <code>send.py</code>, make executable, and use as <code>./send.py &lt;projectId&gt; &quot;add a docstring to the auth module&quot;</code>.</p>
 <h2>See also</h2>
 <ul>
 <li><a href="http://localhost:3000/api/docs" target="_blank" rel="noopener noreferrer"><code>/api/docs</code></a> (live in your deploy) —

@@ -47,16 +47,16 @@ const SOURCES = [
     src: "docs/architecture.md",
     out: "architecture.html",
     title: "Architecture",
-    subtitle: "How requests flow through the pi-forge, from the browser to the pi SDK.",
+    subtitle: "How requests flow from the browser through the server to the pi SDK.",
   },
   {
     src: "docs/configuration.md",
     out: "configuration.html",
     title: "Configuration",
-    subtitle: "Every environment variable the pi-forge reads, with defaults and intent.",
+    subtitle: "CLI flags, env vars, Pi SDK config files, per-project overrides.",
   },
   {
-    src: "docs/CONTAINERS.md",
+    src: "docs/containers.md",
     out: "containers.html",
     title: "Containers",
     subtitle: "What's inside the Docker image, how it's structured, and why.",
@@ -65,7 +65,13 @@ const SOURCES = [
     src: "docs/deployment.md",
     out: "deployment.html",
     title: "Deployment",
-    subtitle: "Getting the pi-forge running in production: TLS, auth, reverse proxies.",
+    subtitle: "Production deploys — TLS, reverse proxies, auth, backups.",
+  },
+  {
+    src: "docs/mobile.md",
+    out: "mobile.html",
+    title: "Mobile",
+    subtitle: "Mobile-tuned chat surface and PWA install on iOS / Android.",
   },
   {
     src: "docs/api-examples.md",
@@ -77,13 +83,13 @@ const SOURCES = [
     src: "docs/mcp.md",
     out: "mcp.html",
     title: "MCP Servers",
-    subtitle: "Connecting external Model Context Protocol servers to the pi-forge.",
+    subtitle: "Connecting external Model Context Protocol servers.",
   },
   {
     src: "docs/sse-events.md",
     out: "sse-events.html",
     title: "SSE Events",
-    subtitle: "The agent event stream: every event type, payload, and UI affordance.",
+    subtitle: "The agent event stream — every event type, payload, and UI affordance.",
   },
 ];
 
@@ -224,8 +230,8 @@ const LANDING = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>pi-forge — Browser pi-forge for the pi coding agent</title>
-  <meta name="description" content="A self-hosted browser pi-forge for the pi coding agent. Chat with the agent against your code, browse files, run a terminal, review diffs — all from one tab.">
+  <title>pi-forge — Browser UI for the pi coding agent</title>
+  <meta name="description" content="A self-hosted browser UI for the pi coding agent. Chat with the agent against your code, browse files, run a terminal, review diffs — all from one tab.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='1' y='1' width='30' height='30' rx='7' fill='%230d0d10'/><path d='M12 13 H20 M14 13 V21 M18 13 V21' stroke='%23e6e7eb' stroke-width='1.6' stroke-linecap='round' fill='none'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -253,7 +259,7 @@ ${HEADER_NAV_LANDING}
       <span class="gradient-text">in your browser</span>
     </h1>
     <p>
-      A self-hosted browser pi-forge for the
+      A self-hosted browser UI for the
       <a href="https://github.com/badlogic/pi-mono" target="_blank" rel="noopener noreferrer">pi coding agent</a>.
       Chat with the agent against your code, browse files, run a terminal,
       review diffs — all from one tab. Your container, your provider keys,
@@ -286,6 +292,8 @@ ${HEADER_NAV_LANDING}
               <img class="carousel-slide" src="images/img4.png" alt="Screenshot" loading="lazy"/>
               <img class="carousel-slide" src="images/img5.png" alt="Screenshot" loading="lazy"/>
               <img class="carousel-slide" src="images/img6.png" alt="Screenshot" loading="lazy"/>
+              <img class="carousel-slide" src="images/img7.png" alt="Screenshot" loading="lazy"/>
+              <img class="carousel-slide" src="images/img8.png" alt="Screenshot" loading="lazy"/>
             </div>
           </div>
           <button class="carousel-btn carousel-prev" id="carouselPrev" aria-label="Previous screenshot">&#10094;</button>
@@ -299,7 +307,7 @@ ${HEADER_NAV_LANDING}
   <section class="section" id="features">
     <div class="section-label">Features</div>
     <h2>Everything you need to drive the agent from a browser</h2>
-    <p>The pi-forge wraps the pi SDK with the affordances most coding workflows want — and keeps every surface scriptable behind the same REST + SSE API the UI calls.</p>
+    <p>Pi-forge wraps the pi SDK with the affordances most coding workflows want — and keeps every surface scriptable behind the same REST + SSE API the UI calls.</p>
 
     <div class="feature-grid">
       <div class="feature-card">
@@ -348,9 +356,9 @@ ${HEADER_NAV_LANDING}
         <p>Token + cost breakdown per turn, lifetime spend, raw message inspector with syntax highlighting, search across long conversations.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon">&#128274;</div>
-        <h3>Auth that fits ops</h3>
-        <p>Browser password + JWT (auto-generated signing key, force-change first login) and a separate static API key for scripts and CI. Both can be on at once.</p>
+        <div class="feature-icon">&#129302;</div>
+        <h3>Pi-subagents integration</h3>
+        <p>Built-in surfacing of the community <a href="https://github.com/nicobailon/pi-subagents">pi-subagents</a> plugin (install separately) — rich tool card for parent calls, child sessions in the project sidebar.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#128295;</div>
@@ -359,8 +367,8 @@ ${HEADER_NAV_LANDING}
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#128241;</div>
-        <h3>Installable PWA</h3>
-        <p>Proper manifest with raster + maskable icons, offline page when the server is unreachable, "Add to Home Screen" on desktop and mobile.</p>
+        <h3>Mobile + installable PWA</h3>
+        <p>Mobile-tuned chat surface — slide-in project drawer, sticky composer above the keyboard, gallery / camera attach. "Add to Home Screen" on iOS and Android; runs fullscreen with safe-area-aware chrome.</p>
       </div>
     </div>
   </section>
@@ -368,59 +376,55 @@ ${HEADER_NAV_LANDING}
   <section class="section" id="quickstart">
     <div class="section-label">Quick Start</div>
     <h2>Up and running in minutes</h2>
-    <p>All you need is Docker and a provider API key (or OAuth credentials).</p>
+    <p>Two install paths. Both end at <code>http://localhost:3000</code> with a provider key prompt.</p>
 
     <div class="quickstart-steps">
       <div class="qs-step">
-        <div class="qs-number">1</div>
+        <div class="qs-number">A</div>
         <div class="qs-content">
-          <h3>Clone the repo</h3>
+          <h3>npm — no Docker, runs from your shell</h3>
+          <pre><span class="code-cmd">npx</span> pi-forge
+<span class="code-comment"># or install globally:</span>
+<span class="code-cmd">npm</span> install -g pi-forge &amp;&amp; pi-forge
+<span class="code-comment"># pass --port, --workspace-path, --api-key @file etc. — see \`pi-forge --help\`</span></pre>
+        </div>
+      </div>
+
+      <div class="qs-step">
+        <div class="qs-number">B</div>
+        <div class="qs-content">
+          <h3>Docker — recommended for ongoing use</h3>
           <pre><span class="code-cmd">git</span> clone https://github.com/Devin-Marks/pi-forge.git
-<span class="code-cmd">cd</span> pi-forge</pre>
+<span class="code-cmd">cd</span> pi-forge
+<span class="code-cmd">cp</span> docker/.env.example docker/.env
+<span class="code-comment"># edit docker/.env to set UI_PASSWORD or API_KEY</span>
+<span class="code-cmd">cd</span> docker &amp;&amp; docker compose up -d --build</pre>
         </div>
       </div>
 
       <div class="qs-step">
-        <div class="qs-number">2</div>
-        <div class="qs-content">
-          <h3>Set deployment env</h3>
-          <pre><span class="code-cmd">cp</span> docker/.env.example docker/.env
-<span class="code-comment"># edit docker/.env to set UI_PASSWORD or API_KEY,</span>
-<span class="code-comment"># and adjust workspace / data dir paths if you want.</span></pre>
-        </div>
-      </div>
-
-      <div class="qs-step">
-        <div class="qs-number">3</div>
-        <div class="qs-content">
-          <h3>Build and start</h3>
-          <pre><span class="code-cmd">cd</span> docker
-docker compose up -d --build</pre>
-        </div>
-      </div>
-
-      <div class="qs-step">
-        <div class="qs-number">4</div>
+        <div class="qs-number">C</div>
         <div class="qs-content">
           <h3>Add your provider key</h3>
-          <p>Open <code>http://&lt;host&gt;:3000</code>, go to <strong>Settings &rarr; Providers</strong>, and paste an Anthropic / OpenAI / etc. API key. Or set keys directly in <code>~/.pi/agent/auth.json</code> and bind-mount it into the container.</p>
+          <p>Open <code>http://&lt;host&gt;:3000</code>, go to <strong>Settings &rarr; Providers</strong>, and paste an Anthropic / OpenAI / etc. API key. Or set keys directly in <code>~/.pi/agent/auth.json</code>.</p>
         </div>
       </div>
 
       <div class="qs-step">
-        <div class="qs-number">5</div>
+        <div class="qs-number">D</div>
         <div class="qs-content">
           <h3>Add a project and start chatting</h3>
-          <p>Click <strong>+ Project</strong>, point at any folder under <code>WORKSPACE_PATH</code> (or its bind-mount). The project's files become the agent's working tree; chat opens in the same view.</p>
+          <p>Click <strong>+ Project</strong>, point at any folder under <code>WORKSPACE_PATH</code>. The folder becomes the agent's working tree; chat opens in the same view.</p>
         </div>
       </div>
     </div>
 
     <div style="margin-top: 32px;">
       <p style="color: var(--text-secondary); font-size: 14px;">
-        For Kubernetes, OpenShift, reverse-proxy + TLS, and other production deployments, see
-        <a href="docs/deployment.html">Deployment</a> and
-        <a href="docs/configuration.html">Configuration</a>.
+        Kubernetes, OpenShift, reverse-proxy + TLS, mobile install: see
+        <a href="docs/deployment.html">Deployment</a>,
+        <a href="docs/configuration.html">Configuration</a>, and
+        <a href="docs/mobile.html">Mobile</a>.
       </p>
     </div>
   </section>
