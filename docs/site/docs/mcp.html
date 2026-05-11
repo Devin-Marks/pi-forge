@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MCP Servers — pi-forge</title>
-  <meta name="description" content="Connecting external Model Context Protocol servers to the pi-forge.">
+  <meta name="description" content="Connecting external Model Context Protocol servers.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='1' y='1' width='30' height='30' rx='7' fill='%230d0d10'/><path d='M12 13 H20 M14 13 V21 M18 13 V21' stroke='%23e6e7eb' stroke-width='1.6' stroke-linecap='round' fill='none'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -41,6 +41,7 @@
         <a href="configuration.html">Configuration</a>
         <a href="containers.html">Containers</a>
         <a href="deployment.html">Deployment</a>
+        <a href="mobile.html">Mobile</a>
         <a href="api.html">API Examples</a>
         <a href="mcp.html" class="active">MCP Servers</a>
         <a href="sse-events.html">SSE Events</a>
@@ -55,29 +56,25 @@
 
     <main class="docs-main">
       <h1>MCP Servers</h1>
-      <p class="docs-subtitle">Connecting external Model Context Protocol servers to the pi-forge.</p>
-<p>pi-forge can connect to MCP servers and surface their tools to the
-agent. Configure servers from <strong>Settings → MCP</strong> in the browser, or by
-editing config files directly.</p>
+      <p class="docs-subtitle">Connecting external Model Context Protocol servers.</p>
+<p>pi-forge connects to MCP servers and surfaces their tools to the
+agent. Configure from <strong>Settings → MCP</strong> or by editing config files.</p>
 <blockquote>
-<p>Pi itself has no native MCP support. The integration is pi-forge-
-internal — see <a href="../packages/server/src/mcp/manager.ts"><code>packages/server/src/mcp/manager.ts</code></a>
-for the contract.</p>
+<p>Pi has no native MCP support. The integration lives in
+<a href="../packages/server/src/mcp/"><code>packages/server/src/mcp/</code></a> — see
+<code>manager.ts</code> for the contract.</p>
 </blockquote>
-<h2>Scope of v1</h2>
+<h2>Scope</h2>
 <ul>
-<li><strong>Remote servers only.</strong> Transports: <code>streamable-http</code> (newer MCP
-spec) and <code>sse</code> (legacy). The default <code>auto</code> transport tries
-<code>streamable-http</code> first and falls back to <code>sse</code> — covers
+<li><strong>Remote servers only.</strong> Transports: <code>streamable-http</code> (current MCP
+spec) and <code>sse</code> (legacy). The <code>auto</code> default tries StreamableHTTP
+first and falls back to SSE — covers
 <a href="https://github.com/jlowin/fastmcp" target="_blank" rel="noopener noreferrer">fastmcp</a> servers regardless of
-which transport you exposed.</li>
-<li><strong>stdio is not supported.</strong> The pi-forge is container-native and
-arbitrary subprocess spawning has different security trade-offs.
-Run stdio MCP servers as a separate process and expose them over
-HTTP/SSE if you need them in the pi-forge.</li>
-<li><strong>Static-header auth only.</strong> Bearer tokens, custom auth headers —
-whatever your MCP server expects. OAuth (per-server consent flow,
-callback handling) is deferred.</li>
+which transport they expose.</li>
+<li><strong>stdio is not supported.</strong> Run stdio MCP servers as a separate
+process and expose them over HTTP/SSE.</li>
+<li><strong>Static-header auth only</strong> (Bearer tokens, custom headers). OAuth
+per-server consent flows are not implemented.</li>
 </ul>
 <h2>Where servers live</h2>
 <p>Two layers, merged at session create time:</p>
@@ -100,10 +97,9 @@ callback handling) is deferred.</li>
 <td>No — edit in your repo</td>
 </tr>
 </tbody></table>
-<p>Project entries <strong>override</strong> global entries when the server names
-collide. The override is per-server (not per-tool); add a project
-entry with the same <code>name</code> to swap a global server for a project-
-specific one inside that project&#39;s sessions.</p>
+<p>Project entries <strong>override</strong> global entries when names collide
+(per-server, not per-tool — add a project entry with the same <code>name</code>
+to swap a global server for a project-specific one).</p>
 <h2>File format</h2>
 <p><code>mcp.json</code> (pi-forge-native shape, written by the UI):</p>
 <pre><code class="language-json">{
@@ -120,8 +116,8 @@ specific one inside that project&#39;s sessions.</p>
   }
 }
 </code></pre>
-<p>Project <code>.mcp.json</code> accepts both shapes — pi-forge-native and the
-Claude Desktop / pi-mcp-adapter standard:</p>
+<p>Project <code>.mcp.json</code> also accepts the Claude Desktop / pi-mcp-adapter
+shape, so existing files don&#39;t need rewriting:</p>
 <pre><code class="language-json">{
   &quot;mcpServers&quot;: {
     &quot;chrome-devtools&quot;: {
@@ -130,8 +126,6 @@ Claude Desktop / pi-mcp-adapter standard:</p>
   }
 }
 </code></pre>
-<p>This way an existing project that already had a <code>.mcp.json</code> for other
-MCP clients works without rewriting.</p>
 <h3>Field reference</h3>
 <table>
 <thead>
@@ -174,72 +168,60 @@ MCP clients works without rewriting.</p>
 </tr>
 </tbody></table>
 <h2>How the agent sees the tools</h2>
-<p>Each MCP tool advertised by a connected, enabled server becomes a pi
-<code>ToolDefinition</code> namespaced as <strong><code>&lt;server&gt;__&lt;tool&gt;</code></strong>. The prefix
-guarantees uniqueness so two servers can both advertise <code>search</code>
-without colliding.</p>
-<p>The agent calls them like any other tool. <code>client.callTool()</code> forwards
-the call; the MCP <code>CallToolResult.content</code> array is mapped into pi&#39;s
-content shape:</p>
+<p>Each MCP tool from a connected, enabled server becomes a pi
+<code>ToolDefinition</code> namespaced as <strong><code>&lt;server&gt;__&lt;tool&gt;</code></strong> — the prefix
+keeps two servers&#39; <code>search</code> tools from colliding.</p>
+<p><code>CallToolResult.content</code> is mapped into pi&#39;s content shape:</p>
 <ul>
 <li><code>text</code> → text content</li>
-<li><code>image</code> (with <code>mimeType</code>) → image content (data is base64)</li>
-<li><code>resource_link</code> / <code>resource</code> / unknown blocks → JSON-stringified
-into a text block (so the agent at least sees them rather than
-silently dropping)</li>
+<li><code>image</code> (with <code>mimeType</code>) → image content (base64)</li>
+<li><code>resource_link</code> / <code>resource</code> / unknown → JSON-stringified into a
+text block (so the agent sees something rather than silently
+dropping it)</li>
 </ul>
-<p><code>isError: true</code> on the MCP response prefixes the first text block with
-<code>[error]</code> so the agent has something actionable in its tool result.</p>
+<p><code>isError: true</code> prefixes the first text block with <code>[error]</code>.</p>
 <h2>Lifecycle</h2>
 <ul>
-<li><strong>Boot.</strong> The server eagerly loads <code>${FORGE_DATA_DIR}/mcp.json</code>
-and connects every enabled global server. Connection failures are
-non-fatal — the server stays in <code>error</code> state and the pi-forge
-comes up regardless.</li>
-<li><strong>Project sessions.</strong> <code>&lt;projectPath&gt;/.mcp.json</code> is read lazily on
-the first <code>createAgentSession</code> for that project, then cached. A
-config change to that file requires either restarting the pi-forge
-or hitting the project&#39;s &quot;Probe&quot; button to pick up changes.</li>
-<li><strong>Save.</strong> A <code>PUT</code> from the Settings UI rewrites <code>mcp.json</code>
-atomically (<code>.tmp</code> + <code>rename</code>, mode 0600), then re-syncs the pool
-(disconnect + reconnect entries whose URL / transport / headers
-changed).</li>
-<li><strong>Master toggle.</strong> Flipping the toggle off in Settings doesn&#39;t
-disconnect anything — it just causes future <code>createAgentSession</code>
-calls to skip the <code>customTools</code> injection. Existing live sessions
-keep the tools they booted with.</li>
+<li><strong>Boot.</strong> Eagerly load <code>${FORGE_DATA_DIR}/mcp.json</code> and connect
+every enabled global server. Connection failures are non-fatal —
+the server stays in <code>error</code> state and pi-forge boots regardless.</li>
+<li><strong>Project sessions.</strong> <code>&lt;project&gt;/.mcp.json</code> is read lazily on the
+first <code>createAgentSession</code> for that project, then cached. Edits
+require restart or a Probe to pick up.</li>
+<li><strong>Save.</strong> <code>PUT</code> from Settings rewrites <code>mcp.json</code> atomically
+(<code>.tmp</code> + <code>rename</code>, mode 0600), then re-syncs the connection pool
+(reconnects entries whose URL / transport / headers changed).</li>
+<li><strong>Master toggle.</strong> Flipping it off doesn&#39;t disconnect anything —
+future <code>createAgentSession</code> calls skip the <code>customTools</code> injection.
+Live sessions keep the tools they booted with.</li>
 </ul>
 <h2>Header status badge</h2>
-<p>The header next to <strong>Settings</strong> shows a colored dot + <code>MCP X/Y</code>:</p>
+<p>The badge next to <strong>Settings</strong> shows a colored dot + <code>MCP X/Y</code>:</p>
 <ul>
-<li><strong>emerald</strong> — every configured global server is connected</li>
-<li><strong>amber</strong> — some connected, some not (check Settings → MCP for the
-per-server <code>lastError</code>)</li>
+<li><strong>emerald</strong> — every global server connected</li>
+<li><strong>amber</strong> — some connected, some not (per-server <code>lastError</code> in
+Settings → MCP)</li>
 <li><strong>red</strong> — none connected (and at least one configured)</li>
 <li><strong>neutral</strong> — master toggle off</li>
 </ul>
-<p>Hidden when no servers are configured (keeps the header clean on
-deployments that don&#39;t use MCP) and in <code>MINIMAL_UI</code> mode.</p>
+<p>Hidden when no servers are configured and in <code>MINIMAL_UI</code> mode.</p>
 <h2>Troubleshooting</h2>
-<p><strong>Status stuck in <code>error</code></strong> — open Settings → MCP, expand the server&#39;s
-row, and read <code>lastError</code>. Common causes: wrong URL, missing
-<code>Authorization</code> header, server returning 4xx on <code>tools/list</code>. The
-<strong>Probe</strong> button forces a reconnect + tool re-list; the result lands
-in the same row.</p>
-<p><strong>Both transports fail</strong> — pin <code>transport</code> explicitly. <code>auto</code> tries
-<code>streamable-http</code> and falls back to <code>sse</code>; if the server is misconfigured
-to advertise both but only one works, the auto-probe round-trip wastes
-a few hundred milliseconds on every reconnect. Pinning skips that.</p>
-<p><strong>Headers reset to <code>***REDACTED***</code></strong> — that&#39;s the read-path sentinel,
-not real data. The persisted file still has the real value. When you
-edit the form and save, leaving a sentinel value blank keeps the prior
-on-disk secret; supplying a new value overwrites it (same
-write-merge pattern as <code>models.json</code>).</p>
-<p><strong>Tools don&#39;t show up after editing project <code>.mcp.json</code></strong> — the file
-is read once per project per server lifetime. Hit Probe on the row,
-or restart the pi-forge, to pick up edits.</p>
+<p><strong>Status stuck in <code>error</code></strong> — Settings → MCP, expand the row, read
+<code>lastError</code>. Common causes: wrong URL, missing <code>Authorization</code>
+header, server returning 4xx on <code>tools/list</code>. <strong>Probe</strong> forces a
+reconnect + tool re-list.</p>
+<p><strong>Both transports fail</strong> — pin <code>transport</code> explicitly. The <code>auto</code>
+probe round-trip wastes ~100 ms per reconnect when only one transport
+actually works.</p>
+<p><strong>Headers show <code>***REDACTED***</code></strong> — read-path sentinel, not real
+data. The on-disk file still has the real value. On save, a sentinel
+value preserves the prior secret; a new value overwrites it (same
+pattern as <code>models.json</code>).</p>
+<p><strong>Tools don&#39;t appear after editing project <code>.mcp.json</code></strong> — the file
+is read once per project per server lifetime. Probe the row or
+restart pi-forge.</p>
 <h2>API surface</h2>
-<p>For automation. All routes are under <code>/api/v1/mcp/</code>:</p>
+<p>All routes under <code>/api/v1/mcp/</code>:</p>
 <table>
 <thead>
 <tr>
@@ -251,7 +233,7 @@ or restart the pi-forge, to pick up edits.</p>
 <tbody><tr>
 <td><code>GET</code></td>
 <td><code>/mcp/settings</code></td>
-<td>Master enable + connected/total count (header badge)</td>
+<td>Master enable + connected/total count</td>
 </tr>
 <tr>
 <td><code>PUT</code></td>
@@ -261,7 +243,7 @@ or restart the pi-forge, to pick up edits.</p>
 <tr>
 <td><code>GET</code></td>
 <td><code>/mcp/servers[?projectId=…]</code></td>
-<td>Global config (redacted) + status (global ∪ project)</td>
+<td>Global config (redacted) + status</td>
 </tr>
 <tr>
 <td><code>PUT</code></td>
@@ -276,23 +258,20 @@ or restart the pi-forge, to pick up edits.</p>
 <tr>
 <td><code>POST</code></td>
 <td><code>/mcp/servers/:name/probe[?projectId=…]</code></td>
-<td>Force reconnect + re-list, returns new status</td>
+<td>Force reconnect + re-list</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
 <td><code>/mcp/tools?projectId=…</code></td>
-<td>Flat tool list available to sessions in the project</td>
+<td>Flat tool list available to the project&#39;s sessions</td>
 </tr>
 </tbody></table>
-<p>The Swagger UI at <code>/api/docs</code> has the request/response schemas.</p>
+<p>Request/response schemas in the Swagger UI at <code>/api/docs</code>.</p>
 <h2>See also</h2>
 <ul>
-<li><a href="./configuration.md"><code>docs/configuration.md</code></a> — pi-forge env vars
-including <code>FORGE_DATA_DIR</code></li>
-<li><a href="./architecture.md"><code>docs/architecture.md</code></a> — where the manager
-sits in the request flow</li>
-<li><a href="../packages/server/src/mcp/manager.ts"><code>packages/server/src/mcp/manager.ts</code></a>
-— integration contract</li>
+<li><a href="./configuration.md"><code>configuration.md</code></a> — env vars + per-project overrides</li>
+<li><a href="./architecture.md"><code>architecture.md</code></a> — where the MCP manager sits</li>
+<li><a href="../packages/server/src/mcp/manager.ts"><code>packages/server/src/mcp/manager.ts</code></a> — integration contract</li>
 </ul>
 
     </main>

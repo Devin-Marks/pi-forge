@@ -229,7 +229,7 @@ curl -s -X PATCH -H "Authorization: Bearer $KEY" -H "Content-Type: application/j
   $BASE/api/v1/projects/$PROJECT_ID \
   -d '{"name":"new-name"}'
 
-# Plain delete: removes the pi-forge's record, leaves session JSONLs orphaned
+# Plain delete: removes pi-forge's record; session JSONLs stay on disk
 curl -s -X DELETE -H "Authorization: Bearer $KEY" $BASE/api/v1/projects/$PROJECT_ID
 
 # Cascade delete: also rm -rf the project's session directory
@@ -537,21 +537,23 @@ curl -s -X PUT -H "Authorization: Bearer $KEY" -H "Content-Type: application/jso
 ### List / toggle skills
 
 ```bash
-# List the merged skills (global from ~/.pi/agent/skills/ + project-local
-# from <project>/.pi/skills/) with per-skill enabled state for the
-# given workspace.
+# Merged skills (global from ~/.pi/agent/skills/ + project-local from
+# <project>/.pi/skills/) with per-skill enabled state for the workspace.
 curl -s -G -H "Authorization: Bearer $KEY" \
   --data-urlencode "workspacePath=/workspace/my-project" \
   $BASE/api/v1/config/skills
-# { skills: [{ name, description, source: "global"|"project", filePath, enabled, disableModelInvocation }] }
 
-# Enable / disable a skill for the current workspace. Toggles persist in
-# settings.json (skills array) — disabling a skill doesn't touch the
-# skill .md file itself.
+# Enable / disable for the current workspace. Toggles persist as
+# pattern entries in ${FORGE_DATA_DIR}/skills-overrides.json keyed by
+# project — the skill .md files themselves are untouched.
 curl -s -X PUT -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   "$BASE/api/v1/config/skills/<skill-name>/enabled" \
   -d '{"enabled":true,"workspacePath":"/workspace/my-project"}'
 ```
+
+Equivalent endpoints exist for tools (`/api/v1/config/tools/...` →
+`tool-overrides.json`) and pi prompts (`/api/v1/config/prompts/...` →
+`prompts-overrides.json`).
 
 ## UI config (public, no auth)
 
@@ -580,60 +582,6 @@ curl -s -X POST -H "Content-Type: application/json" \
 
 JWT tokens default to 7-day expiry; the response's `expiresAt` is an ISO
 timestamp. Refresh by logging in again before expiry.
-
-## Putting it together: a script that opens a session, runs a prompt, and exits when done
-
-```python
-#!/usr/bin/env python3
-"""Send a one-shot prompt to a pi-forge session and print the response."""
-import json
-import sys
-import httpx
-
-BASE = "http://localhost:3000"
-KEY = "<your API_KEY>"
-H = {"Authorization": f"Bearer {KEY}"}
-
-if len(sys.argv) != 3:
-    print("usage: send.py <projectId> '<prompt>'")
-    sys.exit(1)
-
-project_id, prompt = sys.argv[1], sys.argv[2]
-
-# Create a session
-session = httpx.post(f"{BASE}/api/v1/sessions", headers=H, json={"projectId": project_id}).json()
-sid = session["sessionId"]
-
-# Send the prompt
-httpx.post(f"{BASE}/api/v1/sessions/{sid}/prompt", headers=H, json={"text": prompt})
-
-# Stream until agent_end
-with httpx.stream(
-    "GET",
-    f"{BASE}/api/v1/sessions/{sid}/stream",
-    headers={**H, "Accept": "text/event-stream"},
-    timeout=None,
-) as r:
-    buffer = ""
-    for chunk in r.iter_text():
-        buffer += chunk
-        while "\n\n" in buffer:
-            event, buffer = buffer.split("\n\n", 1)
-            for line in event.splitlines():
-                if not line.startswith("data: "):
-                    continue
-                p = json.loads(line[6:])
-                if p["type"] == "message_update":
-                    e = p.get("assistantMessageEvent") or {}
-                    if e.get("type") == "text_delta":
-                        print(e["delta"], end="", flush=True)
-                elif p["type"] == "agent_end":
-                    print("\n")
-                    sys.exit(0)
-```
-
-Save as `send.py`, make executable, and use as `./send.py <projectId>
-"add a docstring to the auth module"`.
 
 ## See also
 

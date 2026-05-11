@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Architecture — pi-forge</title>
-  <meta name="description" content="How requests flow through the pi-forge, from the browser to the pi SDK.">
+  <meta name="description" content="How requests flow from the browser through the server to the pi SDK.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='1' y='1' width='30' height='30' rx='7' fill='%230d0d10'/><path d='M12 13 H20 M14 13 V21 M18 13 V21' stroke='%23e6e7eb' stroke-width='1.6' stroke-linecap='round' fill='none'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -41,6 +41,7 @@
         <a href="configuration.html">Configuration</a>
         <a href="containers.html">Containers</a>
         <a href="deployment.html">Deployment</a>
+        <a href="mobile.html">Mobile</a>
         <a href="api.html">API Examples</a>
         <a href="mcp.html">MCP Servers</a>
         <a href="sse-events.html">SSE Events</a>
@@ -55,23 +56,21 @@
 
     <main class="docs-main">
       <h1>Architecture</h1>
-      <p class="docs-subtitle">How requests flow through the pi-forge, from the browser to the pi SDK.</p>
-<p>This document is the deeper dive that the <a href="../README.md"><code>README.md</code></a> ASCII
-diagram refers out to. For contributor-focused architecture rules
-(conventions, &quot;where does X live&quot;, code-organization invariants), see
-<a href="../CLAUDE.md"><code>CLAUDE.md</code></a> at the repo root.</p>
+      <p class="docs-subtitle">How requests flow from the browser through the server to the pi SDK.</p>
+<p>The <em>what</em> and the <em>why</em> of pi-forge&#39;s architecture. The repo-level
+<a href="../CLAUDE.md"><code>CLAUDE.md</code></a> covers the <em>how</em> (file-by-file reference,
+conventions, do-nots).</p>
 <h2>What pi-forge is</h2>
-<p>A self-hosted HTTP server + browser UI that wraps the
-<a href="https://github.com/badlogic/pi-mono" target="_blank" rel="noopener noreferrer"><code>pi-coding-agent</code></a> SDK. It is <strong>not</strong>
-a reimplementation of the agent loop — all of that is the SDK. The
-pi-forge is the bridge:</p>
+<p>A self-hosted HTTP server + browser UI that embeds the
+<a href="https://github.com/badlogic/pi-mono" target="_blank" rel="noopener noreferrer"><code>pi-coding-agent</code></a> SDK. <strong>Not</strong> a
+reimplementation of the agent loop — that&#39;s all SDK. Pi-forge is the
+bridge:</p>
 <ul>
 <li>Fastify HTTP server hosts the SDK as an in-process embedding</li>
-<li>REST routes for project / session / file / git / config / terminal /
-upload-download CRUD</li>
-<li>Server-Sent Events for streaming agent output</li>
-<li>WebSocket for the integrated terminal</li>
-<li>React + Vite frontend that consumes the same REST + SSE surface a
+<li>REST + SSE under <code>/api/v1/</code> for project / session / file / git /
+config / upload CRUD and agent output streaming</li>
+<li>WebSocket under <code>/api/v1/terminal</code> for the integrated PTY</li>
+<li>React + Vite frontend consuming the same REST + SSE surface that a
 programmatic client would</li>
 </ul>
 <h2>Component map</h2>
@@ -79,17 +78,18 @@ programmatic client would</li>
 │                              Browser                                 │
 │                                                                      │
 │  React + Vite UI (packages/client/)                                  │
-│    ├─ ChatView    — renders SDK message stream                       │
-│    ├─ ChatInput   — sends prompts + attachments                      │
+│    ├─ ChatView / ChatInput — renders SDK stream, sends prompts       │
 │    ├─ ProjectSidebar / SessionList — project + session navigation    │
 │    ├─ FileBrowserPanel + EditorPanel — workspace files               │
-│    ├─ SearchPanel + TurnDiffPanel + GitPanel + ContextInspectorPanel │
+│    ├─ SearchPanel / TurnDiffPanel / GitPanel / ContextInspectorPanel │
 │    ├─ TerminalPanel — xterm.js + WebSocket to PTY                    │
-│    └─ SessionTreePanel — session branching navigator                 │
+│    ├─ SessionTreePanel — session branching navigator                 │
+│    └─ InstallPrompt — mobile PWA install banner                      │
 │                                                                      │
-│  Zustand stores: auth, project, session, file, terminal, ui-config   │
-│  Single api-client.ts entry point for ALL HTTP calls                 │
-│  Single sse-client.ts entry point for ALL streaming                  │
+│  Zustand stores: auth, project, session, file, mcp, terminal,        │
+│                  ui, ui-config                                       │
+│  api-client/   — typed wrapper, ALL HTTP calls go here               │
+│  sse-client.ts — ALL streaming goes here                             │
 └──────────────────────────────────────────────────────────────────────┘
          │ HTTP (REST + SSE) + WebSocket (terminal only)
          │ All under /api/v1/
@@ -97,33 +97,37 @@ programmatic client would</li>
 ┌──────────────────────────────────────────────────────────────────────┐
 │                       Fastify (packages/server/)                     │
 │                                                                      │
-│  index.ts               — plugin registration, auth pre-handler      │
-│  config.ts              — single source of truth for env vars        │
-│  auth.ts                — JWT sign / verify + API-key check          │
+│  Boot:    index.ts (plugins + routes), cli.ts (argv → env), config.ts│
+│  Auth:    auth.ts (JWT + scrypt), preHandler hook in index.ts        │
 │                                                                      │
-│  session-registry.ts    — IN-MEMORY Map&lt;sessionId, LiveSession&gt;.     │
-│                           Single source of truth for live SDK state. │
-│                           ALL session interactions route through.    │
-│  sse-bridge.ts          — AgentSessionEvent → SSE serialization      │
-│  pty-manager.ts         — node-pty lifecycle, attach/detach for      │
-│                           reconnect-survives-page-refresh            │
-│  file-manager.ts        — every fs.* call. Path validation, atomic   │
-│                           writes, upload checksum, download streaming│
-│  file-searcher.ts       — ripgrep + Node fallback, project-scoped    │
-│  git-runner.ts          — git CLI wrapper                            │
-│  config-manager.ts      — pi config files (auth/models/settings)     │
-│  project-manager.ts     — projects.json CRUD + cascade-delete        │
-│  turn-diff-builder.ts   — aggregate diffs from a session turn        │
+│  Session-state:  session-registry.ts — in-memory Map of LiveSession. │
+│                  Single source of truth for live SDK state; ALL      │
+│                  session interactions route through it.              │
+│  Streaming:      sse-bridge.ts — AgentSessionEvent → SSE             │
+│  Terminal:       pty-manager.ts — node-pty lifecycle, detach/reattach│
 │                                                                      │
-│  routes/{auth,projects,sessions,stream,prompt,control,config,        │
-│          files,git,terminal,health}.ts                               │
+│  Filesystem:     file-manager.ts — every fs.* call, path-validated   │
+│  Search:         file-searcher.ts — ripgrep + Node fallback          │
+│  Git:            git-runner.ts                                       │
+│  Pi config:      config-manager.ts (auth/models/settings.json)       │
+│  Forge state:    project-manager.ts (projects.json),                 │
+│                  {skill,tool,prompt}-overrides.ts                    │
+│  MCP:            mcp/ — connects to remote MCP servers, advertises   │
+│                  their tools to the SDK as customTools               │
+│  Resources:      agent-resource-loader.ts — merges skills + tools +  │
+│                  prompts into createAgentSession                     │
+│  Diffs:          turn-diff-builder.ts                                │
+│                                                                      │
+│  Routes (under /api/v1/):                                            │
+│    auth, config, control, exec, files, git, health, mcp, projects,   │
+│    prompt, sessions, stream, terminal                                │
 │                                                                      │
 │         ┌────────────────────────────────────────────────────────┐   │
 │         │ embedded:                                              │   │
-│         │   @earendil-works/pi-coding-agent (AgentSession,         │   │
-│         │   SessionManager, AuthStorage, ModelRegistry)          │   │
-│         │   @earendil-works/pi-agent-core (Agent, AgentMessage)    │   │
-│         │   @earendil-works/pi-ai (provider abstraction)           │   │
+│         │   @earendil-works/pi-coding-agent — AgentSession,      │   │
+│         │     SessionManager, AuthStorage, ModelRegistry         │   │
+│         │   @earendil-works/pi-agent-core   — Agent, messages    │   │
+│         │   @earendil-works/pi-ai           — provider abstraction│  │
 │         └────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────┘
          │ filesystem
@@ -131,20 +135,21 @@ programmatic client would</li>
 ┌──────────────────────────────────────────────────────────────────────┐
 │                            On-disk state                             │
 │                                                                      │
-│  ${WORKSPACE_PATH}/&lt;project&gt;/         — user code                    │
-│  ${SESSION_DIR}/&lt;projectId&gt;/*.jsonl   — session transcripts          │
-│  ${FORGE_DATA_DIR}/projects.json  — project registry             │
-│  ${PI_CONFIG_DIR}/auth.json           — provider API keys            │
-│  ${PI_CONFIG_DIR}/models.json         — custom provider definitions  │
-│  ${PI_CONFIG_DIR}/settings.json       — agent defaults               │
+│  ${WORKSPACE_PATH}/&lt;project&gt;/             — user code                │
+│  ${SESSION_DIR}/&lt;projectId&gt;/*.jsonl       — session transcripts      │
+│  ${FORGE_DATA_DIR}/                       — projects.json, mcp.json, │
+│                                             {skill,tool,prompt}-     │
+│                                             overrides.json,          │
+│                                             jwt-secret, password-hash│
+│  ${PI_CONFIG_DIR}/                        — auth.json, models.json,  │
+│                                             settings.json (SDK-owned)│
 └──────────────────────────────────────────────────────────────────────┘
          │ HTTPS
          ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │                   LLM providers + MCP servers                        │
 │                                                                      │
-│  Anthropic / OpenAI / Google / OpenRouter / vLLM / Ollama / ...      │
-│  (whatever you&#39;ve configured in models.json + auth.json)             │
+│  Configured via models.json + auth.json + ${FORGE_DATA_DIR}/mcp.json │
 └──────────────────────────────────────────────────────────────────────┘
 </code></pre>
 <h2>Request lifecycles</h2>
@@ -214,7 +219,7 @@ registry is rebuilt <strong>lazily</strong> as clients reconnect their SSE strea
 first line</strong> of each <code>.jsonl</code> (the session header) to populate the
 sidebar&#39;s session list — no full sessions land in memory eagerly.</p>
 <h2>Persistence model</h2>
-<p>The pi-forge is stateless on the server side <strong>except for</strong>:</p>
+<p>Pi-forge is stateless server-side <strong>except</strong>:</p>
 <table>
 <thead>
 <tr>
@@ -224,99 +229,61 @@ sidebar&#39;s session list — no full sessions land in memory eagerly.</p>
 </tr>
 </thead>
 <tbody><tr>
-<td>Project registry</td>
-<td><code>${FORGE_DATA_DIR}/projects.json</code></td>
-<td>Yes</td>
-</tr>
-<tr>
-<td>Session transcripts</td>
-<td><code>${SESSION_DIR}/&lt;projectId&gt;/*.jsonl</code></td>
-<td>Yes</td>
-</tr>
-<tr>
-<td>Pi auth + models + settings</td>
-<td><code>${PI_CONFIG_DIR}/*.json</code> (SDK-owned)</td>
-<td>Yes</td>
-</tr>
-<tr>
-<td>Live AgentSession instances</td>
-<td>In-memory <code>session-registry.ts</code> Map</td>
+<td>Live <code>AgentSession</code> instances</td>
+<td><code>session-registry.ts</code> in-memory Map</td>
 <td><strong>No</strong> — lazy-rebuilt on next SSE connect</td>
 </tr>
 <tr>
 <td>PTY processes</td>
-<td>In-memory <code>pty-manager.ts</code> Map</td>
-<td><strong>No</strong> — killed on shutdown; client tab list survives via localStorage</td>
+<td><code>pty-manager.ts</code> in-memory Map</td>
+<td><strong>No</strong> — killed on shutdown; tab list survives via localStorage</td>
 </tr>
 <tr>
 <td>SSE client connections</td>
-<td>In-memory <code>LiveSession.clients</code> Set</td>
-<td><strong>No</strong> — clients reconnect with backoff</td>
+<td><code>LiveSession.clients</code> Set</td>
+<td><strong>No</strong> — clients reconnect with exponential backoff</td>
 </tr>
 <tr>
-<td>Browser-side state</td>
-<td>localStorage</td>
-<td>Yes per-browser</td>
+<td>Everything else</td>
+<td><code>${FORGE_DATA_DIR}</code> + <code>${PI_CONFIG_DIR}</code> + <code>${SESSION_DIR}</code> + <code>${WORKSPACE_PATH}</code></td>
+<td><strong>Yes</strong></td>
 </tr>
 </tbody></table>
-<p>Atomic write pattern (<code>tmp + rename</code>) is used for every config write —
-<code>config-manager.ts</code>, <code>project-manager.ts</code>, <code>file-manager.ts.writeFile</code>,
-<code>writeFileBytes</code>. Half-written files never appear at the target path
-even on a crash mid-write.</p>
+<p>The persistence detail (what each file is for, who owns it, atomic
+write pattern) lives in
+<a href="./configuration.md#per-project-overrides"><code>configuration.md</code></a>.</p>
 <h2>Threading + concurrency</h2>
-<p>Node.js single-threaded event loop. The SDK&#39;s agent loop runs on the
-same loop. Heavy CPU is rare; most work is I/O (HTTP to the LLM,
-filesystem ops). For the few cases where it matters:</p>
+<p>Node.js single-threaded event loop; the SDK&#39;s agent loop runs on the
+same loop. Most work is I/O. Where it matters:</p>
 <ul>
-<li><strong>Multipart upload</strong> streams part bodies straight into <code>writeFileBytes</code>
-without buffering the full file in memory</li>
-<li><strong>File search</strong> (<code>file-searcher.ts</code>) uses <code>child_process.spawn(rg)</code>
-for ripgrep so the heavy work happens in a subprocess; the Node
-fallback walks with bounded concurrency (16-wide)</li>
-<li><strong>PTY data</strong> flows from <code>node-pty</code> → callback → WebSocket frame, no
+<li><strong>Multipart upload</strong> streams part bodies straight into
+<code>writeFileBytes</code> — full file never buffered in memory</li>
+<li><strong>File search</strong> spawns <code>rg</code> as a subprocess; Node fallback walks with
+16-wide bounded concurrency</li>
+<li><strong>PTY data</strong> flows <code>node-pty</code> → callback → WebSocket frame, no
 buffering beyond what xterm needs</li>
 </ul>
-<h2>Key invariants</h2>
-<ol>
-<li><p><strong>All filesystem ops go through <code>file-manager.ts</code>.</strong> Routes never
-import <code>node:fs</code> directly. Every call validates the resolved path is
-inside the project root via <code>verifyPathSafe()</code> (lexical + realpath
-walk). Violations return 403, never 500.</p>
-</li>
-<li><p><strong>All session interactions go through <code>session-registry.ts</code>.</strong> Routes
-never call <code>createAgentSession</code> or import <code>AgentSession</code> directly.
-The registry is the single source of truth for live SDK state.</p>
-</li>
-<li><p><strong>All config-file writes are atomic.</strong> <code>tmp + rename</code> pattern in
-<code>config-manager.ts</code> and <code>project-manager.ts</code> (and the extension via
-<code>file-manager.writeFile</code>).</p>
-</li>
-<li><p><strong>Auth check is global</strong> with explicit opt-out. <code>index.ts</code>&#39;s
-<code>onRequest</code> hook checks every request unless the route declares
-<code>config: { public: true }</code>. New public routes must explicitly opt in.</p>
-</li>
-<li><p><strong>OpenAPI spec is auto-generated.</strong> <code>@fastify/swagger</code> collects
-<code>schema.description</code> + <code>schema.body</code> + <code>schema.response</code> from each
-route registration. There is no separate spec file; Swagger UI at
-<code>/api/docs</code> reads from the live route definitions.</p>
-</li>
-<li><p><strong>Client routing through <code>api-client.ts</code>.</strong> Components never call
-<code>fetch()</code>. The api-client handles auth-token attachment, JSON
-parsing, validator boundary, and 401 → logout flow.</p>
-</li>
-</ol>
-<h2>File-by-file reference</h2>
-<p>For the canonical &quot;where does X live&quot; answer, read <a href="../CLAUDE.md"><code>CLAUDE.md</code></a>&#39;s
-&quot;Repository Layout&quot; + &quot;Critical Conventions&quot; sections. They&#39;re the
-contributor-side reference and stay in sync with the code.</p>
-<p>This document covers the <em>what</em> and the <em>why</em>; CLAUDE.md covers the
-<em>how</em> and the <em>do-not</em>.</p>
+<h2>Invariants</h2>
+<p>The do-not / always-do rules for contributors live in
+<a href="../CLAUDE.md#critical-conventions"><code>CLAUDE.md</code></a>. The two that are
+load-bearing for the architecture above:</p>
+<ul>
+<li><strong>All session interactions through <code>session-registry.ts</code></strong> — keeps
+the in-memory registry as the single source of truth for live SDK
+state. Without this, two callers could create overlapping
+<code>AgentSession</code>s for the same JSONL.</li>
+<li><strong>All filesystem ops through <code>file-manager.ts</code></strong> — keeps path
+validation and atomic writes in one place. Without this, a route
+bypassing the wrapper could traverse out of the project root.</li>
+</ul>
+<p>The rest (no default exports, Zustand-only state, OpenAPI auto-spec
+from route schemas, etc.) is in <code>CLAUDE.md</code>.</p>
 <h2>See also</h2>
 <ul>
-<li><a href="./CONTAINERS.md"><code>docs/CONTAINERS.md</code></a> — Docker image, volumes,
+<li><a href="./containers.md"><code>docs/containers.md</code></a> — Docker image, volumes,
 resource tuning</li>
-<li><a href="./deployment.md"><code>docs/deployment.md</code></a> — production deploy recipes
-(TLS, reverse proxy, auth)</li>
+<li><a href="./deployment.md"><code>docs/deployment.md</code></a> — private-network deploy
+recipes (reverse proxy, auth, optional TLS)</li>
 <li><a href="./configuration.md"><code>docs/configuration.md</code></a> — pi config files, custom
 providers, MCP setup</li>
 <li><a href="./sse-events.md"><code>docs/sse-events.md</code></a> — full SSE event catalogue</li>

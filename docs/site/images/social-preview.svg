@@ -28,7 +28,7 @@
 
   <g transform="translate(440, 250)">
     <text x="0" y="0" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="96" font-weight="700" fill="#ffffff" letter-spacing="-2">pi-forge</text>
-    <text x="0" y="60" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="32" font-weight="400" fill="#a3a3a3">A browser pi-forge for the pi coding agent</text>
+    <text x="0" y="60" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="32" font-weight="400" fill="#a3a3a3">A browser UI for the pi coding agent</text>
     <g transform="translate(0, 110)">
       <rect x="0" y="0" width="180" height="44" rx="22" fill="none" stroke="url(#accent)" stroke-width="2"/>
       <text x="90" y="29" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#e5e5e5" text-anchor="middle">Self-hosted</text>
