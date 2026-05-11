@@ -15,6 +15,8 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-05-11
+
 ### Added
 
 - **Cross-session text search.** New search bar at the top of the app
