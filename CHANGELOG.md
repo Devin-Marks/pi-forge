@@ -15,6 +15,41 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Added
+
+- **Cross-session text search.** New search bar at the top of the app
+  searches user / assistant message text and tool-call args across every
+  session in every project. ⌘K / Ctrl+K focuses, ↑↓ navigates the
+  dropdown, Enter opens the matched session and scrolls the matched
+  message into view. Server-side `GET /api/v1/search/sessions?q=…`
+  uses ripgrep when available with a Node fallback over
+  `${SESSION_DIR}/**/*.jsonl`. Hidden on mobile. (#109)
+- **Single-conversation export.** New toolbar button in the chat view
+  exports the current session as Markdown (user/assistant headings,
+  fenced bash blocks, blockquoted tool results capped at 2 KB) or raw
+  JSONL (with subagent children inlined between the parent's `subagent`
+  tool call and result, bracketed by synthetic
+  `subagent_inline_start` / `subagent_inline_end` envelopes).
+  `GET /api/v1/sessions/:sessionId/export?format=jsonl|markdown`.
+  Hidden on mobile. (#110)
+- **Hunk-level git staging.** Each hunk in the git panel diff now has an
+  inline Stage / Unstage button on its header row (sticky-positioned so
+  it stays visible during horizontal scroll). Backed by
+  `POST /api/v1/git/apply-hunks`, which feeds a hunk-extracted patch
+  through `git apply --cached --recount [--reverse]`. Closes the
+  Phase 12 deferred item. (#111)
+
+### Changed
+
+- **Docs refresh pass.** README rewrite (245→166 lines) with grouped
+  doc index; AGENTS.md / CLAUDE.md realigned with current architecture
+  (`cli.ts` env↔flag table, `mcp/` manager, per-project override
+  files, `config-export.ts`); new `docs/mobile.md`; `CONTAINERS.md`
+  renamed to `containers.md`; landing quickstart restructured around
+  two install paths (npm vs Docker); pi-subagents card replaces
+  standalone auth card on landing; hero carousel screenshots refreshed
+  and extended to nine slides. (#112)
+
 ## [1.2.0] — 2026-05-09
 
 ### Added
