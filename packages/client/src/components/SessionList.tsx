@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from "react";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
 import { EMPTY_SESSIONS, useSessionStore } from "../store/session-store";
 import { useProjectStore } from "../store/project-store";
@@ -46,20 +52,72 @@ export function SessionList({ projectId }: Props) {
   const [renameDraft, setRenameDraft] = useState("");
 
   /**
-   * Delete-session dialog state. The × button always means "delete
-   * forever" — same behavior for live and cold rows. Earlier we did
-   * dispose-only on live rows (preserving the JSONL) which forced a
-   * second click to actually remove the file: live → dispose →
-   * reappears as cold → hard delete → row vanishes. That two-step
-   * was confusing ("the row didn't go away") and inconsistent with
-   * how the project-delete flow already works. Single click +
-   * confirm = gone, end of story.
+   * Bulk-delete dialog state. Used ONLY for the multi-select Delete
+   * button — that path benefits from a confirmation modal because
+   * deleting N rows at once is destructive and the count is part of
+   * the prompt. Single-row delete (the per-row × button) skips the
+   * modal and uses a click-to-confirm pattern instead — see
+   * `armedDeleteId` below.
    */
-  const [deleteDialog, setDeleteDialog] = useState<
-    | { kind: "single"; sessionId: string; label: string; isLive: boolean }
-    | { kind: "many"; sessionIds: string[] }
-    | undefined
-  >(undefined);
+  const [deleteDialog, setDeleteDialog] = useState<{ sessionIds: string[] } | undefined>(undefined);
+
+  /**
+   * Click-to-confirm state for the per-row delete ×. First click on a
+   * row's × "arms" the button — its background flips red and the
+   * tooltip changes to "Click again to delete". A second click within
+   * the timeout actually deletes; a click anywhere else, an Escape
+   * keypress, or the auto-disarm timer all reset state without
+   * deleting. Inspired by VS Code's git "discard changes" inline
+   * action and similar two-click patterns — fewer modals interrupting
+   * the sidebar flow, but the action still requires deliberate intent.
+   *
+   * The timeout window is short enough (CLICK_TO_CONFIRM_MS) that an
+   * armed button is never "stale" by accident: if the user wandered
+   * off, hovering or clicking elsewhere disarms; if they came back
+   * later, the next × click re-arms rather than firing.
+   */
+  const [armedDeleteId, setArmedDeleteId] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (armedDeleteId === undefined) return;
+    const disarm = (): void => setArmedDeleteId(undefined);
+    // Auto-disarm after the window. Don't extend on hover or
+    // anything else — the goal is to limit how long an "armed"
+    // button can sit forgotten.
+    const timer = window.setTimeout(disarm, CLICK_TO_CONFIRM_MS);
+    // Outside-click: any click that isn't on the armed button
+    // itself disarms. The button's own onClick stops propagation
+    // so this handler doesn't see clicks on the button.
+    const onPointerDown = (e: PointerEvent): void => {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest(`[data-armed-delete="${armedDeleteId}"]`) !== null) return;
+      disarm();
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") disarm();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [armedDeleteId]);
+
+  const onDeleteClick = (sessionId: string): void => {
+    if (armedDeleteId === sessionId) {
+      // Second click on the armed button — fire and clear. hard:true
+      // unconditionally, same matrix as the bulk path: dispose live +
+      // remove JSONL atomically.
+      setArmedDeleteId(undefined);
+      void disposeSession(sessionId, { hard: true });
+      return;
+    }
+    // First click (or click on a different row's ×) — arm this row.
+    setArmedDeleteId(sessionId);
+  };
 
   // Selected session ids for the multiselect / bulk-delete affordance.
   // Cmd/Ctrl+click on a session row toggles selection; plain click
@@ -138,16 +196,13 @@ export function SessionList({ projectId }: Props) {
 
   const submitDelete = async (): Promise<void> => {
     if (deleteDialog === undefined) return;
+    const ids = deleteDialog.sessionIds;
     setDeleteDialog(undefined);
     // hard:true unconditionally — server's DELETE route handles the
     // live + hard case by disposing the in-memory entry AND
     // removing the on-disk JSONL atomically. The route's docs spell
     // out the full matrix; we always pick the "actually delete" leg.
-    if (deleteDialog.kind === "single") {
-      void disposeSession(deleteDialog.sessionId, { hard: true });
-      return;
-    }
-    for (const id of deleteDialog.sessionIds) {
+    for (const id of ids) {
       try {
         await disposeSession(id, { hard: true });
       } catch {
@@ -187,7 +242,7 @@ export function SessionList({ projectId }: Props) {
     }
   };
 
-  const onRenameKeyDown = (e: KeyboardEvent<HTMLInputElement>, sessionId: string): void => {
+  const onRenameKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>, sessionId: string): void => {
     if (e.key === "Enter") {
       e.preventDefault();
       void commitRename(sessionId);
@@ -213,7 +268,7 @@ export function SessionList({ projectId }: Props) {
           <span>{selectedIds.size} selected</span>
           <div className="flex gap-1">
             <button
-              onClick={() => setDeleteDialog({ kind: "many", sessionIds: Array.from(selectedIds) })}
+              onClick={() => setDeleteDialog({ sessionIds: Array.from(selectedIds) })}
               className="rounded border border-red-700/50 px-1.5 py-0.5 text-red-300 hover:bg-red-900/20"
             >
               Delete
@@ -259,7 +314,8 @@ export function SessionList({ projectId }: Props) {
             onRenameKeyDown={onRenameKeyDown}
             onCommitRename={(id) => void commitRename(id)}
             onToggleExpanded={toggleExpanded}
-            onAskDelete={(payload) => setDeleteDialog(payload)}
+            isArmedForDelete={armedDeleteId === s.sessionId}
+            onDeleteClick={onDeleteClick}
           />,
         ];
         if (isExpanded) {
@@ -282,7 +338,8 @@ export function SessionList({ projectId }: Props) {
                 onRenameKeyDown={onRenameKeyDown}
                 onCommitRename={(id) => void commitRename(id)}
                 onToggleExpanded={toggleExpanded}
-                onAskDelete={(payload) => setDeleteDialog(payload)}
+                isArmedForDelete={armedDeleteId === c.sessionId}
+                onDeleteClick={onDeleteClick}
               />,
             );
           }
@@ -293,33 +350,16 @@ export function SessionList({ projectId }: Props) {
         open={deleteDialog !== undefined}
         onClose={() => setDeleteDialog(undefined)}
         onConfirm={() => void submitDelete()}
-        title={
-          deleteDialog?.kind === "many"
-            ? `Delete ${deleteDialog.sessionIds.length} session${deleteDialog.sessionIds.length === 1 ? "" : "s"}`
-            : `Delete session "${deleteDialog?.label ?? ""}"`
-        }
-        message={
-          deleteDialog?.kind === "many"
-            ? `Delete the ${deleteDialog.sessionIds.length} selected session${deleteDialog.sessionIds.length === 1 ? "" : "s"}? Live sessions are killed and on-disk JSONLs are removed. Cannot be undone.`
-            : deleteDialog?.kind === "single" && deleteDialog.isLive
-              ? `Delete "${deleteDialog.label}"? This kills the live shell AND removes the on-disk JSONL. Cannot be undone.`
-              : deleteDialog?.kind === "single"
-                ? `Delete the on-disk JSONL for "${deleteDialog.label}"? Cannot be undone — the file is the only copy.`
-                : ""
-        }
-        primaryLabel={deleteDialog?.kind === "many" ? "Delete all" : "Delete"}
+        title={`Delete ${deleteDialog?.sessionIds.length ?? 0} session${(deleteDialog?.sessionIds.length ?? 0) === 1 ? "" : "s"}`}
+        message={`Delete the ${deleteDialog?.sessionIds.length ?? 0} selected session${(deleteDialog?.sessionIds.length ?? 0) === 1 ? "" : "s"}? Live sessions are killed and on-disk JSONLs are removed. Cannot be undone.`}
+        primaryLabel="Delete all"
         tone="danger"
       />
     </div>
   );
 }
 
-interface DeletePayload {
-  kind: "single";
-  sessionId: string;
-  label: string;
-  isLive: boolean;
-}
+const CLICK_TO_CONFIRM_MS = 3000;
 
 interface SessionRowProps {
   session: UnifiedSession;
@@ -336,10 +376,12 @@ interface SessionRowProps {
   onToggleSelect: (sessionId: string) => void;
   onStartRename: (sessionId: string, current: string) => void;
   onChangeRename: (next: string) => void;
-  onRenameKeyDown: (e: KeyboardEvent<HTMLInputElement>, sessionId: string) => void;
+  onRenameKeyDown: (e: ReactKeyboardEvent<HTMLInputElement>, sessionId: string) => void;
   onCommitRename: (sessionId: string) => void;
   onToggleExpanded: (parentId: string, currentlyExpanded: boolean) => void;
-  onAskDelete: (payload: DeletePayload) => void;
+  /** True when this row's × is in its "click again to delete" state. */
+  isArmedForDelete: boolean;
+  onDeleteClick: (sessionId: string) => void;
 }
 
 function SessionRow(props: SessionRowProps) {
@@ -359,7 +401,8 @@ function SessionRow(props: SessionRowProps) {
     onRenameKeyDown,
     onCommitRename,
     onToggleExpanded,
-    onAskDelete,
+    isArmedForDelete,
+    onDeleteClick,
   } = props;
   const label =
     s.name ??
@@ -432,22 +475,37 @@ function SessionRow(props: SessionRowProps) {
       )}
       {!isRenaming && (
         <button
-          onClick={() =>
-            onAskDelete({
-              kind: "single",
-              sessionId: s.sessionId,
-              label,
-              isLive: s.isLive,
-            })
+          // data attribute lets the parent's pointerdown handler detect
+          // clicks ON the armed button vs OUTSIDE it without needing a
+          // ref dance. stopPropagation here is belt-and-suspenders so a
+          // sibling row's listener never sees this click either.
+          data-armed-delete={isArmedForDelete ? s.sessionId : undefined}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDeleteClick(s.sessionId);
+          }}
+          className={
+            // Explicit `h-6` (24px) on BOTH variants so the row's
+            // height is pinned regardless of the inner content (the
+            // armed `Confirm` text + border was sub-24px without
+            // this, which let the row shrink on toggle). Computing
+            // padding to hit 24px exactly was finicky across font /
+            // border combos — pinning the height makes the swap
+            // visually identical from a layout standpoint.
+            isArmedForDelete
+              ? "inline-flex h-6 items-center rounded border border-red-500 px-1.5 text-[11px] font-medium uppercase leading-none tracking-wide text-red-300 hover:bg-red-500/10"
+              : "inline-flex h-6 w-6 items-center justify-center rounded text-neutral-500 hover:text-red-400"
           }
-          className="inline-flex items-center p-1 text-neutral-500 hover:text-red-400"
           title={
-            s.isLive
-              ? "Delete session — also kills the live shell"
-              : "Delete session JSONL from disk"
+            isArmedForDelete
+              ? "Click again to delete (Esc to cancel)"
+              : s.isLive
+                ? "Delete session — also kills the live shell"
+                : "Delete session JSONL from disk"
           }
+          aria-label={isArmedForDelete ? "Confirm delete" : "Delete session"}
         >
-          <X size={16} />
+          {isArmedForDelete ? "Confirm" : <X size={16} />}
         </button>
       )}
     </div>
