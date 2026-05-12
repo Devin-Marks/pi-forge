@@ -182,6 +182,16 @@
   left: 0;
   z-index: 1;
   background: #0a0a0a;
+  /* Keep multi-digit line numbers on one line. With `table-layout:
+     auto` (set on `.diff` above) the gutter cell shrinks to its
+     content's break-points; without an explicit `nowrap`, browsers
+     can break "16" into "1" / "6" stacked vertically when the cell
+     is sticky-positioned and the table is laid out in a narrow
+     pane. `tabular-nums` keeps the digit widths consistent so the
+     gutter column doesn't jiggle as line numbers cross digit-count
+     boundaries (9→10, 99→100). */
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 .pi-diff-block .diff-decoration {
   background: #171717;
