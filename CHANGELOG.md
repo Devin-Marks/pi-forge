@@ -15,6 +15,8 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.2.2] — 2026-05-11
+
 ### Fixed
 
 - **Inline edit-diff gutter line numbers no longer wrap.** Multi-digit
