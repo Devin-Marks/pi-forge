@@ -520,9 +520,25 @@ export function App() {
           )}
           <ProjectSidebar
             className={
-              "fixed inset-y-0 left-0 z-40 transform shadow-2xl transition-transform duration-200 ease-out " +
-              "md:static md:inset-auto md:z-auto md:transform-none md:shadow-none md:transition-none md:translate-x-0 " +
-              (drawerOpen ? "translate-x-0" : "-translate-x-full")
+              // The drawer-slide translate is scoped with `max-md:` so
+              // it ONLY applies on mobile. Earlier this was an
+              // unscoped `translate-x-0` / `-translate-x-full` plus
+              // `md:transform-none` on top, but `transform-none` does
+              // not beat translate utilities in Tailwind's CSS source
+              // order: the translate's emitted `transform: translateX(
+              // ...)` won at md+, which (a) created a CSS containing
+              // block on the sidebar — squishing every `fixed inset-0`
+              // modal rendered inside it (ProjectPicker, project-delete,
+              // session bulk-delete) into the sidebar's bounding box —
+              // and (b) when we tried clearing it via removing the
+              // `md:translate-x-0` counter, the closed-drawer base
+              // `-translate-x-full` shoved the desktop sidebar off-
+              // screen. `max-md:` on both conditional translates
+              // emits no transform at md+ at all, so neither pathology
+              // triggers and the sidebar lays out in its natural flow.
+              "fixed inset-y-0 left-0 z-40 shadow-2xl transition-transform duration-200 ease-out " +
+              "md:static md:inset-auto md:z-auto md:shadow-none md:transition-none " +
+              (drawerOpen ? "max-md:translate-x-0" : "max-md:-translate-x-full")
             }
           />
           <main className="flex flex-1 overflow-hidden">
