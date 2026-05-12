@@ -15,6 +15,46 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.2.2] — 2026-05-11
+
+### Fixed
+
+- **Inline edit-diff gutter line numbers no longer wrap.** Multi-digit
+  line numbers in the chat's inline edit-tool diff (e.g. `16`, `100`)
+  rendered as digits stacked vertically (`1` over `6`) when the gutter
+  cell got compressed under `table-layout: auto`, making the inline
+  view visibly taller than the matching git-diff and turn-diff for
+  the same change. Adds `white-space: nowrap` and
+  `font-variant-numeric: tabular-nums` to `.pi-diff-block .diff-gutter`.
+  Same fix benefits GitPanel and TurnDiffPanel since they share the
+  scope. (#115)
+- **Per-row session delete swaps the modal for inline click-to-confirm.**
+  Single-row delete on a session now uses a two-click pattern: first ×
+  click arms the row (icon flips to a red-outlined `Confirm` button);
+  second click within 3 s actually deletes. Click anywhere else,
+  Escape, or the auto-disarm timer cancel without deleting. Bulk-
+  delete (multi-select toolbar) keeps the existing confirm modal
+  because the count-of-N context is part of the prompt. Sidesteps the
+  modal-centering regression for the common case AND reduces sidebar-
+  flow interruption. (#116)
+- **Sidebar modals (ProjectPicker, project-delete, session bulk-
+  delete) center on screen again.** A non-`none` transform on the
+  sidebar at md+ — emitted by the `md:translate-x-0` counter that was
+  trying to neutralize the mobile drawer-slide — was creating a CSS
+  containing block, so every `fixed inset-0` modal rendered as a
+  descendant of the sidebar got positioned inside the sidebar's
+  bounding box instead of against the viewport. Visually: modals
+  "squished into the session browser." Fix scopes the drawer
+  translate to `max-md:` so no transform is emitted at md+ at all.
+  (#117)
+
+### Changed
+
+- **Hero carousel images refreshed.** img0, img1, and img2-6 now
+  share a consistent 4112×2580 (~16:10) aspect ratio. img1 was
+  previously stale from before the recent in-session diff render
+  fixes. (#114, #118, #119)
+
 ## [1.2.1] — 2026-05-11
 
 ### Added
