@@ -59,9 +59,7 @@ export function SessionList({ projectId }: Props) {
    * modal and uses a click-to-confirm pattern instead — see
    * `armedDeleteId` below.
    */
-  const [deleteDialog, setDeleteDialog] = useState<
-    { sessionIds: string[] } | undefined
-  >(undefined);
+  const [deleteDialog, setDeleteDialog] = useState<{ sessionIds: string[] } | undefined>(undefined);
 
   /**
    * Click-to-confirm state for the per-row delete ×. First click on a
