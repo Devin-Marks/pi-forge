@@ -3,8 +3,13 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import {
+  getDefaultEnvironment,
+  StdioClientTransport,
+} from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { readMcpJson, type McpServerConfig, type McpTransport } from "./config.js";
+import { isStdioConfig, readMcpJson, type McpServerConfig, type McpTransport } from "./config.js";
+import { isStdioTrustedForProject } from "./stdio-trust.js";
 import { bridgeMcpTool } from "./tool-bridge.js";
 
 /** Looser-than-the-SDK transport handle — we only need close().
@@ -34,12 +39,29 @@ interface ClosableTransport {
  * Connections are eager: we attempt to connect on `loadGlobal()` /
  * `loadProject()` so the status badge has something honest to show.
  *
- * v1 supports remote transports only (StreamableHTTP + SSE). stdio
- * deferred — the pi-forge is container-native and arbitrary
- * subprocess spawning has different security trade-offs.
+ * Supports three transports: StreamableHTTP and SSE (both remote
+ * URL-based) plus stdio (the manager spawns the configured
+ * subprocess and speaks MCP over its stdin/stdout). The transport
+ * for a given entry is selected by which fields are populated —
+ * `url` ↦ remote, `command` ↦ stdio. See `mcp/config.ts` for the
+ * presence-based discriminator rationale.
+ *
+ * **Stdio trust gate.** Project-scoped stdio entries (declared in
+ * `<projectPath>/.mcp.json`) are GATED behind a per-project trust
+ * decision (see `stdio-trust.ts`). Until the operator grants trust
+ * via the UI, the entry sits in `trust_required` state and is
+ * neither spawned nor surfaces tools. Global stdio entries (in
+ * `${FORGE_DATA_DIR}/mcp.json`) and remote project entries are
+ * never gated — the operator wrote those config files themselves.
  */
 
-export type ConnectionState = "idle" | "connecting" | "connected" | "error" | "disabled";
+export type ConnectionState =
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "error"
+  | "disabled"
+  | "trust_required";
 export type Scope = "global" | { project: string };
 
 const PROJECT_MCP_FILE = ".mcp.json";
@@ -89,6 +111,7 @@ export async function loadGlobal(): Promise<void> {
 }
 
 export async function loadProject(projectId: string, projectPath: string): Promise<void> {
+  cachedProjectPaths.set(projectId, projectPath);
   const cfg = await readProjectMcpJson(projectPath);
   await syncScope({ project: projectId }, cfg);
   loadedProjects.add(projectId);
@@ -163,7 +186,15 @@ export interface ServerStatus {
   scope: "global" | "project";
   projectId?: string;
   name: string;
-  url: string;
+  /** Discriminator for the UI — `"remote"` ↦ render `url` +
+   *  `transport`; `"stdio"` ↦ render `command` + `args`. */
+  kind: "remote" | "stdio";
+  /** Remote-only. Present when `kind === "remote"`. */
+  url?: string;
+  /** Stdio-only. Present when `kind === "stdio"`. */
+  command?: string;
+  /** Stdio-only. */
+  args?: string[];
   enabled: boolean;
   state: ConnectionState;
   toolCount: number;
@@ -177,8 +208,8 @@ export interface ServerStatus {
    */
   tools: { name: string; shortName: string; description: string }[];
   lastError?: string;
-  /** Resolved transport — populated once a connection succeeds.
-   *  Useful for UI display when the user picked `auto`. */
+  /** Resolved remote transport — populated once a connection
+   *  succeeds. Only meaningful when `kind === "remote"`. */
   transport?: McpTransport;
 }
 
@@ -200,18 +231,25 @@ export function getStatus(opts?: { projectId?: string }): ServerStatus[] {
       shortName: t.name,
       description: t.description,
     }));
+    const isStdio = isStdioConfig(e.config);
     const status: ServerStatus = {
       scope: e.scope === "global" ? "global" : "project",
       name: e.name,
-      url: e.config.url,
+      kind: isStdio ? "stdio" : "remote",
       enabled: e.config.enabled !== false,
       state: e.state,
       toolCount: e.tools.length,
       tools,
     };
+    if (isStdio) {
+      if (e.config.command !== undefined) status.command = e.config.command;
+      if (e.config.args !== undefined) status.args = [...e.config.args];
+    } else {
+      if (e.config.url !== undefined) status.url = e.config.url;
+      if (e.config.transport !== undefined) status.transport = e.config.transport;
+    }
     if (e.scope !== "global") status.projectId = e.scope.project;
     if (e.lastError !== undefined) status.lastError = e.lastError;
-    if (e.config.transport !== undefined) status.transport = e.config.transport;
     out.push(status);
   }
   return out;
@@ -233,10 +271,58 @@ export async function probe(scope: Scope, name: string): Promise<ServerStatus | 
   );
 }
 
+/**
+ * Re-attempt connection for every project-scoped stdio entry stuck
+ * in `trust_required`. Called from the `POST /mcp/trust/:projectId`
+ * route after the operator grants trust — the entries are already
+ * in the pool (they were created by `loadProject`), we just need to
+ * retry the connect now that the trust gate would pass.
+ *
+ * Remote entries and global entries are untouched; their connection
+ * state doesn't change with stdio trust.
+ */
+export async function reconnectGatedStdioForProject(projectId: string): Promise<void> {
+  const toConnect: PoolEntry[] = [];
+  for (const e of pool.values()) {
+    if (e.scope === "global") continue;
+    if (e.scope.project !== projectId) continue;
+    if (e.state !== "trust_required") continue;
+    toConnect.push(e);
+  }
+  // Sequentially-awaited so the connect attempts don't all spawn
+  // subprocesses at the same instant — if the operator just clicked
+  // trust on a project with five stdio entries, staggering keeps the
+  // pi-forge log readable and avoids a thundering-herd spawn.
+  for (const entry of toConnect) {
+    await connectEntry(entry);
+  }
+}
+
+/**
+ * Drop every cached entry for a project — pool entries, the
+ * loadedProjects marker, and the cwd hint. Called when the operator
+ * revokes stdio trust so the next session-create in this project
+ * re-reads `.mcp.json` and re-gates anything that needs gating.
+ * Disconnects any currently-running subprocesses too.
+ */
+export async function unloadProject(projectId: string): Promise<void> {
+  const toClose: PoolEntry[] = [];
+  for (const [key, entry] of Array.from(pool.entries())) {
+    if (entry.scope === "global") continue;
+    if (entry.scope.project !== projectId) continue;
+    toClose.push(entry);
+    pool.delete(key);
+  }
+  await Promise.allSettled(toClose.map((e) => disconnectEntry(e)));
+  loadedProjects.delete(projectId);
+  cachedProjectPaths.delete(projectId);
+}
+
 export async function disposeAll(): Promise<void> {
   await Promise.allSettled(Array.from(pool.values()).map((entry) => disconnectEntry(entry)));
   pool.clear();
   loadedProjects.clear();
+  cachedProjectPaths.clear();
 }
 
 /* ----------------------------- internals ----------------------------- */
@@ -257,13 +343,10 @@ async function syncScope(scope: Scope, configs: Record<string, McpServerConfig>)
     const key = entryKey(scope, name);
     const existing = pool.get(key);
     if (existing !== undefined) {
-      const sameUrl = existing.config.url === cfg.url;
-      const sameTransport = existing.config.transport === cfg.transport;
       const sameEnabled = (existing.config.enabled !== false) === (cfg.enabled !== false);
-      const sameHeaders =
-        JSON.stringify(existing.config.headers ?? {}) === JSON.stringify(cfg.headers ?? {});
+      const sameConnectionFields = sameConnectionConfig(existing.config, cfg);
       existing.config = cfg;
-      if (sameUrl && sameTransport && sameEnabled && sameHeaders) {
+      if (sameEnabled && sameConnectionFields) {
         // Nothing meaningful changed; skip the disconnect/reconnect dance.
         continue;
       }
@@ -290,6 +373,25 @@ async function syncScope(scope: Scope, configs: Record<string, McpServerConfig>)
   }
 }
 
+/**
+ * Equality across every field that affects the underlying connection
+ * (excluding `enabled`, which the caller compares separately because
+ * a false→true flip needs to drop into connect, not just reconnect).
+ * Covers both remote (`url`, `transport`, `headers`) and stdio
+ * (`command`, `args`, `env`, `cwd`) — comparing the irrelevant set
+ * for a given kind is harmless because both sides are `undefined`.
+ */
+function sameConnectionConfig(a: McpServerConfig, b: McpServerConfig): boolean {
+  if (a.url !== b.url) return false;
+  if (a.transport !== b.transport) return false;
+  if (a.command !== b.command) return false;
+  if (a.cwd !== b.cwd) return false;
+  if (JSON.stringify(a.args ?? []) !== JSON.stringify(b.args ?? [])) return false;
+  if (JSON.stringify(a.headers ?? {}) !== JSON.stringify(b.headers ?? {})) return false;
+  if (JSON.stringify(a.env ?? {}) !== JSON.stringify(b.env ?? {})) return false;
+  return true;
+}
+
 function entryScopeMatches(a: Scope, b: Scope): boolean {
   if (a === "global" && b === "global") return true;
   if (a !== "global" && b !== "global") return a.project === b.project;
@@ -297,13 +399,30 @@ function entryScopeMatches(a: Scope, b: Scope): boolean {
 }
 
 async function connectEntry(entry: PoolEntry): Promise<void> {
+  // Project-scope stdio entries are gated behind a per-project trust
+  // decision (see stdio-trust.ts). Refuse to spawn until the operator
+  // grants trust via the UI. Global stdio entries and remote entries
+  // bypass the gate entirely.
+  if (isStdioConfig(entry.config) && entry.scope !== "global") {
+    const trusted = await isStdioTrustedForProject(entry.scope.project).catch(() => false);
+    if (!trusted) {
+      entry.state = "trust_required";
+      entry.lastError = "stdio MCP servers from this project require trust";
+      entry.tools = [];
+      entry.bridged = [];
+      return;
+    }
+  }
   entry.state = "connecting";
   delete entry.lastError;
   try {
-    const { client, transport, resolvedTransport } = await openConnection(entry.config);
+    const { client, transport, resolvedTransport } = await openConnection(
+      entry.config,
+      entry.scope,
+    );
     entry.client = client;
     entry.transport = transport;
-    entry.config.transport = resolvedTransport;
+    if (resolvedTransport !== undefined) entry.config.transport = resolvedTransport;
     const list = await client.listTools();
     entry.tools = (list.tools ?? []).map((t) => ({
       name: t.name,
@@ -353,15 +472,33 @@ async function disconnectEntry(entry: PoolEntry): Promise<void> {
 interface OpenedConnection {
   client: Client;
   transport: ClosableTransport;
-  resolvedTransport: McpTransport;
+  /** For remote connections, the wire-resolved transport
+   *  (StreamableHTTP / SSE). Undefined for stdio. */
+  resolvedTransport: McpTransport | undefined;
 }
 
 /**
- * Open a connection using the requested transport. `auto` (default)
- * attempts StreamableHTTP first, then falls back to SSE on failure —
- * covers fastmcp servers regardless of which transport they expose.
+ * Open a connection. Branches on the config's discriminator:
+ *  - stdio (`command` set) ↦ spawn the subprocess via
+ *    StdioClientTransport (cwd defaults to the project path for
+ *    project-scoped servers).
+ *  - remote (`url` set) ↦ tries StreamableHTTP first when
+ *    `transport: "auto"` (the default), falls back to SSE — covers
+ *    fastmcp servers regardless of which transport they expose.
+ *
+ * The route layer rejects configs where neither (or both) is set, so
+ * we don't have to defend against ambiguous input here.
  */
-async function openConnection(cfg: McpServerConfig): Promise<OpenedConnection> {
+async function openConnection(cfg: McpServerConfig, scope: Scope): Promise<OpenedConnection> {
+  if (isStdioConfig(cfg)) {
+    return await openStdio(cfg, scope);
+  }
+  if (cfg.url === undefined) {
+    // Shouldn't happen — the route validator rejects "neither url
+    // nor command" with a 400 before reaching the manager. Be loud
+    // if it does so a future regression surfaces immediately.
+    throw new Error("mcp: server has neither url nor command");
+  }
   const url = new URL(cfg.url);
   const requested: McpTransport = cfg.transport ?? "auto";
   if (requested === "streamable-http") {
@@ -377,6 +514,75 @@ async function openConnection(cfg: McpServerConfig): Promise<OpenedConnection> {
     return await openSse(url, cfg.headers);
   }
 }
+
+/**
+ * Spawn the configured subprocess and speak MCP over its stdin /
+ * stdout via the SDK's StdioClientTransport.
+ *
+ * **Env handling.** The SDK passes ONLY `cfg.env` (when set) to the
+ * child; it does NOT inherit from the pi-forge process env. We
+ * intentionally preserve that behavior — the operator must
+ * explicitly pass through any credential / config the subprocess
+ * needs. To keep common-case shells / runtimes working though, we
+ * always merge in the SDK's `getDefaultEnvironment()` allowlist
+ * (PATH, HOME, locale vars, etc.), with operator-supplied entries
+ * winning on collision so an explicit `PATH` override still works.
+ *
+ * **cwd.** Project-scoped entries default to the project path (the
+ * user's repo root); global entries inherit the pi-forge process
+ * cwd. An explicit `cfg.cwd` always wins.
+ *
+ * **stderr.** Inherited so the operator can see startup failures /
+ * tracebacks in the pi-forge log without having to pipe-and-pump
+ * the child's stderr ourselves.
+ */
+async function openStdio(cfg: McpServerConfig, scope: Scope): Promise<OpenedConnection> {
+  if (cfg.command === undefined || cfg.command.length === 0) {
+    throw new Error("mcp: stdio server requires a command");
+  }
+  // Project-scope cwd default: spawn relative to the user's repo
+  // root so paths inside `args` resolve sanely. Global entries
+  // inherit pi-forge's cwd unless overridden.
+  const resolvedCwd = cfg.cwd ?? (scope === "global" ? undefined : projectCwdHint(scope.project));
+  const env: Record<string, string> = {
+    ...getDefaultEnvironment(),
+    ...(cfg.env ?? {}),
+  };
+  const transport = new StdioClientTransport({
+    command: cfg.command,
+    args: cfg.args ?? [],
+    env,
+    ...(resolvedCwd !== undefined ? { cwd: resolvedCwd } : {}),
+    stderr: "inherit",
+  });
+  const client = new Client({ name: "pi-forge", version: "1.0.0" }, { capabilities: {} });
+  await client.connect(transport);
+  return { client, transport, resolvedTransport: undefined };
+}
+
+/**
+ * Lookup the cached project cwd. Returns undefined when the project
+ * isn't in the pool yet (defensive — `loadProject` always populates
+ * the pool with entries before connect, so the project path is
+ * already on the entries themselves, but we read from the entry
+ * rather than the projects file to keep this hot path free of disk
+ * I/O).
+ */
+function projectCwdHint(projectId: string): string | undefined {
+  for (const e of pool.values()) {
+    if (e.scope !== "global" && e.scope.project === projectId) {
+      return e.config.cwd ?? cachedProjectPaths.get(projectId);
+    }
+  }
+  return cachedProjectPaths.get(projectId);
+}
+
+/**
+ * Project-id → on-disk path cache, populated by `loadProject` so
+ * `openStdio` can default `cwd` without a project-manager round
+ * trip. Cleared in lockstep with the pool on `disposeAll`.
+ */
+const cachedProjectPaths = new Map<string, string>();
 
 // The MCP SDK's Transport interface and its concrete classes disagree
 // about whether `sessionId` is optional. Cast the concrete instances at

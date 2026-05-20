@@ -1393,6 +1393,31 @@ export const api = {
   },
   listMcpTools: (projectId: string) =>
     request(`/api/v1/mcp/tools?projectId=${encodeURIComponent(projectId)}`, vMcpTools),
+  /** Grant this project permission to declare stdio MCP servers in
+   *  its `.mcp.json`. Spawns every currently-gated entry. */
+  grantStdioMcpTrust: (projectId: string) =>
+    request(
+      `/api/v1/mcp/trust/${encodeURIComponent(projectId)}`,
+      (v, s) => {
+        if (!isObject(v) || typeof v.trusted !== "boolean" || !Array.isArray(v.status)) {
+          fail(s, "expected { trusted, status }");
+        }
+        return { trusted: v.trusted, status: v.status as McpServerStatus[] };
+      },
+      { method: "POST", body: {} },
+    ),
+  /** Revoke stdio trust + disconnect every project-scope MCP entry. */
+  revokeStdioMcpTrust: (projectId: string) =>
+    request(
+      `/api/v1/mcp/trust/${encodeURIComponent(projectId)}`,
+      (v, s) => {
+        if (!isObject(v) || typeof v.trusted !== "boolean") {
+          fail(s, "expected { trusted }");
+        }
+        return { trusted: v.trusted };
+      },
+      { method: "DELETE" },
+    ),
   listSkills: (projectId: string) =>
     request(
       `/api/v1/config/skills?projectId=${encodeURIComponent(projectId)}`,

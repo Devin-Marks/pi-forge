@@ -56,6 +56,9 @@ interface ProjectScopeData {
   /** Combined GLOBAL config + project status entries from the
    *  /mcp/servers?projectId= response. */
   status: McpServerStatus[];
+  /** Has the operator granted this project stdio-MCP trust?
+   *  `undefined` ↦ not yet loaded for this project. */
+  stdioTrust?: { trusted: boolean };
   loadedAt: number;
 }
 
@@ -76,6 +79,11 @@ interface McpState {
   upsertServer: (name: string, body: McpServerConfig) => Promise<void>;
   deleteServer: (name: string) => Promise<void>;
   probeServer: (name: string, projectId: string | undefined) => Promise<void>;
+  /** Grant / revoke per-project stdio MCP trust. Refreshes the
+   *  project after so the status entries flip from trust_required
+   *  to connected (or back). */
+  grantStdioTrust: (projectId: string) => Promise<void>;
+  revokeStdioTrust: (projectId: string) => Promise<void>;
 }
 
 function describeError(err: unknown): string {
@@ -144,15 +152,19 @@ export const useMcpStore = create<McpState>((set, get) => ({
     set({ loading: true });
     try {
       const list = await api.listMcpServers(projectId);
-      set((state) => ({
-        loading: false,
-        error: undefined,
-        globalServers: list.servers,
-        byProject: {
-          ...state.byProject,
-          [projectId]: { status: list.status, loadedAt: Date.now() },
-        },
-      }));
+      set((state) => {
+        const entry: ProjectScopeData = {
+          status: list.status,
+          loadedAt: Date.now(),
+        };
+        if (list.stdioTrust !== undefined) entry.stdioTrust = list.stdioTrust;
+        return {
+          loading: false,
+          error: undefined,
+          globalServers: list.servers,
+          byProject: { ...state.byProject, [projectId]: entry },
+        };
+      });
     } catch (err) {
       set({ loading: false, error: describeError(err) });
     }
@@ -210,6 +222,31 @@ export const useMcpStore = create<McpState>((set, get) => ({
     try {
       await api.probeMcpServer(name, projectId);
       await Promise.all([get().refreshSettings(), get().refreshProject(projectId)]);
+    } catch (err) {
+      set({ error: describeError(err) });
+      throw err;
+    }
+  },
+
+  grantStdioTrust: async (projectId) => {
+    try {
+      await api.grantStdioMcpTrust(projectId);
+      // Re-pull so status flips trust_required → connected for the
+      // gated entries the route just retried.
+      await get().refreshProject(projectId);
+    } catch (err) {
+      set({ error: describeError(err) });
+      throw err;
+    }
+  },
+
+  revokeStdioTrust: async (projectId) => {
+    try {
+      await api.revokeStdioMcpTrust(projectId);
+      // Server unloads the entire project pool on revoke; refresh
+      // pulls the post-revoke state (status: trust_required for
+      // stdio entries; remote entries re-connecting).
+      await get().refreshProject(projectId);
     } catch (err) {
       set({ error: describeError(err) });
       throw err;

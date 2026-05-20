@@ -15,6 +15,7 @@ import { config } from "./config.js";
 import { clearProjectOverrides as clearProjectSkillOverrides } from "./skill-overrides.js";
 import { clearProjectPromptOverrides } from "./prompt-overrides.js";
 import { clearProjectSystemPromptAddendum } from "./system-prompt-overrides.js";
+import { clearProjectStdioTrust } from "./mcp/stdio-trust.js";
 
 /**
  * Project ids are always `randomUUID()` output. Mirrors the same
@@ -266,6 +267,9 @@ export async function deleteProject(
   });
   await clearProjectSystemPromptAddendum(id).catch((err: unknown) => {
     warn({ err, id }, "system-prompt-overrides cleanup failed");
+  });
+  await clearProjectStdioTrust(id).catch((err: unknown) => {
+    warn({ err, id }, "mcp-stdio-trust cleanup failed");
   });
   if (opts.cascadeSessionDir === true) {
     // Wipe the project's session directory. Best-effort — a missing
