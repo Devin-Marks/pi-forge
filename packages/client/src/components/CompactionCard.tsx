@@ -32,11 +32,11 @@ export function CompactionCard({
   const timeLabel = `${when.toLocaleDateString()} ${when.toLocaleTimeString()}`;
   const archivedCount = event.archivedMessages.length;
   return (
-    <div className="my-2 rounded-md border border-dashed border-amber-700/50 bg-amber-900/10">
+    <div className="my-2 rounded-md border border-dashed border-amber-700/50 bg-amber-900/10 light:border-amber-300 light:bg-amber-50">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-amber-200/90 hover:bg-amber-900/20"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-amber-200/90 hover:bg-amber-900/20 light:text-amber-800 light:hover:bg-amber-100"
         title={
           open
             ? "Hide archived messages"
@@ -44,19 +44,19 @@ export function CompactionCard({
         }
       >
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        <Layers size={12} className="text-amber-400" />
+        <Layers size={12} className="text-amber-400 light:text-amber-700" />
         <span className="flex-1 truncate">{truncated.length > 0 ? truncated : "Compaction"}</span>
-        <span className="shrink-0 font-mono text-[10px] text-amber-300/70">
+        <span className="shrink-0 font-mono text-[10px] text-amber-300/70 light:text-amber-700/80">
           {archivedCount} msg · {event.tokensBefore.toLocaleString()} tok · {timeLabel}
         </span>
       </button>
       {open && (
-        <div className="border-t border-dashed border-amber-700/50 px-3 py-3">
+        <div className="border-t border-dashed border-amber-700/50 px-3 py-3 light:border-amber-300">
           {/* Full summary above the archived stream so the user can read
               the SDK-generated prose before drilling into the raw
               messages it summarised. */}
           {event.summary.length > 0 && (
-            <div className="mb-3 whitespace-pre-wrap rounded bg-amber-900/15 px-2 py-1 text-[11px] italic text-amber-100/80">
+            <div className="mb-3 whitespace-pre-wrap rounded bg-amber-900/15 px-2 py-1 text-[11px] italic text-amber-100/80 light:bg-amber-100 light:text-amber-800">
               {event.summary}
             </div>
           )}

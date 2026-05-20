@@ -288,7 +288,7 @@ function ProvidersTab({ onError }: { onError: (msg: string | undefined) => void 
                 <span
                   className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${
                     configured
-                      ? "bg-emerald-900/40 text-emerald-300"
+                      ? "bg-emerald-900/40 text-emerald-300 light:bg-emerald-100 light:text-emerald-800"
                       : "bg-neutral-800 text-neutral-500"
                   }`}
                 >
@@ -350,16 +350,25 @@ function ProvidersTab({ onError }: { onError: (msg: string | undefined) => void 
               </div>
             )}
             <details className="mt-2">
-              <summary className="cursor-pointer text-[11px] text-neutral-500">
+              <summary className="cursor-pointer text-[11px] text-neutral-500 light:text-neutral-600">
                 {p.models.length} model{p.models.length === 1 ? "" : "s"}
               </summary>
               <ul className="mt-1 space-y-0.5 text-[11px]">
                 {p.models.map((m) => (
                   <li key={m.id} className="flex justify-between font-mono">
-                    <span className={m.hasAuth ? "text-neutral-300" : "text-neutral-600"}>
+                    {/* hasAuth uses neutral-300 (dark text in dark theme,
+                        readable in light after scale inversion). The "no
+                        key" row uses neutral-600 in dark, which inverts
+                        to near-white in light — explicitly bump that
+                        path to a much darker shade for AA contrast. */}
+                    <span
+                      className={
+                        m.hasAuth ? "text-neutral-300" : "text-neutral-600 light:text-neutral-400"
+                      }
+                    >
                       {m.name}
                     </span>
-                    <span className="text-neutral-600">
+                    <span className="text-neutral-600 light:text-neutral-400">
                       ctx {Math.round(m.contextWindow / 1000)}k
                     </span>
                   </li>
@@ -453,7 +462,7 @@ function CustomProvidersJson({ onError }: { onError: (msg: string | undefined) =
           />
           <div className="mt-2 flex items-center justify-end gap-2 text-xs">
             {savedAt !== undefined && (
-              <span className="text-emerald-400" aria-live="polite">
+              <span className="text-emerald-400 light:text-emerald-700" aria-live="polite">
                 Saved
               </span>
             )}
@@ -676,7 +685,7 @@ function SettingsJsonEditor({
       />
       <div className="flex items-center justify-end gap-2 text-xs">
         {savedAt !== undefined && (
-          <span className="text-emerald-400" aria-live="polite">
+          <span className="text-emerald-400 light:text-emerald-700" aria-live="polite">
             Saved
           </span>
         )}
@@ -903,7 +912,7 @@ function SkillsTab({ onError }: { onError: (msg: string | undefined) => void }) 
         the pi-forge-private file at{" "}
         <code className="font-mono">{`\${FORGE_DATA_DIR}/skills-overrides.json`}</code>.
       </p>
-      <div className="rounded border border-amber-700/40 bg-amber-900/10 px-3 py-2 text-[11px] text-amber-200">
+      <div className="rounded border border-amber-700/40 bg-amber-900/10 px-3 py-2 text-[11px] text-amber-200 light:border-amber-300 light:bg-amber-50 light:text-amber-800">
         Skill changes apply to the <strong>next session</strong> you start in the affected project.
         Live sessions keep the skill set they booted with — start a new session to use a freshly
         enabled skill.
@@ -948,8 +957,8 @@ function SkillsTab({ onError }: { onError: (msg: string | undefined) => void }) 
                     <span
                       className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${
                         s.projectOverride === "enabled"
-                          ? "bg-emerald-900/40 text-emerald-300"
-                          : "bg-red-900/40 text-red-300"
+                          ? "bg-emerald-900/40 text-emerald-300 light:bg-emerald-100 light:text-emerald-800"
+                          : "bg-red-900/40 text-red-300 light:bg-red-100 light:text-red-800"
                       }`}
                       title={`Active project ('${project.name}') has an override`}
                     >
@@ -966,7 +975,7 @@ function SkillsTab({ onError }: { onError: (msg: string | undefined) => void }) 
                   disabled={busy}
                   className={`rounded border px-2 py-0.5 ${
                     s.enabled
-                      ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300"
+                      ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300 light:border-emerald-300 light:bg-emerald-50 light:text-emerald-800"
                       : "border-neutral-700 text-neutral-300 hover:border-neutral-500"
                   }`}
                   title="Global enable in pi's settings.skills"
@@ -1144,7 +1153,7 @@ function PromptsTab({ onError }: { onError: (msg: string | undefined) => void })
         pi&apos;s <code className="font-mono">settings.prompts</code>; per-project overrides write
         to <code className="font-mono">{`\${FORGE_DATA_DIR}/prompts-overrides.json`}</code>.
       </p>
-      <div className="rounded border border-amber-700/40 bg-amber-900/10 px-3 py-2 text-[11px] text-amber-200">
+      <div className="rounded border border-amber-700/40 bg-amber-900/10 px-3 py-2 text-[11px] text-amber-200 light:border-amber-300 light:bg-amber-50 light:text-amber-800">
         Prompt changes apply to the <strong>next session</strong> you start in the affected project.
         Live sessions keep the prompt set they booted with — start a new session to use a freshly
         enabled prompt.
@@ -1189,8 +1198,8 @@ function PromptsTab({ onError }: { onError: (msg: string | undefined) => void })
                     <span
                       className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${
                         p.projectOverride === "enabled"
-                          ? "bg-emerald-900/40 text-emerald-300"
-                          : "bg-red-900/40 text-red-300"
+                          ? "bg-emerald-900/40 text-emerald-300 light:bg-emerald-100 light:text-emerald-800"
+                          : "bg-red-900/40 text-red-300 light:bg-red-100 light:text-red-800"
                       }`}
                       title={`Active project ('${project.name}') has an override`}
                     >
@@ -1207,7 +1216,7 @@ function PromptsTab({ onError }: { onError: (msg: string | undefined) => void })
                   disabled={busy}
                   className={`rounded border px-2 py-0.5 ${
                     p.enabled
-                      ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300"
+                      ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300 light:border-emerald-300 light:bg-emerald-50 light:text-emerald-800"
                       : "border-neutral-700 text-neutral-300 hover:border-neutral-500"
                   }`}
                   title="Global enable in pi's settings.prompts"
@@ -1332,9 +1341,9 @@ function TriStatePicker({
       className={`rounded px-2 py-0.5 text-[11px] ${
         active
           ? state === "enabled"
-            ? "bg-emerald-900/40 text-emerald-300"
+            ? "bg-emerald-900/40 text-emerald-300 light:bg-emerald-100 light:text-emerald-800"
             : state === "disabled"
-              ? "bg-red-900/40 text-red-300"
+              ? "bg-red-900/40 text-red-300 light:bg-red-100 light:text-red-800"
               : "bg-neutral-800 text-neutral-400"
           : "text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"
       }`}
@@ -1395,7 +1404,7 @@ function AddOverrideDropdown({
           setPicked("");
         }}
         disabled={disabled || picked.length === 0}
-        className="rounded bg-emerald-900/40 px-2 py-0.5 text-emerald-300 disabled:opacity-50"
+        className="rounded bg-emerald-900/40 px-2 py-0.5 text-emerald-300 disabled:opacity-50 light:bg-emerald-100 light:text-emerald-800"
       >
         Enable here
       </button>
@@ -1689,7 +1698,7 @@ function ToolCascadeRow({
             disabled={busy}
             className={`rounded border px-2 py-0.5 disabled:opacity-50 ${
               globalEnabled
-                ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300"
+                ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300 light:border-emerald-300 light:bg-emerald-50 light:text-emerald-800"
                 : "border-neutral-700 text-neutral-300 hover:border-neutral-500"
             }`}
             title="Global default for every project that doesn't override"
@@ -1970,7 +1979,7 @@ function BackupTab({ onError }: { onError: (msg: string | undefined) => void }) 
           {busy ? "Exporting…" : "Download config archive"}
         </button>
         {lastExport !== undefined && (
-          <p className="mt-2 text-xs text-emerald-400">
+          <p className="mt-2 text-xs text-emerald-400 light:text-emerald-700">
             Exported <code className="font-mono">{lastExport.filename}</code> (
             {lastExport.files.length === 0
               ? "no files were on disk"
@@ -2001,12 +2010,12 @@ function BackupTab({ onError }: { onError: (msg: string | undefined) => void }) 
         {lastImport !== undefined && (
           <div className="mt-3 space-y-1 text-xs">
             {lastImport.imported.length > 0 && (
-              <p className="text-emerald-400">
+              <p className="text-emerald-400 light:text-emerald-700">
                 Imported: <code className="font-mono">{lastImport.imported.join(", ")}</code>
               </p>
             )}
             {lastImport.skipped.length > 0 && (
-              <p className="text-amber-400">
+              <p className="text-amber-400 light:text-amber-700">
                 Skipped (not in allow-list):{" "}
                 <code className="font-mono">{lastImport.skipped.join(", ")}</code>
               </p>
@@ -2056,7 +2065,7 @@ function BackupTab({ onError }: { onError: (msg: string | undefined) => void }) 
               No skills to export — your skills directory is empty.
             </p>
           ) : (
-            <p className="mt-2 text-xs text-emerald-400">
+            <p className="mt-2 text-xs text-emerald-400 light:text-emerald-700">
               Exported <code className="font-mono">{lastSkillsExport.filename}</code> (
               {lastSkillsExport.fileCount} file{lastSkillsExport.fileCount === 1 ? "" : "s"} packed)
             </p>
@@ -2115,14 +2124,14 @@ function BackupTab({ onError }: { onError: (msg: string | undefined) => void }) 
         {lastSkillsImport !== undefined && (
           <div className="mt-3 space-y-1 text-xs">
             {lastSkillsImport.imported.length > 0 && (
-              <p className="text-emerald-400">
+              <p className="text-emerald-400 light:text-emerald-700">
                 Imported {lastSkillsImport.imported.length} file
                 {lastSkillsImport.imported.length === 1 ? "" : "s"}:{" "}
                 <code className="font-mono">{lastSkillsImport.imported.join(", ")}</code>
               </p>
             )}
             {lastSkillsImport.skipped.length > 0 && (
-              <div className="text-amber-400">
+              <div className="text-amber-400 light:text-amber-700">
                 <p>
                   Skipped {lastSkillsImport.skipped.length} entr
                   {lastSkillsImport.skipped.length === 1 ? "y" : "ies"}:
@@ -2417,7 +2426,7 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
           disabled={busy}
           className={`rounded border px-3 py-1 text-xs ${
             enabled
-              ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300"
+              ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300 light:border-emerald-300 light:bg-emerald-50 light:text-emerald-800"
               : "border-neutral-700 text-neutral-300 hover:border-neutral-500"
           }`}
         >
@@ -2620,7 +2629,7 @@ function McpServerList(props: {
                           onClick={() => props.onToggle?.(s.name, !s.enabled)}
                           className={`rounded border px-2 py-0.5 ${
                             s.enabled
-                              ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300"
+                              ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300 light:border-emerald-300 light:bg-emerald-50 light:text-emerald-800"
                               : "border-neutral-700 text-neutral-400 hover:border-neutral-500"
                           }`}
                         >
@@ -2870,7 +2879,7 @@ function GeneralTab() {
             href="https://github.com/badlogic/pi-mono"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-blue-400 underline hover:text-blue-300"
+            className="text-blue-400 underline hover:text-blue-300 light:text-blue-700 light:hover:text-blue-900"
           >
             pi coding agent
           </a>
@@ -2901,7 +2910,7 @@ function GeneralTab() {
               href="https://github.com/Devin-Marks/pi-forge"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-400 underline hover:text-blue-300"
+              className="text-blue-400 underline hover:text-blue-300 light:text-blue-700 light:hover:text-blue-900"
             >
               github.com/Devin-Marks/pi-forge
             </a>
@@ -2911,7 +2920,7 @@ function GeneralTab() {
               href="https://github.com/Devin-Marks/pi-forge/blob/main/CHANGELOG.md"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-400 underline hover:text-blue-300"
+              className="text-blue-400 underline hover:text-blue-300 light:text-blue-700 light:hover:text-blue-900"
             >
               Changelog
             </a>
@@ -2921,7 +2930,7 @@ function GeneralTab() {
               href="https://github.com/Devin-Marks/pi-forge/blob/main/SECURITY.md"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-400 underline hover:text-blue-300"
+              className="text-blue-400 underline hover:text-blue-300 light:text-blue-700 light:hover:text-blue-900"
             >
               Security
             </a>
@@ -3038,7 +3047,7 @@ function ChangePasswordSection() {
           </p>
         )}
         {savedFlash && (
-          <p role="status" className="text-xs text-emerald-400">
+          <p role="status" className="text-xs text-emerald-400 light:text-emerald-700">
             Password updated.
           </p>
         )}

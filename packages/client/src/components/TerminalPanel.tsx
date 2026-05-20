@@ -142,7 +142,7 @@ export function TerminalPanel() {
           })}
           <button
             onClick={onNewTab}
-            className="ml-1 flex items-center gap-1 rounded px-2 py-0.5 text-xs text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
+            className="ml-1 flex items-center gap-1 rounded px-2 py-0.5 text-xs text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200 light:text-neutral-200 light:hover:bg-neutral-800 light:hover:text-neutral-50"
             title="New terminal"
           >
             <Plus size={14} />

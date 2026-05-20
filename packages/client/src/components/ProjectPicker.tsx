@@ -162,7 +162,9 @@ export function ProjectPicker({ onClose, required = false }: Props) {
                 </span>
               )}
             </label>
-            {error !== undefined && <p className="text-xs text-red-400">Error: {error}</p>}
+            {error !== undefined && (
+              <p className="text-xs text-red-400 light:text-red-700">Error: {error}</p>
+            )}
             <button
               type="submit"
               disabled={name.trim().length === 0 || submitting}
@@ -281,7 +283,7 @@ export function ProjectPicker({ onClose, required = false }: Props) {
         )}
 
         {error !== undefined && (
-          <p className="mt-3 text-sm text-red-400">
+          <p className="mt-3 text-sm text-red-400 light:text-red-700">
             {error === "path_not_allowed"
               ? "That folder is outside the workspace root."
               : error === "workspace_root_not_allowed"

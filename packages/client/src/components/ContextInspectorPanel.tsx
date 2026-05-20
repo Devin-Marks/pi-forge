@@ -136,7 +136,7 @@ export function ContextInspectorPanel() {
       </div>
 
       {error !== undefined && (
-        <div className="border-b border-red-700/40 bg-red-900/20 px-3 py-1.5 text-[11px] text-red-300">
+        <div className="border-b border-red-700/40 bg-red-900/20 px-3 py-1.5 text-[11px] text-red-300 light:border-red-300 light:bg-red-50 light:text-red-700">
           {error}
         </div>
       )}
@@ -331,7 +331,9 @@ function TokenSummary({
         </div>
         <div className="flex items-center justify-between text-[11px] font-medium">
           <span className="text-neutral-300">Total cost</span>
-          <span className="font-mono text-emerald-400">{formatUsd(data.totalCost)}</span>
+          <span className="font-mono text-emerald-400 light:text-emerald-700">
+            {formatUsd(data.totalCost)}
+          </span>
         </div>
       </div>
 
@@ -623,7 +625,9 @@ function TurnsTable({
                   {formatTokens(promptTotal)}
                 </td>
                 <td className="pr-2 text-right">{formatTokens(t.outputTokens)}</td>
-                <td className="text-right text-emerald-400">{formatUsd(t.cost)}</td>
+                <td className="text-right text-emerald-400 light:text-emerald-700">
+                  {formatUsd(t.cost)}
+                </td>
               </tr>
             );
           })}
@@ -722,12 +726,15 @@ function MessageList({
             raw-view button) since the underlying message doesn't
             exist yet. */}
         {streamingTail !== undefined && q.length === 0 && (
-          <li className="rounded border border-violet-700/40 bg-violet-900/10">
+          <li className="rounded border border-violet-700/40 bg-violet-900/10 light:border-violet-300 light:bg-violet-50">
             <div className="flex items-start gap-2 px-2 py-1.5">
-              <Loader2 size={11} className="mt-0.5 shrink-0 animate-spin text-violet-300" />
+              <Loader2
+                size={11}
+                className="mt-0.5 shrink-0 animate-spin text-violet-300 light:text-violet-700"
+              />
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <div className="flex items-center gap-1.5">
-                  <span className="rounded bg-violet-900/40 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-violet-300">
+                  <span className="rounded bg-violet-900/40 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-violet-300 light:bg-violet-100 light:text-violet-800">
                     assistant (streaming)
                   </span>
                 </div>
@@ -782,7 +789,7 @@ function MessageRow({
               {role}
             </span>
             {isCompacted && (
-              <span className="rounded bg-fuchsia-900/40 px-1.5 py-0.5 text-[9px] text-fuchsia-300">
+              <span className="rounded bg-fuchsia-900/40 px-1.5 py-0.5 text-[9px] text-fuchsia-300 light:bg-fuchsia-100 light:text-fuchsia-800">
                 compacted
               </span>
             )}
@@ -898,10 +905,16 @@ function RawJsonModal({
 /* ------------------------------ helpers ------------------------------ */
 
 function roleClass(role: string): string {
-  if (role === "user") return "bg-sky-900/40 text-sky-300";
-  if (role === "assistant") return "bg-violet-900/40 text-violet-300";
-  if (role === "tool" || role === "toolResult") return "bg-amber-900/40 text-amber-300";
-  if (role === "compactionSummary") return "bg-fuchsia-900/40 text-fuchsia-300";
+  // Each role uses a dark-mode tint (bg-X-900/40 + text-X-300) paired
+  // with a light-mode counterpart (bg-X-100 + text-X-800) via the
+  // `light:` variant defined in index.css.
+  if (role === "user") return "bg-sky-900/40 text-sky-300 light:bg-sky-100 light:text-sky-800";
+  if (role === "assistant")
+    return "bg-violet-900/40 text-violet-300 light:bg-violet-100 light:text-violet-800";
+  if (role === "tool" || role === "toolResult")
+    return "bg-amber-900/40 text-amber-300 light:bg-amber-100 light:text-amber-800";
+  if (role === "compactionSummary")
+    return "bg-fuchsia-900/40 text-fuchsia-300 light:bg-fuchsia-100 light:text-fuchsia-800";
   if (role === "system") return "bg-neutral-800 text-neutral-400";
   return "bg-neutral-800 text-neutral-400";
 }
@@ -1006,7 +1019,9 @@ function renderExpanded(
       <div>
         <p className="mb-1 text-[10px] text-neutral-500">
           tool: <span className="font-mono">{String(message.toolName ?? "unknown")}</span>{" "}
-          {message.isError === true && <span className="text-red-400">(error)</span>}
+          {message.isError === true && (
+            <span className="text-red-400 light:text-red-700">(error)</span>
+          )}
         </p>
         <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-neutral-950 p-2 font-mono text-[10px] text-neutral-300">
           {jsonish(content)}

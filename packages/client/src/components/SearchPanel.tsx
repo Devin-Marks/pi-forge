@@ -274,7 +274,7 @@ function SearchStatus({
     );
   }
   if (error !== undefined) {
-    return <div className="px-4 py-3 text-xs text-rose-400">{error}</div>;
+    return <div className="px-4 py-3 text-xs text-rose-400 light:text-rose-700">{error}</div>;
   }
   if (results === undefined) return null;
   if (results.matches.length === 0) {
@@ -286,12 +286,14 @@ function SearchStatus({
         {results.matches.length} match{results.matches.length === 1 ? "" : "es"} in {totalFiles}{" "}
         file{totalFiles === 1 ? "" : "s"}
         {results.truncated && (
-          <span className="ml-1 text-amber-400">· truncated at {RESULT_LIMIT}</span>
+          <span className="ml-1 text-amber-400 light:text-amber-700">
+            · truncated at {RESULT_LIMIT}
+          </span>
         )}
       </span>
       {results.engine === "node" && (
         <span
-          className="rounded bg-amber-900/40 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-amber-300"
+          className="rounded bg-amber-900/40 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-amber-300 light:bg-amber-100 light:text-amber-800"
           title="ripgrep was not found on this host — using the slower in-process fallback"
         >
           fallback
@@ -361,7 +363,9 @@ function renderSnippet(snippet: string, column: number, length: number): ReactEl
   return (
     <span>
       <span>{before}</span>
-      <span className="bg-amber-700/30 text-amber-100">{hit}</span>
+      <span className="bg-amber-700/30 text-amber-100 light:bg-amber-200 light:text-amber-900">
+        {hit}
+      </span>
       <span>{after}</span>
     </span>
   );

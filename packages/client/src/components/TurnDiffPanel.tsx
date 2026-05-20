@@ -172,14 +172,16 @@ export function TurnDiffPanel() {
                 <span className="flex min-w-0 items-baseline gap-2">
                   <span className="truncate font-mono text-neutral-200">{name}</span>
                   {entry.isPureAddition && (
-                    <span className="rounded bg-emerald-900/40 px-1 py-0.5 text-[9px] uppercase tracking-wider text-emerald-300">
+                    <span className="rounded bg-emerald-900/40 px-1 py-0.5 text-[9px] uppercase tracking-wider text-emerald-300 light:bg-emerald-100 light:text-emerald-800">
                       new
                     </span>
                   )}
                 </span>
                 <span className="flex shrink-0 items-baseline gap-2 text-[11px]">
-                  <span className="text-emerald-400">+{entry.additions}</span>
-                  <span className="text-red-400">−{entry.deletions}</span>
+                  <span className="text-emerald-400 light:text-emerald-700">
+                    +{entry.additions}
+                  </span>
+                  <span className="text-red-400 light:text-red-700">−{entry.deletions}</span>
                 </span>
               </button>
               {open && <DiffBlock diff={entry.diff} viewType={viewType} />}

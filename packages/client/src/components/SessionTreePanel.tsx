@@ -338,7 +338,7 @@ export function SessionTreePanel({ sessionId, projectId, onClose }: Props) {
         </header>
 
         {error !== undefined && (
-          <div className="border-b border-red-700/40 bg-red-900/20 px-4 py-1.5 text-xs text-red-300">
+          <div className="border-b border-red-700/40 bg-red-900/20 px-4 py-1.5 text-xs text-red-300 light:border-red-300 light:bg-red-50 light:text-red-700">
             {error}
           </div>
         )}
@@ -471,7 +471,7 @@ function NavigateConfirmDialog({
         className="flex flex-col gap-3 px-4 py-3 text-xs text-neutral-200"
       >
         {state?.isStreaming === true && (
-          <p className="rounded border border-amber-700/50 bg-amber-900/20 px-2 py-1.5 text-amber-200">
+          <p className="rounded border border-amber-700/50 bg-amber-900/20 px-2 py-1.5 text-amber-200 light:border-amber-300 light:bg-amber-50 light:text-amber-800">
             The agent is currently running. Navigating will abort the in-progress turn.
           </p>
         )}
@@ -540,7 +540,7 @@ function NavigateConfirmDialog({
             type="submit"
             className={`rounded-md px-3 py-1 text-xs font-medium ${
               state?.isStreaming === true
-                ? "bg-amber-600 text-amber-50 hover:bg-amber-500"
+                ? "bg-amber-600 text-amber-50 hover:bg-amber-500 light:bg-amber-500 light:text-white light:hover:bg-amber-600"
                 : "bg-neutral-100 text-neutral-900 hover:bg-white"
             }`}
           >
@@ -630,7 +630,7 @@ function TreeRow({
             <button
               onClick={onFork}
               disabled={disabled}
-              className="rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-emerald-300 disabled:opacity-40"
+              className="rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-emerald-300 disabled:opacity-40 light:hover:text-emerald-700"
               title="Fork BEFORE this message — opens a new session with the message text loaded into the input for editing."
             >
               <GitBranch size={11} />
@@ -649,13 +649,13 @@ function TreeRow({
             <span
               className={`rounded px-1.5 py-0.5 text-[9px] uppercase tracking-wider ${
                 node.role === "user"
-                  ? "bg-sky-900/40 text-sky-300"
+                  ? "bg-sky-900/40 text-sky-300 light:bg-sky-100 light:text-sky-800"
                   : node.role === "assistant"
-                    ? "bg-violet-900/40 text-violet-300"
+                    ? "bg-violet-900/40 text-violet-300 light:bg-violet-100 light:text-violet-800"
                     : node.type === "branch_summary"
-                      ? "bg-amber-900/40 text-amber-300"
+                      ? "bg-amber-900/40 text-amber-300 light:bg-amber-100 light:text-amber-800"
                       : node.type === "compaction"
-                        ? "bg-fuchsia-900/40 text-fuchsia-300"
+                        ? "bg-fuchsia-900/40 text-fuchsia-300 light:bg-fuchsia-100 light:text-fuchsia-800"
                         : "bg-neutral-800 text-neutral-400"
               }`}
             >
@@ -679,13 +679,13 @@ function TreeRow({
               </span>
             )}
             {node.isLeaf && (
-              <span className="rounded bg-emerald-900/40 px-1.5 py-0.5 text-[9px] text-emerald-300">
+              <span className="rounded bg-emerald-900/40 px-1.5 py-0.5 text-[9px] text-emerald-300 light:bg-emerald-100 light:text-emerald-800">
                 leaf
               </span>
             )}
             {node.siblings > 1 && (
               <span
-                className="text-[9px] text-amber-400"
+                className="text-[9px] text-amber-400 light:text-amber-700"
                 title={`${node.siblings} branches diverge from this point`}
               >
                 ⑂ {node.siblings}
@@ -1282,24 +1282,24 @@ function GraphNode({
           <span
             className={`rounded px-1.5 py-0.5 text-[9px] uppercase tracking-wider ${
               turn.roleLabel === "user"
-                ? "bg-sky-900/40 text-sky-300"
+                ? "bg-sky-900/40 text-sky-300 light:bg-sky-100 light:text-sky-800"
                 : turn.roleLabel === "compact"
-                  ? "bg-fuchsia-900/40 text-fuchsia-300"
+                  ? "bg-fuchsia-900/40 text-fuchsia-300 light:bg-fuchsia-100 light:text-fuchsia-800"
                   : turn.roleLabel === "branch"
-                    ? "bg-amber-900/40 text-amber-300"
+                    ? "bg-amber-900/40 text-amber-300 light:bg-amber-100 light:text-amber-800"
                     : "bg-neutral-800 text-neutral-400"
             }`}
           >
             {turn.roleLabel}
           </span>
           {turn.isLeafTurn && (
-            <span className="rounded bg-emerald-900/40 px-1.5 py-0.5 text-[9px] text-emerald-300">
+            <span className="rounded bg-emerald-900/40 px-1.5 py-0.5 text-[9px] text-emerald-300 light:bg-emerald-100 light:text-emerald-800">
               leaf
             </span>
           )}
           {turn.hasMultipleChildren && (
             <span
-              className="text-[9px] text-amber-400"
+              className="text-[9px] text-amber-400 light:text-amber-700"
               title={`${turn.childCount} branches diverge from here`}
             >
               ⑂ {turn.childCount}
@@ -1319,7 +1319,7 @@ function GraphNode({
               onForkAfterTurn();
             }}
             disabled={disabled}
-            className="ml-auto rounded p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-emerald-300 disabled:opacity-40"
+            className="ml-auto rounded p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-emerald-300 disabled:opacity-40 light:hover:text-emerald-700"
             title="Fork AFTER this turn — opens a new session that includes this turn's full output, ready for the next prompt."
           >
             <GitBranch size={11} />

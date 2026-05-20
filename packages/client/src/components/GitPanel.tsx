@@ -323,7 +323,7 @@ export function GitPanel() {
           Default branch will be <code className="font-mono text-neutral-400">main</code>.
         </p>
         {opError !== undefined && (
-          <p className="text-[10px] text-red-400">git init failed: {opError}</p>
+          <p className="text-[10px] text-red-400 light:text-red-700">git init failed: {opError}</p>
         )}
       </div>
     );
@@ -619,12 +619,12 @@ export function GitPanel() {
       </div>
 
       {(statusError !== undefined || opError !== undefined) && (
-        <div className="border-b border-red-700/40 bg-red-900/20 px-3 py-1.5 text-[11px] text-red-300">
+        <div className="border-b border-red-700/40 bg-red-900/20 px-3 py-1.5 text-[11px] text-red-300 light:border-red-300 light:bg-red-50 light:text-red-700">
           {opError ?? statusError}
         </div>
       )}
       {opResult !== undefined && (
-        <div className="border-b border-emerald-700/40 bg-emerald-900/20 px-3 py-1.5 text-[11px] text-emerald-300">
+        <div className="border-b border-emerald-700/40 bg-emerald-900/20 px-3 py-1.5 text-[11px] text-emerald-300 light:border-emerald-300 light:bg-emerald-50 light:text-emerald-800">
           {opResult}
         </div>
       )}
@@ -899,7 +899,9 @@ export function GitPanel() {
                         <li
                           key={b.name}
                           className={`group flex items-center gap-1 rounded px-1 py-0.5 font-mono hover:bg-neutral-900 ${
-                            b.current ? "text-emerald-400" : "text-neutral-300"
+                            b.current
+                              ? "text-emerald-400 light:text-emerald-700"
+                              : "text-neutral-300"
                           }`}
                         >
                           <span className="w-3 shrink-0">
@@ -932,7 +934,7 @@ export function GitPanel() {
                                 <button
                                   onClick={() => setBranchDialog({ kind: "delete", name: b.name })}
                                   disabled={busy}
-                                  className="rounded p-0.5 text-neutral-500 hover:bg-red-900/30 hover:text-red-300 disabled:opacity-40"
+                                  className="rounded p-0.5 text-neutral-500 hover:bg-red-900/30 hover:text-red-300 disabled:opacity-40 light:hover:bg-red-100 light:hover:text-red-700"
                                   title="Delete branch"
                                 >
                                   <Trash2 size={10} />
@@ -992,14 +994,14 @@ export function GitPanel() {
                                   Options dropdown above. */}
                               <span className="font-mono text-neutral-200">{r.name}</span>
                               {diverged && (
-                                <span className="rounded bg-amber-900/30 px-1 py-0.5 text-[9px] uppercase tracking-wider text-amber-300">
+                                <span className="rounded bg-amber-900/30 px-1 py-0.5 text-[9px] uppercase tracking-wider text-amber-300 light:bg-amber-100 light:text-amber-800">
                                   fetch ≠ push
                                 </span>
                               )}
                               <button
                                 onClick={() => setRemoveRemoteName(r.name)}
                                 disabled={busy}
-                                className="ml-auto hidden rounded p-0.5 text-neutral-500 hover:bg-red-900/30 hover:text-red-300 disabled:opacity-40 group-hover:inline-flex"
+                                className="ml-auto hidden rounded p-0.5 text-neutral-500 hover:bg-red-900/30 hover:text-red-300 disabled:opacity-40 group-hover:inline-flex light:hover:bg-red-100 light:hover:text-red-700"
                                 title={`Remove remote "${r.name}"`}
                               >
                                 <Trash2 size={10} />
@@ -1248,8 +1250,8 @@ function FileGroup(props: FileGroupProps) {
                     // visible state on hover.
                     className={
                       revertPending
-                        ? "inline-flex items-center gap-1 rounded bg-red-900/40 px-1 py-0.5 text-[10px] text-red-200"
-                        : "hidden items-center gap-1 text-[10px] text-neutral-500 hover:text-red-300 group-hover:inline-flex"
+                        ? "inline-flex items-center gap-1 rounded bg-red-900/40 px-1 py-0.5 text-[10px] text-red-200 light:bg-red-100 light:text-red-800"
+                        : "hidden items-center gap-1 text-[10px] text-neutral-500 hover:text-red-300 group-hover:inline-flex light:hover:text-red-700"
                     }
                     title={
                       revertPending
@@ -1281,7 +1283,9 @@ function FileGroup(props: FileGroupProps) {
                   {diffState === "loading" ? (
                     <p className="px-3 py-2 italic text-neutral-500">Loading…</p>
                   ) : diffState === "error" ? (
-                    <p className="px-3 py-2 text-red-400">Failed to load diff.</p>
+                    <p className="px-3 py-2 text-red-400 light:text-red-700">
+                      Failed to load diff.
+                    </p>
                   ) : diffState.length === 0 ? (
                     <p className="px-3 py-2 italic text-neutral-500">
                       (no diff — file is binary or unchanged)
@@ -1493,9 +1497,9 @@ function RefBadge({ ref_ }: { ref_: string }) {
       ? ref_.replace(/^tag:\s*/, "")
       : ref_;
   const cls = isHead
-    ? "bg-emerald-900/40 text-emerald-300"
+    ? "bg-emerald-900/40 text-emerald-300 light:bg-emerald-100 light:text-emerald-800"
     : isTag
-      ? "bg-amber-900/40 text-amber-300"
+      ? "bg-amber-900/40 text-amber-300 light:bg-amber-100 light:text-amber-800"
       : ref_.includes("/")
         ? "bg-neutral-800 text-neutral-500"
         : "bg-neutral-800 text-neutral-300";

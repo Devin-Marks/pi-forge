@@ -269,7 +269,7 @@ export function SessionList({ projectId }: Props) {
           <div className="flex gap-1">
             <button
               onClick={() => setDeleteDialog({ sessionIds: Array.from(selectedIds) })}
-              className="rounded border border-red-700/50 px-1.5 py-0.5 text-red-300 hover:bg-red-900/20"
+              className="rounded border border-red-700/50 px-1.5 py-0.5 text-red-300 hover:bg-red-900/20 light:border-red-400 light:text-red-700 light:hover:bg-red-50"
             >
               Delete
             </button>
@@ -464,9 +464,9 @@ function SessionRow(props: SessionRowProps) {
           className="flex-1 truncate text-left"
           title={`${s.sessionId} — double-click to rename, Cmd/Ctrl+click to select for bulk delete`}
         >
-          {s.isLive && <span className="mr-1 text-emerald-500">●</span>}
+          {s.isLive && <span className="mr-1 text-emerald-500 light:text-emerald-700">●</span>}
           {isChild && (
-            <span className="mr-1 text-purple-400" title="sub-agent">
+            <span className="mr-1 text-purple-400 light:text-purple-700" title="sub-agent">
               ↳
             </span>
           )}
@@ -493,8 +493,8 @@ function SessionRow(props: SessionRowProps) {
             // border combos — pinning the height makes the swap
             // visually identical from a layout standpoint.
             isArmedForDelete
-              ? "inline-flex h-6 items-center rounded border border-red-500 px-1.5 text-[11px] font-medium uppercase leading-none tracking-wide text-red-300 hover:bg-red-500/10"
-              : "inline-flex h-6 w-6 items-center justify-center rounded text-neutral-500 hover:text-red-400"
+              ? "inline-flex h-6 items-center rounded border border-red-500 px-1.5 text-[11px] font-medium uppercase leading-none tracking-wide text-red-300 hover:bg-red-500/10 light:border-red-600 light:text-red-700 light:hover:bg-red-100"
+              : "inline-flex h-6 w-6 items-center justify-center rounded text-neutral-500 hover:text-red-400 light:hover:text-red-700"
           }
           title={
             isArmedForDelete

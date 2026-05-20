@@ -45,6 +45,7 @@ import rehypeKatex from "rehype-katex";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { themeDef, useThemeStore } from "../lib/theme";
 // KaTeX styles — pulled into the bundle by Vite. Without this, the math
 // nodes that rehype-katex emits land in the DOM with no fonts/spacing
 // applied and look like raw HTML.
@@ -148,6 +149,13 @@ interface Props {
  * decision, so we make it on the right signal.
  */
 const CodeRenderer = ({ className, children, ...rest }: HTMLAttributes<HTMLElement>): ReactNode => {
+  // Pair the Prism theme to the user-picked app theme. vsDark / vsLight
+  // are both close in saturation, so switching between them inside the
+  // same session doesn't visually jar the chat history. Called
+  // unconditionally at the top of the component so the rules-of-hooks
+  // ordering isn't broken by the inline-vs-block early return below.
+  const themeId = useThemeStore((s) => s.theme);
+  const isLight = themeDef(themeId).mode === "light";
   const langMatch = /language-([\w-]+)/.exec(className ?? "");
   // children is the code text. Coerce to string and strip a single
   // trailing newline that `react-markdown` reliably adds — leaving
@@ -168,17 +176,22 @@ const CodeRenderer = ({ className, children, ...rest }: HTMLAttributes<HTMLEleme
   // Default to plain "text" so prism still wraps the block with
   // its <pre> chrome (no token highlighting, just the styling).
   const language = langMatch?.[1] ?? "text";
+  const prismTheme = isLight ? prismThemes.vsLight : prismThemes.vsDark;
+  // Background tuned to sit one shade off the chat surface so the
+  // code block reads as a distinct region without competing with
+  // surrounding text contrast.
+  const codeBg = isLight ? "#f8fafc" : "#0d0d0d";
 
   return (
     // `group` enables the hover-revealed copy button positioned via
     // `group-hover:opacity-100` inside CodeCopyButton.
     <div className="group relative">
       <CodeCopyButton code={code} />
-      <Highlight code={code} language={language} theme={prismThemes.vsDark}>
+      <Highlight code={code} language={language} theme={prismTheme}>
         {({ style, tokens, getLineProps, getTokenProps }) => (
           <pre
             className="overflow-x-auto rounded border border-neutral-800 p-2 font-mono text-[12px]"
-            style={{ ...style, background: "#0d0d0d" }}
+            style={{ ...style, background: codeBg }}
           >
             {tokens.map((line, i) => {
               const lineProps = getLineProps({ line });
@@ -243,7 +256,7 @@ const components: Components = {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-blue-400 underline hover:text-blue-300"
+      className="text-blue-400 underline hover:text-blue-300 light:text-blue-700 light:hover:text-blue-900"
     >
       {children}
     </a>
