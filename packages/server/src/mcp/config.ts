@@ -12,32 +12,79 @@ import { config } from "../config.js";
  * and the resulting tools are passed into every `createAgentSession`
  * call as `customTools`.
  *
- * v1 supports remote servers only (no stdio subprocesses). Auth is
- * static headers — set `Authorization: Bearer <token>` (or any other
- * header your server expects) and they're forwarded on every request.
- * OAuth and stdio are deferred.
+ * Two server kinds, discriminated by which fields are present (not
+ * by an explicit `kind` discriminator). Presence-based matching is
+ * deliberate — it matches the Claude Desktop / pi-mcp-adapter
+ * convention so a user's existing `.mcp.json` works without
+ * rewriting:
+ *
+ *   - **Remote** servers: have `url`. Spoken via StreamableHTTP /
+ *     SSE. Auth via static headers.
+ *   - **Stdio** servers: have `command`. The pi-forge spawns the
+ *     subprocess and speaks MCP over its stdin/stdout.
+ *
+ * Exactly one of `url` / `command` must be set per server; the route
+ * layer enforces this and rejects ambiguous configs with 400.
+ *
+ * **Secret hygiene.** `headers` values (remote) and `env` values
+ * (stdio) are treated as secret on the read path —
+ * `readMcpJsonRedacted` replaces every value with the sentinel so
+ * the browser never sees the raw token. On write, a sentinel value
+ * round-trips to the prior on-disk value so an "edit and save"
+ * doesn't lock the user out (same pattern as `models.json#apiKey`).
  */
 
 export type McpTransport = "auto" | "streamable-http" | "sse";
 
 export interface McpServerConfig {
-  /** Required. The MCP endpoint URL. */
-  url: string;
+  /** Default true. Disabled servers don't connect or contribute tools. */
+  enabled?: boolean;
+
+  /* --------- remote-only (mutually exclusive with `command`) --------- */
+  /** The MCP endpoint URL. Required for remote servers. */
+  url?: string;
   /**
-   * Transport hint. `auto` (default) tries StreamableHTTP first and
-   * falls back to SSE — covers fastmcp servers regardless of which
-   * transport they expose. Pin to `streamable-http` or `sse`
-   * explicitly to skip the fallback round-trip.
+   * Transport hint for remote servers. `auto` (default) tries
+   * StreamableHTTP first and falls back to SSE — covers fastmcp
+   * servers regardless of which transport they expose. Pin to
+   * `streamable-http` or `sse` explicitly to skip the fallback
+   * round-trip. Ignored for stdio servers.
    */
   transport?: McpTransport;
   /**
    * Per-request headers (e.g. `{ "Authorization": "Bearer ..." }`).
    * Forwarded on every MCP RPC. Treated as secret on the read path —
    * `readMcpJsonRedacted` replaces every value with the sentinel.
+   * Ignored for stdio servers.
    */
   headers?: Record<string, string>;
-  /** Default true. Disabled servers don't connect or contribute tools. */
-  enabled?: boolean;
+
+  /* --------- stdio-only (mutually exclusive with `url`) --------- */
+  /**
+   * Executable to spawn (passed to `child_process.spawn` via the MCP
+   * SDK's StdioClientTransport). Required for stdio servers. Resolved
+   * via the process PATH if not absolute. Common values: `npx`, `uvx`,
+   * `python`, a path to a local binary.
+   */
+  command?: string;
+  /** CLI args appended to `command`. Defaults to `[]`. */
+  args?: string[];
+  /**
+   * Explicit environment for the subprocess. The MCP SDK's
+   * `StdioClientTransport` does NOT inherit the pi-forge process
+   * env by default — it uses `getDefaultEnvironment()` which only
+   * exposes a small allowlist (PATH, HOME, locale vars, etc.). Set
+   * this to pass through provider keys / config the MCP server
+   * needs (e.g. `GITHUB_TOKEN`, `OPENAI_API_KEY`). Treated as secret
+   * on the read path (env values commonly contain credentials).
+   */
+  env?: Record<string, string>;
+  /**
+   * Working directory for the subprocess. Defaults to the project
+   * path for project-scoped servers, and the pi-forge process cwd
+   * for global servers.
+   */
+  cwd?: string;
 }
 
 export interface McpJson {
@@ -50,6 +97,17 @@ export interface McpJson {
    */
   disabled?: boolean;
   servers: Record<string, McpServerConfig>;
+}
+
+/**
+ * True when this entry should be opened as a stdio (subprocess)
+ * server, false when remote (URL). Single source of truth for the
+ * discriminator — callers don't have to re-derive
+ * `cfg.command !== undefined` everywhere, and a future migration to
+ * an explicit `kind` field has one place to change.
+ */
+export function isStdioConfig(cfg: McpServerConfig): boolean {
+  return typeof cfg.command === "string" && cfg.command.length > 0;
 }
 
 const SECRET_PLACEHOLDER = "***REDACTED***";
@@ -101,21 +159,41 @@ export async function readMcpJson(): Promise<McpJson> {
 }
 
 /**
- * Same as readMcpJson but with every header VALUE replaced with the
- * redaction sentinel. Used by the read-path API route so an inline
- * bearer token is never echoed back to the browser.
+ * Copy `src` to a fresh `McpServerConfig` keeping only fields that
+ * are not `undefined`. Centralizes the field list so the redact /
+ * write paths can't drift from each other when we add a field.
+ */
+function copyServerCleaned(src: McpServerConfig): McpServerConfig {
+  const out: McpServerConfig = {};
+  if (src.enabled !== undefined) out.enabled = src.enabled;
+  if (src.url !== undefined) out.url = src.url;
+  if (src.transport !== undefined) out.transport = src.transport;
+  if (src.command !== undefined) out.command = src.command;
+  if (src.args !== undefined) out.args = [...src.args];
+  if (src.cwd !== undefined) out.cwd = src.cwd;
+  return out;
+}
+
+/**
+ * Same as readMcpJson but with every secret VALUE replaced with the
+ * redaction sentinel. Covers both `headers` (remote) and `env`
+ * (stdio) — both fields commonly carry credentials.
  */
 export async function readMcpJsonRedacted(): Promise<McpJson> {
   const raw = await readMcpJson();
   const out: Record<string, McpServerConfig> = {};
   for (const [name, server] of Object.entries(raw.servers)) {
-    const cleaned: McpServerConfig = { url: server.url };
-    if (server.transport !== undefined) cleaned.transport = server.transport;
-    if (server.enabled !== undefined) cleaned.enabled = server.enabled;
+    const cleaned = copyServerCleaned(server);
     if (server.headers !== undefined) {
       cleaned.headers = {};
       for (const k of Object.keys(server.headers)) {
         cleaned.headers[k] = SECRET_PLACEHOLDER;
+      }
+    }
+    if (server.env !== undefined) {
+      cleaned.env = {};
+      for (const k of Object.keys(server.env)) {
+        cleaned.env[k] = SECRET_PLACEHOLDER;
       }
     }
     out[name] = cleaned;
@@ -124,31 +202,45 @@ export async function readMcpJsonRedacted(): Promise<McpJson> {
 }
 
 /**
- * Write `mcp.json`, merging the secret-placeholder for header values
- * back to the prior persisted value. Mirrors the round-trip safety
- * config-manager.writeModelsJson uses for `apiKey` — without this, an
- * "edit and save" round-trip from the UI would write the literal
- * sentinel back to disk and lock the user out of their MCP server.
+ * Merge a sentinel-bearing key/value map with the prior persisted
+ * one. Used for both `headers` and `env` — same shape, same logic,
+ * single helper. Sentinel ↦ prior value (or drop the key if no
+ * prior); real value ↦ overwrite.
+ */
+function mergeSecretMap(
+  next: Record<string, string>,
+  prior: Record<string, string> | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(next)) {
+    if (v === SECRET_PLACEHOLDER) {
+      if (prior?.[k] !== undefined) out[k] = prior[k];
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/**
+ * Write `mcp.json`, merging the secret-placeholder for `headers`
+ * AND `env` values back to the prior persisted value. Without this,
+ * an "edit and save" round-trip from the UI (which sees the
+ * sentinel) would write the literal sentinel back to disk and lock
+ * the user out of their MCP server. Same pattern as
+ * config-manager.writeModelsJson for `apiKey`.
  */
 export async function writeMcpJson(next: McpJson): Promise<void> {
   const existing: McpJson = await readMcpJson().catch(() => ({ servers: {} }));
   const safe: McpJson = { servers: {} };
   if (next.disabled === true) safe.disabled = true;
   for (const [name, server] of Object.entries(next.servers ?? {})) {
-    const merged: McpServerConfig = { url: server.url };
-    if (server.transport !== undefined) merged.transport = server.transport;
-    if (server.enabled !== undefined) merged.enabled = server.enabled;
+    const merged = copyServerCleaned(server);
     if (server.headers !== undefined) {
-      merged.headers = {};
-      const prior = existing.servers[name]?.headers ?? {};
-      for (const [hk, hv] of Object.entries(server.headers)) {
-        // Sentinel ↦ keep prior value (or drop the key if no prior).
-        if (hv === SECRET_PLACEHOLDER) {
-          if (prior[hk] !== undefined) merged.headers[hk] = prior[hk];
-        } else {
-          merged.headers[hk] = hv;
-        }
-      }
+      merged.headers = mergeSecretMap(server.headers, existing.servers[name]?.headers);
+    }
+    if (server.env !== undefined) {
+      merged.env = mergeSecretMap(server.env, existing.servers[name]?.env);
     }
     safe.servers[name] = merged;
   }

@@ -2338,11 +2338,27 @@ function BackupTab({ onError }: { onError: (msg: string | undefined) => void }) 
 
 interface McpDraft {
   name: string;
+  /** Discriminator. The form picks the field set based on this. */
+  kind: "remote" | "stdio";
+  enabled: boolean;
+  // Remote fields
   url: string;
   transport: McpTransport;
-  enabled: boolean;
   /** Headers as a flat ordered list so the user can manage rows. */
   headers: { key: string; value: string }[];
+  // Stdio fields
+  command: string;
+  /** Args as a single textarea-friendly string; one arg per line.
+   *  Parsed at save time. Stored as a string (not string[]) so the
+   *  user can type freely without each newline reshuffling the
+   *  controlled component. */
+  argsText: string;
+  /** Env as a flat ordered list; same shape + redaction handling as
+   *  headers, so the form reuses the same row UI. */
+  env: { key: string; value: string }[];
+  /** Optional cwd; blank ↦ default (project path for project
+   *  servers, pi-forge process cwd for global). */
+  cwd: string;
 }
 
 const SECRET_PLACEHOLDER = "***REDACTED***";
@@ -2350,11 +2366,26 @@ const SECRET_PLACEHOLDER = "***REDACTED***";
 function emptyDraft(): McpDraft {
   return {
     name: "",
+    kind: "remote",
+    enabled: true,
     url: "",
     transport: "auto",
-    enabled: true,
     headers: [],
+    command: "",
+    argsText: "",
+    env: [],
+    cwd: "",
   };
+}
+
+/** Split the textarea-style args field into the array shape the
+ *  server expects. Blank lines are dropped so a trailing newline
+ *  doesn't produce a ghost empty arg. */
+function parseArgs(text: string): string[] {
+  return text
+    .split("\n")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
@@ -2372,11 +2403,14 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
   const status = useMcpStore(
     (s) => s.byProject[project?.id ?? "__no_project__"]?.status ?? EMPTY_STATUS,
   );
+  const stdioTrust = useMcpStore((s) => s.byProject[project?.id ?? "__no_project__"]?.stdioTrust);
   const refreshProject = useMcpStore((s) => s.refreshProject);
   const setMcpEnabled = useMcpStore((s) => s.setMcpEnabled);
   const upsertServer = useMcpStore((s) => s.upsertServer);
   const deleteServer = useMcpStore((s) => s.deleteServer);
   const probeServerStore = useMcpStore((s) => s.probeServer);
+  const grantStdioTrust = useMcpStore((s) => s.grantStdioTrust);
+  const revokeStdioTrust = useMcpStore((s) => s.revokeStdioTrust);
 
   const [draft, setDraft] = useState<McpDraft | undefined>(undefined);
   /** When set, draft applies to an existing server (PUT replaces). */
@@ -2463,12 +2497,18 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
     const cfg = servers[name];
     if (cfg === undefined) return;
     setEditingName(name);
+    const isStdio = typeof cfg.command === "string" && cfg.command.length > 0;
     setDraft({
       name,
-      url: cfg.url,
-      transport: cfg.transport ?? "auto",
+      kind: isStdio ? "stdio" : "remote",
       enabled: cfg.enabled !== false,
+      url: cfg.url ?? "",
+      transport: cfg.transport ?? "auto",
       headers: Object.entries(cfg.headers ?? {}).map(([k, v]) => ({ key: k, value: v })),
+      command: cfg.command ?? "",
+      argsText: (cfg.args ?? []).join("\n"),
+      env: Object.entries(cfg.env ?? {}).map(([k, v]) => ({ key: k, value: v })),
+      cwd: cfg.cwd ?? "",
     });
   };
 
@@ -2479,21 +2519,40 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
 
   const saveDraft = async (): Promise<void> => {
     if (draft === undefined) return;
-    if (draft.name.trim().length === 0 || draft.url.trim().length === 0) {
-      onError("Name and URL are required.");
+    if (draft.name.trim().length === 0) {
+      onError("Name is required.");
       return;
     }
-    const headers: Record<string, string> = {};
-    for (const h of draft.headers) {
-      if (h.key.trim().length === 0) continue;
-      headers[h.key] = h.value;
+    if (draft.kind === "remote" && draft.url.trim().length === 0) {
+      onError("URL is required for remote servers.");
+      return;
     }
-    const body: McpServerConfig = {
-      url: draft.url,
-      transport: draft.transport,
-      enabled: draft.enabled,
-    };
-    if (Object.keys(headers).length > 0) body.headers = headers;
+    if (draft.kind === "stdio" && draft.command.trim().length === 0) {
+      onError("Command is required for stdio servers.");
+      return;
+    }
+    const body: McpServerConfig = { enabled: draft.enabled };
+    if (draft.kind === "remote") {
+      body.url = draft.url;
+      body.transport = draft.transport;
+      const headers: Record<string, string> = {};
+      for (const h of draft.headers) {
+        if (h.key.trim().length === 0) continue;
+        headers[h.key] = h.value;
+      }
+      if (Object.keys(headers).length > 0) body.headers = headers;
+    } else {
+      body.command = draft.command;
+      const args = parseArgs(draft.argsText);
+      if (args.length > 0) body.args = args;
+      const env: Record<string, string> = {};
+      for (const e of draft.env) {
+        if (e.key.trim().length === 0) continue;
+        env[e.key] = e.value;
+      }
+      if (Object.keys(env).length > 0) body.env = env;
+      if (draft.cwd.trim().length > 0) body.cwd = draft.cwd;
+    }
     setBusy(true);
     try {
       await upsertServer(draft.name, body);
@@ -2612,6 +2671,46 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
           {enabled ? "Enabled" : "Disabled"}
         </button>
       </div>
+
+      {project !== undefined && (
+        <StdioTrustBanner
+          projectName={project.name}
+          trusted={stdioTrust?.trusted === true}
+          gatedCount={
+            status.filter((s) => s.scope === "project" && s.state === "trust_required").length
+          }
+          busy={busy}
+          onGrant={async () => {
+            setBusy(true);
+            try {
+              await grantStdioTrust(project.id);
+              onError(undefined);
+            } catch (err) {
+              onError(`Failed to grant trust: ${errorCode(err)}`);
+            } finally {
+              setBusy(false);
+            }
+          }}
+          onRevoke={async () => {
+            if (
+              !window.confirm(
+                `Revoke stdio MCP trust for "${project.name}"? This disconnects every running project-scoped MCP server.`,
+              )
+            ) {
+              return;
+            }
+            setBusy(true);
+            try {
+              await revokeStdioTrust(project.id);
+              onError(undefined);
+            } catch (err) {
+              onError(`Failed to revoke trust: ${errorCode(err)}`);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      )}
 
       <McpServerList
         title="Global servers"
@@ -2841,11 +2940,23 @@ function McpServerList(props: {
                       )}
                     </div>
                   </div>
-                  <div className="mt-1 truncate text-[11px] text-neutral-500" title={s.url}>
-                    {s.url}
-                  </div>
+                  {s.kind === "stdio" ? (
+                    <div
+                      className="mt-1 truncate font-mono text-[11px] text-neutral-500"
+                      title={`${s.command ?? ""} ${(s.args ?? []).join(" ")}`.trim()}
+                    >
+                      {s.command} {(s.args ?? []).join(" ")}
+                    </div>
+                  ) : (
+                    <div className="mt-1 truncate text-[11px] text-neutral-500" title={s.url ?? ""}>
+                      {s.url}
+                    </div>
+                  )}
                   {s.lastError !== undefined && (
-                    <div className="mt-1 truncate text-[11px] text-red-300" title={s.lastError}>
+                    <div
+                      className="mt-1 truncate text-[11px] text-red-300 light:text-red-700"
+                      title={s.lastError}
+                    >
                       {s.lastError}
                     </div>
                   )}
@@ -2899,6 +3010,76 @@ function McpStateDot({ state }: { state: McpServerStatus["state"] }) {
   return <span className={`h-2 w-2 rounded-full ${cls}`} title={state} />;
 }
 
+/**
+ * Per-project stdio MCP trust prompt + status. Renders three states:
+ *
+ *  1. Untrusted + no gated entries → small dim "stdio MCP trust:
+ *     not granted" note. No CTA — there's nothing to spawn anyway.
+ *  2. Untrusted + ≥1 gated entry → prominent amber banner with
+ *     "Trust this project" CTA. This is the path most users will
+ *     hit after `git clone`'ing a project with a project-local
+ *     `.mcp.json` that declares stdio entries.
+ *  3. Trusted → small dim "trusted" note with a Revoke link.
+ *     Surfaces the decision so the user can undo it without
+ *     hunting through Settings.
+ */
+function StdioTrustBanner(props: {
+  projectName: string;
+  trusted: boolean;
+  gatedCount: number;
+  busy: boolean;
+  onGrant: () => void | Promise<void>;
+  onRevoke: () => void | Promise<void>;
+}) {
+  if (props.trusted) {
+    return (
+      <div className="flex items-center justify-between rounded border border-neutral-800 bg-neutral-900/40 px-3 py-1.5 text-[11px] text-neutral-500">
+        <span>
+          Stdio MCP trust granted for{" "}
+          <strong className="text-neutral-300">{props.projectName}</strong>. Project-local stdio MCP
+          servers from <code className="font-mono">.mcp.json</code> will spawn on session create.
+        </span>
+        <button
+          onClick={() => void props.onRevoke()}
+          disabled={props.busy}
+          className="rounded border border-neutral-700 px-2 py-0.5 text-[10px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-200 disabled:opacity-50"
+          title="Disconnects every running project-scoped MCP server"
+        >
+          Revoke
+        </button>
+      </div>
+    );
+  }
+  if (props.gatedCount === 0) {
+    return null;
+  }
+  return (
+    <div className="rounded border border-amber-700/40 bg-amber-900/20 p-3 text-xs text-amber-200 light:border-amber-300 light:bg-amber-50 light:text-amber-800">
+      <div className="mb-2 font-medium">
+        This project wants to spawn {props.gatedCount} stdio MCP server
+        {props.gatedCount === 1 ? "" : "s"}.
+      </div>
+      <p className="text-[11px] leading-relaxed">
+        <strong>{props.projectName}</strong>'s <code className="font-mono">.mcp.json</code> declares
+        MCP server{props.gatedCount === 1 ? "" : "s"} that pi-forge would launch as local subprocess
+        {props.gatedCount === 1 ? "" : "es"}. Stdio MCP runs arbitrary commands on this machine with
+        whatever env you've passed through — only trust projects whose{" "}
+        <code className="font-mono">.mcp.json</code> you've reviewed and approve of. Remote (URL)
+        entries in this project are unaffected by this gate.
+      </p>
+      <div className="mt-2 flex gap-2">
+        <button
+          onClick={() => void props.onGrant()}
+          disabled={props.busy}
+          className="rounded bg-amber-200 px-3 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50 light:bg-amber-600 light:text-amber-50 light:hover:bg-amber-700"
+        >
+          {props.busy ? "Granting…" : "Trust this project"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function McpDraftForm(props: {
   draft: McpDraft;
   isEditing: boolean;
@@ -2916,6 +3097,43 @@ function McpDraftForm(props: {
       <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-400">
         {props.isEditing ? `Edit '${draft.name}'` : "Add MCP server"}
       </h4>
+
+      {/* Kind selector — locked on edit to prevent silently moving a
+          remote server to stdio (which would drop its URL/headers on
+          save and re-spawn nothing useful). Delete + re-add to swap. */}
+      <div className="mb-3 flex items-center gap-3 rounded border border-neutral-800 bg-neutral-950 p-2 text-[11px]">
+        <span className="text-neutral-500">Type</span>
+        <label
+          className={`flex items-center gap-1.5 ${props.isEditing ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+        >
+          <input
+            type="radio"
+            name="mcp-kind"
+            checked={draft.kind === "remote"}
+            disabled={props.isEditing}
+            onChange={() => setField("kind", "remote")}
+          />
+          <span>Remote URL</span>
+        </label>
+        <label
+          className={`flex items-center gap-1.5 ${props.isEditing ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+        >
+          <input
+            type="radio"
+            name="mcp-kind"
+            checked={draft.kind === "stdio"}
+            disabled={props.isEditing}
+            onChange={() => setField("kind", "stdio")}
+          />
+          <span>Local subprocess (stdio)</span>
+        </label>
+        {props.isEditing && (
+          <span className="text-[10px] italic text-neutral-600">
+            Locked while editing — delete and re-add to change type.
+          </span>
+        )}
+      </div>
+
       <div className="grid grid-cols-[80px_1fr] items-center gap-2 text-xs">
         <label className="text-neutral-500">Name</label>
         <input
@@ -2925,23 +3143,55 @@ function McpDraftForm(props: {
           placeholder="my-server"
           className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 outline-none focus:border-neutral-500 disabled:opacity-50"
         />
-        <label className="text-neutral-500">URL</label>
-        <input
-          value={draft.url}
-          onChange={(e) => setField("url", e.target.value)}
-          placeholder="https://mcp.example.com/sse"
-          className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 outline-none focus:border-neutral-500"
-        />
-        <label className="text-neutral-500">Transport</label>
-        <select
-          value={draft.transport}
-          onChange={(e) => setField("transport", e.target.value as McpTransport)}
-          className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 outline-none focus:border-neutral-500"
-        >
-          <option value="auto">auto (StreamableHTTP, fall back to SSE)</option>
-          <option value="streamable-http">streamable-http</option>
-          <option value="sse">sse</option>
-        </select>
+
+        {draft.kind === "remote" ? (
+          <>
+            <label className="text-neutral-500">URL</label>
+            <input
+              value={draft.url}
+              onChange={(e) => setField("url", e.target.value)}
+              placeholder="https://mcp.example.com/sse"
+              className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 outline-none focus:border-neutral-500"
+            />
+            <label className="text-neutral-500">Transport</label>
+            <select
+              value={draft.transport}
+              onChange={(e) => setField("transport", e.target.value as McpTransport)}
+              className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 outline-none focus:border-neutral-500"
+            >
+              <option value="auto">auto (StreamableHTTP, fall back to SSE)</option>
+              <option value="streamable-http">streamable-http</option>
+              <option value="sse">sse</option>
+            </select>
+          </>
+        ) : (
+          <>
+            <label className="text-neutral-500">Command</label>
+            <input
+              value={draft.command}
+              onChange={(e) => setField("command", e.target.value)}
+              placeholder="npx (or absolute path to a binary)"
+              className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-neutral-100 outline-none focus:border-neutral-500"
+            />
+            <label className="self-start pt-1 text-neutral-500">Args</label>
+            <textarea
+              value={draft.argsText}
+              onChange={(e) => setField("argsText", e.target.value)}
+              placeholder={"-y\n@modelcontextprotocol/server-everything"}
+              rows={3}
+              spellCheck={false}
+              className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-[11px] text-neutral-100 outline-none focus:border-neutral-500"
+            />
+            <label className="text-neutral-500">cwd</label>
+            <input
+              value={draft.cwd}
+              onChange={(e) => setField("cwd", e.target.value)}
+              placeholder="(blank ↦ default: project path for project servers)"
+              className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-neutral-100 outline-none focus:border-neutral-500"
+            />
+          </>
+        )}
+
         <label className="text-neutral-500">Enabled</label>
         <label className="flex items-center gap-2">
           <input
@@ -2954,66 +3204,27 @@ function McpDraftForm(props: {
           </span>
         </label>
       </div>
-      <div className="mt-3">
-        <div className="mb-1 flex items-center justify-between">
-          <h5 className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
-            Headers
-          </h5>
-          <button
-            onClick={() => setField("headers", [...draft.headers, { key: "", value: "" }])}
-            className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500"
-          >
-            + Header
-          </button>
-        </div>
-        {draft.headers.length === 0 && (
-          <p className="text-[11px] italic text-neutral-600">
-            No headers. Add `Authorization: Bearer …` here for auth.
-          </p>
-        )}
-        {draft.headers.map((h, i) => (
-          <div key={i} className="mb-1 grid grid-cols-[1fr_2fr_auto] gap-1">
-            <input
-              value={h.key}
-              onChange={(e) => {
-                const next = [...draft.headers];
-                next[i] = { ...h, key: e.target.value };
-                setField("headers", next);
-              }}
-              placeholder="Authorization"
-              className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-[11px] font-mono text-neutral-100 outline-none focus:border-neutral-500"
-            />
-            <input
-              value={h.value === SECRET_PLACEHOLDER ? "" : h.value}
-              onChange={(e) => {
-                const next = [...draft.headers];
-                next[i] = { ...h, value: e.target.value };
-                setField("headers", next);
-              }}
-              placeholder={
-                h.value === SECRET_PLACEHOLDER ? "leave blank to keep stored value" : "Bearer …"
-              }
-              type="password"
-              className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-[11px] font-mono text-neutral-100 outline-none focus:border-neutral-500"
-            />
-            <button
-              onClick={() => {
-                const next = draft.headers.filter((_, j) => j !== i);
-                setField("headers", next);
-              }}
-              className="rounded border border-neutral-700 px-2 text-[11px] text-neutral-400 hover:text-red-300"
-              title="Remove header"
-            >
-              ×
-            </button>
-          </div>
-        ))}
-        {draft.headers.some((h) => h.value === SECRET_PLACEHOLDER) && (
-          <p className="mt-1 text-[10px] italic text-neutral-500">
-            Headers with the redaction sentinel keep their stored value when you save.
-          </p>
-        )}
-      </div>
+
+      {draft.kind === "remote" ? (
+        <SecretRowsEditor
+          label="Headers"
+          emptyHint="No headers. Add `Authorization: Bearer …` here for auth."
+          keyPlaceholder="Authorization"
+          valuePlaceholder="Bearer …"
+          rows={draft.headers}
+          onChange={(next) => setField("headers", next)}
+        />
+      ) : (
+        <SecretRowsEditor
+          label="Env"
+          emptyHint="No env. Add API keys / config your subprocess needs (PATH / HOME / locale are inherited automatically)."
+          keyPlaceholder="GITHUB_TOKEN"
+          valuePlaceholder="ghp_…"
+          rows={draft.env}
+          onChange={(next) => setField("env", next)}
+        />
+      )}
+
       <div className="mt-3 flex justify-end gap-2">
         <button
           onClick={props.onCancel}
@@ -3029,6 +3240,83 @@ function McpDraftForm(props: {
           {busy ? "Saving…" : "Save"}
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Shared key/value editor used by both the Headers (remote) and Env
+ * (stdio) sections. Same visual + the same redaction-sentinel
+ * round-trip pattern — the value field renders blank when the
+ * stored value is the sentinel so the user types a replacement
+ * instead of "editing" the placeholder.
+ */
+function SecretRowsEditor(props: {
+  label: string;
+  emptyHint: string;
+  keyPlaceholder: string;
+  valuePlaceholder: string;
+  rows: { key: string; value: string }[];
+  onChange: (next: { key: string; value: string }[]) => void;
+}) {
+  const { rows } = props;
+  return (
+    <div className="mt-3">
+      <div className="mb-1 flex items-center justify-between">
+        <h5 className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
+          {props.label}
+        </h5>
+        <button
+          onClick={() => props.onChange([...rows, { key: "", value: "" }])}
+          className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500"
+        >
+          + {props.label.replace(/s$/, "")}
+        </button>
+      </div>
+      {rows.length === 0 && (
+        <p className="text-[11px] italic text-neutral-600">{props.emptyHint}</p>
+      )}
+      {rows.map((r, i) => (
+        <div key={i} className="mb-1 grid grid-cols-[1fr_2fr_auto] gap-1">
+          <input
+            value={r.key}
+            onChange={(e) => {
+              const next = [...rows];
+              next[i] = { ...r, key: e.target.value };
+              props.onChange(next);
+            }}
+            placeholder={props.keyPlaceholder}
+            className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-[11px] font-mono text-neutral-100 outline-none focus:border-neutral-500"
+          />
+          <input
+            value={r.value === SECRET_PLACEHOLDER ? "" : r.value}
+            onChange={(e) => {
+              const next = [...rows];
+              next[i] = { ...r, value: e.target.value };
+              props.onChange(next);
+            }}
+            placeholder={
+              r.value === SECRET_PLACEHOLDER
+                ? "leave blank to keep stored value"
+                : props.valuePlaceholder
+            }
+            type="password"
+            className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-[11px] font-mono text-neutral-100 outline-none focus:border-neutral-500"
+          />
+          <button
+            onClick={() => props.onChange(rows.filter((_, j) => j !== i))}
+            className="rounded border border-neutral-700 px-2 text-[11px] text-neutral-400 hover:text-red-300 light:hover:text-red-700"
+            title={`Remove ${props.label.toLowerCase()}`}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      {rows.some((r) => r.value === SECRET_PLACEHOLDER) && (
+        <p className="mt-1 text-[10px] italic text-neutral-500">
+          Values with the redaction sentinel keep their stored value when you save.
+        </p>
+      )}
     </div>
   );
 }

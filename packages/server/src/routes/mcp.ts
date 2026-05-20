@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync } from "fastify";
+import type { FastifyPluginAsync, FastifyReply } from "fastify";
 import {
   deleteMcpServer,
   readMcpJsonRedacted,
@@ -13,51 +13,118 @@ import {
   getStatus,
   isGloballyEnabled,
   probe,
+  reconnectGatedStdioForProject,
   reloadGlobal,
+  unloadProject,
 } from "../mcp/manager.js";
+import { grantStdioTrust, isStdioTrustedForProject, revokeStdioTrust } from "../mcp/stdio-trust.js";
 import { getProject } from "../project-manager.js";
 import { errorSchema } from "./_schemas.js";
 
 interface McpServerBody {
-  url: string;
-  transport?: McpTransport;
   enabled?: boolean;
+  // remote
+  url?: string;
+  transport?: McpTransport;
   headers?: Record<string, string>;
+  // stdio
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
 }
 
 const serverConfigSchema = {
+  // Required-fields validation is presence-based (one of url / command),
+  // enforced in `buildServerConfigFromBody` below. JSON Schema's
+  // `oneOf` works but the ajv error messages it emits are useless for
+  // the user; the explicit handler check stays the source of truth.
   type: "object",
-  required: ["url"],
   additionalProperties: false,
   properties: {
+    enabled: { type: "boolean" },
     url: { type: "string", minLength: 1 },
     transport: { type: "string", enum: ["auto", "streamable-http", "sse"] },
-    enabled: { type: "boolean" },
     headers: {
       type: "object",
       additionalProperties: { type: "string" },
     },
+    command: { type: "string", minLength: 1 },
+    args: { type: "array", items: { type: "string" } },
+    env: {
+      type: "object",
+      additionalProperties: { type: "string" },
+    },
+    cwd: { type: "string", minLength: 1 },
   },
 } as const;
 
 const statusEntrySchema = {
   type: "object",
-  required: ["scope", "name", "url", "enabled", "state", "toolCount"],
+  required: ["scope", "name", "kind", "enabled", "state", "toolCount"],
   properties: {
     scope: { type: "string", enum: ["global", "project"] },
     projectId: { type: "string" },
     name: { type: "string" },
+    kind: { type: "string", enum: ["remote", "stdio"] },
     url: { type: "string" },
+    command: { type: "string" },
+    args: { type: "array", items: { type: "string" } },
     enabled: { type: "boolean" },
     state: {
       type: "string",
-      enum: ["idle", "connecting", "connected", "error", "disabled"],
+      enum: ["idle", "connecting", "connected", "error", "disabled", "trust_required"],
     },
     toolCount: { type: "integer", minimum: 0 },
     lastError: { type: "string" },
     transport: { type: "string", enum: ["auto", "streamable-http", "sse"] },
   },
 } as const;
+
+/**
+ * Validate the presence-based one-of constraint and copy the body
+ * into a fresh `McpServerConfig`. Either branch ↦ returns the
+ * config; ambiguous / empty input ↦ writes the 400 to `reply` and
+ * returns undefined (caller short-circuits with the same reply).
+ */
+function buildServerConfigFromBody(
+  body: McpServerBody,
+  reply: FastifyReply,
+): McpServerConfig | undefined {
+  const hasUrl = typeof body.url === "string" && body.url.length > 0;
+  const hasCommand = typeof body.command === "string" && body.command.length > 0;
+  if (hasUrl && hasCommand) {
+    reply.code(400).send({
+      error: "mcp_invalid_config",
+      message: "an MCP server must declare either `url` (remote) or `command` (stdio), not both",
+    });
+    return undefined;
+  }
+  if (!hasUrl && !hasCommand) {
+    reply.code(400).send({
+      error: "mcp_invalid_config",
+      message: "an MCP server must declare either `url` (remote) or `command` (stdio)",
+    });
+    return undefined;
+  }
+  const cfg: McpServerConfig = {};
+  if (body.enabled !== undefined) cfg.enabled = body.enabled;
+  // Re-derive the narrowed strings instead of using `body.url!` —
+  // exactOptionalPropertyTypes refuses to widen the assignment
+  // target to `string | undefined` even when `hasUrl` proved
+  // non-undefined a few lines up.
+  if (hasUrl && body.url !== undefined) {
+    cfg.url = body.url;
+    if (body.transport !== undefined) cfg.transport = body.transport;
+    if (body.headers !== undefined) cfg.headers = body.headers;
+  } else if (body.command !== undefined) {
+    cfg.command = body.command;
+    if (body.args !== undefined) cfg.args = [...body.args];
+    if (body.env !== undefined) cfg.env = body.env;
+    if (body.cwd !== undefined) cfg.cwd = body.cwd;
+  }
+  return cfg;
+}
 
 export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
   // ---- master enable/disable + connection summary ----
@@ -141,10 +208,14 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
       schema: {
         description:
           "List the GLOBAL MCP server registry (pi-forge-owned at " +
-          "${FORGE_DATA_DIR}/mcp.json). Header values are redacted with " +
-          "the same '***REDACTED***' sentinel pattern as models.json. Pass " +
-          "?projectId=<id> to also include the project-scoped registry " +
-          "(read from <projectPath>/.mcp.json).",
+          "${FORGE_DATA_DIR}/mcp.json). Header / env values are redacted " +
+          "with the same '***REDACTED***' sentinel pattern as models.json. " +
+          "Pass ?projectId=<id> to also include the project-scoped " +
+          "registry (read from <projectPath>/.mcp.json). When " +
+          "?projectId is set, `stdioTrust` reports whether the operator " +
+          "has granted the project permission to declare stdio MCP " +
+          "servers (project-scoped stdio entries that haven't been " +
+          "trusted appear in status with state='trust_required').",
         tags: ["config"],
         querystring: {
           type: "object",
@@ -157,6 +228,11 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
             properties: {
               servers: { type: "object", additionalProperties: serverConfigSchema },
               status: { type: "array", items: statusEntrySchema },
+              stdioTrust: {
+                type: "object",
+                required: ["trusted"],
+                properties: { trusted: { type: "boolean" } },
+              },
             },
           },
           500: errorSchema,
@@ -168,17 +244,25 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
       // If a project was passed, eagerly load its .mcp.json so the
       // status array reflects current state. The global file is
       // already loaded at server boot.
+      let stdioTrust: { trusted: boolean } | undefined;
       if (projectId !== undefined) {
         const project = await getProject(projectId);
         if (project !== undefined) {
           await ensureProjectLoaded(project.id, project.path);
+          stdioTrust = { trusted: await isStdioTrustedForProject(project.id) };
         }
       }
       const cfg = await readMcpJsonRedacted();
-      return {
+      const result: {
+        servers: Record<string, McpServerConfig>;
+        status: ReturnType<typeof getStatus>;
+        stdioTrust?: { trusted: boolean };
+      } = {
         servers: cfg.servers,
         status: getStatus(projectId !== undefined ? { projectId } : undefined),
       };
+      if (stdioTrust !== undefined) result.stdioTrust = stdioTrust;
+      return result;
     },
   );
 
@@ -211,12 +295,10 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
         },
       },
     },
-    async (req) => {
+    async (req, reply) => {
       const { name } = req.params;
-      const cfg: McpServerConfig = { url: req.body.url };
-      if (req.body.transport !== undefined) cfg.transport = req.body.transport;
-      if (req.body.enabled !== undefined) cfg.enabled = req.body.enabled;
-      if (req.body.headers !== undefined) cfg.headers = req.body.headers;
+      const cfg = buildServerConfigFromBody(req.body, reply);
+      if (cfg === undefined) return reply;
       await upsertMcpServer(name, cfg);
       await reloadGlobal();
       return { ok: true };
@@ -356,6 +438,93 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
         description: t.description,
       }));
       return { tools };
+    },
+  );
+
+  // ---- stdio trust: grant + revoke per-project ----
+  fastify.post<{ Params: { projectId: string } }>(
+    "/mcp/trust/:projectId",
+    {
+      schema: {
+        description:
+          "Grant this project permission to declare stdio (subprocess- " +
+          "spawning) MCP servers in its `.mcp.json`. Required before " +
+          "pi-forge will spawn any stdio entry from a project's config " +
+          "file — otherwise the entries appear in status with " +
+          "state='trust_required' and produce no tools. Granting trust " +
+          "immediately retries connection for every gated stdio entry " +
+          "in the project; remote entries are unaffected. Globally- " +
+          "configured stdio entries (in ${FORGE_DATA_DIR}/mcp.json) are " +
+          "never gated — they're the operator's own config.",
+        tags: ["config"],
+        params: {
+          type: "object",
+          required: ["projectId"],
+          properties: { projectId: { type: "string" } },
+        },
+        response: {
+          200: {
+            type: "object",
+            required: ["trusted", "status"],
+            properties: {
+              trusted: { type: "boolean" },
+              status: { type: "array", items: statusEntrySchema },
+            },
+          },
+          404: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const project = await getProject(req.params.projectId);
+      if (project === undefined) {
+        return reply.code(404).send({ error: "project_not_found" });
+      }
+      await grantStdioTrust(project.id);
+      await ensureProjectLoaded(project.id, project.path);
+      await reconnectGatedStdioForProject(project.id);
+      return {
+        trusted: true,
+        status: getStatus({ projectId: project.id }),
+      };
+    },
+  );
+
+  fastify.delete<{ Params: { projectId: string } }>(
+    "/mcp/trust/:projectId",
+    {
+      schema: {
+        description:
+          "Revoke this project's stdio MCP trust. Disconnects every " +
+          "running project-scoped MCP server (including remote ones — " +
+          "the whole project pool is reset so the next ensureProjectLoaded " +
+          "re-applies the trust gate to stdio entries). The trust grant " +
+          "is also cleared automatically when the project itself is " +
+          "deleted (project-manager.deleteProject cascade).",
+        tags: ["config"],
+        params: {
+          type: "object",
+          required: ["projectId"],
+          properties: { projectId: { type: "string" } },
+        },
+        response: {
+          200: {
+            type: "object",
+            required: ["trusted"],
+            properties: { trusted: { type: "boolean" } },
+          },
+          404: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const project = await getProject(req.params.projectId);
+      if (project === undefined) {
+        return reply.code(404).send({ error: "project_not_found" });
+      }
+      await revokeStdioTrust(project.id);
+      await unloadProject(project.id);
+      return { trusted: false };
     },
   );
 };

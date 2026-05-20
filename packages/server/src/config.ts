@@ -193,6 +193,17 @@ export const config = Object.freeze({
    */
   mcpConfigFile: join(FORGE_DATA_DIR, "mcp.json"),
   /**
+   * Path to the forge-private per-project stdio-MCP trust list. Each
+   * entry records that the operator has granted the named project
+   * permission to declare stdio (subprocess-spawning) MCP servers in
+   * its `.mcp.json`. Project-scoped stdio entries are gated by this
+   * file — first time we see them in an untrusted project, we refuse
+   * to spawn and the UI prompts. Global servers and remote
+   * (URL-based) project servers are never gated. See
+   * `mcp/stdio-trust.ts` for the threat-model framing.
+   */
+  mcpStdioTrustFile: join(FORGE_DATA_DIR, "mcp-stdio-trust.json"),
+  /**
    * Path to the forge-private per-project skill overrides file.
    * Lives in the data dir (NOT in PI_CONFIG_DIR — pi's settings.skills
    * is global, and not in `<project>/.pi/` — the user picked

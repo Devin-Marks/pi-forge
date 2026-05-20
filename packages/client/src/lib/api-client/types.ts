@@ -42,24 +42,46 @@ export interface ChangePasswordResponse {
 // ---------------- MCP ----------------
 
 export type McpTransport = "auto" | "streamable-http" | "sse";
-export type McpConnectionState = "idle" | "connecting" | "connected" | "error" | "disabled";
+export type McpConnectionState =
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "error"
+  | "disabled"
+  | "trust_required";
 
 export interface McpServerConfig {
-  url: string;
-  transport?: McpTransport;
   enabled?: boolean;
+  // remote-only (mutually exclusive with `command`)
+  url?: string;
+  transport?: McpTransport;
   headers?: Record<string, string>;
+  // stdio-only (mutually exclusive with `url`)
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
 }
 
 export interface McpServerStatus {
   scope: "global" | "project";
   projectId?: string;
   name: string;
-  url: string;
+  /** Discriminator — `remote` ↦ render `url`/`transport`; `stdio` ↦
+   *  render `command`/`args`. */
+  kind: "remote" | "stdio";
+  /** Remote-only. Present when `kind === "remote"`. */
+  url?: string;
+  /** Stdio-only. */
+  command?: string;
+  /** Stdio-only. */
+  args?: string[];
   enabled: boolean;
   state: McpConnectionState;
   toolCount: number;
   lastError?: string;
+  /** Resolved remote transport — only meaningful when
+   *  `kind === "remote"`. */
   transport?: McpTransport;
 }
 
@@ -68,6 +90,9 @@ export interface McpServersResponse {
   servers: Record<string, McpServerConfig>;
   /** Status across global + (optionally) the queried project's scope. */
   status: McpServerStatus[];
+  /** Present only when `?projectId=<id>` was passed. Reports
+   *  whether this project has been granted stdio-MCP trust. */
+  stdioTrust?: { trusted: boolean };
 }
 
 export interface McpSettingsResponse {
