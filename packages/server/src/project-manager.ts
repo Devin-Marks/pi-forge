@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { config } from "./config.js";
 import { clearProjectOverrides as clearProjectSkillOverrides } from "./skill-overrides.js";
 import { clearProjectPromptOverrides } from "./prompt-overrides.js";
+import { clearProjectSystemPromptAddendum } from "./system-prompt-overrides.js";
 
 /**
  * Project ids are always `randomUUID()` output. Mirrors the same
@@ -262,6 +263,9 @@ export async function deleteProject(
   });
   await clearProjectPromptOverrides(id).catch((err: unknown) => {
     warn({ err, id }, "prompt-overrides cleanup failed");
+  });
+  await clearProjectSystemPromptAddendum(id).catch((err: unknown) => {
+    warn({ err, id }, "system-prompt-overrides cleanup failed");
   });
   if (opts.cascadeSessionDir === true) {
     // Wipe the project's session directory. Best-effort — a missing

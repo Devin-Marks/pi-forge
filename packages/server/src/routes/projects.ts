@@ -14,6 +14,11 @@ import {
   readProjects,
   renameProject,
 } from "../project-manager.js";
+import {
+  getProjectSystemPromptAddendum,
+  MAX_ADDENDUM_BYTES,
+  setProjectSystemPromptAddendum,
+} from "../system-prompt-overrides.js";
 import { errorSchema } from "./_schemas.js";
 
 const projectSchema = {
@@ -264,6 +269,95 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
       } catch (err) {
         return handleError(reply, err);
       }
+    },
+  );
+
+  fastify.get<{ Params: { id: string } }>(
+    "/projects/:id/system-prompt",
+    {
+      schema: {
+        description:
+          "Return the project's system-prompt addendum — free-form text " +
+          "appended to the agent's base system prompt for every session in " +
+          "this project. Empty string when no addendum is set. The base " +
+          "prompt (pi's tool-calling protocol) is NOT exposed or editable; " +
+          "this is APPEND-only.",
+        tags: ["projects"],
+        params: {
+          type: "object",
+          required: ["id"],
+          properties: { id: { type: "string" } },
+        },
+        response: {
+          200: {
+            type: "object",
+            required: ["addendum", "maxBytes"],
+            properties: {
+              addendum: { type: "string" },
+              maxBytes: { type: "integer" },
+            },
+          },
+          404: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const project = await getProject(req.params.id);
+      if (!project) return reply.code(404).send({ error: "project_not_found" });
+      const addendum = await getProjectSystemPromptAddendum(req.params.id);
+      return { addendum, maxBytes: MAX_ADDENDUM_BYTES };
+    },
+  );
+
+  fastify.put<{ Params: { id: string }; Body: { addendum: string } }>(
+    "/projects/:id/system-prompt",
+    {
+      schema: {
+        description:
+          "Replace the project's system-prompt addendum. Pass an empty " +
+          "string (or whitespace-only) to clear the addendum. Takes effect " +
+          "on the NEXT session created in this project — already-running " +
+          "sessions keep the prompt they were built with.",
+        tags: ["projects"],
+        params: {
+          type: "object",
+          required: ["id"],
+          properties: { id: { type: "string" } },
+        },
+        body: {
+          type: "object",
+          required: ["addendum"],
+          additionalProperties: false,
+          properties: {
+            addendum: { type: "string", maxLength: MAX_ADDENDUM_BYTES },
+          },
+        },
+        response: {
+          200: {
+            type: "object",
+            required: ["addendum", "maxBytes"],
+            properties: {
+              addendum: { type: "string" },
+              maxBytes: { type: "integer" },
+            },
+          },
+          400: errorSchema,
+          404: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const project = await getProject(req.params.id);
+      if (!project) return reply.code(404).send({ error: "project_not_found" });
+      // Belt-and-suspenders: schema enforces maxLength at the character
+      // level, but multi-byte input could in principle exceed the byte
+      // cap. Reject explicitly so the persisted file is bounded.
+      if (Buffer.byteLength(req.body.addendum, "utf8") > MAX_ADDENDUM_BYTES) {
+        return reply.code(400).send({ error: "addendum_too_large" });
+      }
+      await setProjectSystemPromptAddendum(req.params.id, req.body.addendum);
+      const addendum = await getProjectSystemPromptAddendum(req.params.id);
+      return { addendum, maxBytes: MAX_ADDENDUM_BYTES };
     },
   );
 

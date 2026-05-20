@@ -222,6 +222,16 @@ export const config = Object.freeze({
    */
   promptOverridesFile: join(FORGE_DATA_DIR, "prompts-overrides.json"),
   /**
+   * Path to the forge-private per-project system-prompt addendum file.
+   * Each project can store a free-form text block that is appended
+   * to the agent's base system prompt (via pi's `appendSystemPrompt`
+   * extension hook) for every session created in that project. Pi's
+   * base prompt defines the tool-calling protocol — REPLACING it
+   * would break tool use, so this is APPEND-only. Same data-dir
+   * placement rationale as the other override files.
+   */
+  systemPromptOverridesFile: join(FORGE_DATA_DIR, "system-prompt-overrides.json"),
+  /**
    * Whether `/api/docs` (Swagger UI + OpenAPI JSON spec) is reachable.
    * Defaults to true so Docker / production deploys keep working without
    * extra config (the README quickstart documents `/api/docs`). When

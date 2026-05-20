@@ -48,6 +48,7 @@ import {
 import { config } from "./config.js";
 import { getProjectDisabledSkillNames } from "./skill-overrides.js";
 import { getProjectDisabledPromptNames } from "./prompt-overrides.js";
+import { getProjectSystemPromptAddendum } from "./system-prompt-overrides.js";
 
 /**
  * Plain string (not a backtick template) so what's stored is exactly
@@ -97,13 +98,21 @@ export async function buildForgeResourceLoader(
   projectId?: string,
 ): Promise<ResourceLoader> {
   const appendSystemPrompt = config.agentSecretHygieneRule ? [FORGE_SECRET_HYGIENE_RULE] : [];
-  const [disabledSkills, disabledPrompts] =
+  const [disabledSkills, disabledPrompts, projectAddendum] =
     projectId !== undefined
       ? await Promise.all([
           getProjectDisabledSkillNames(projectId),
           getProjectDisabledPromptNames(projectId),
+          getProjectSystemPromptAddendum(projectId),
         ])
-      : [new Set<string>(), new Set<string>()];
+      : [new Set<string>(), new Set<string>(), ""];
+  // Per-project user-authored addendum lands AFTER the secret-hygiene
+  // rule so any operator-set behavioral baseline appears first, with
+  // the user's project-scoped customizations following — mirrors how
+  // most layered-prompt systems compose (system → org → project).
+  if (projectAddendum.length > 0) {
+    appendSystemPrompt.push(projectAddendum);
+  }
   const baseOptions = {
     cwd,
     agentDir,

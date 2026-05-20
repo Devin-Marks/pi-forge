@@ -82,6 +82,9 @@ tmp/
 # Git worktrees (in-tree convention: `git worktree add .worktrees/<branch>`)
 .worktrees/
 
+# Claude Code harness state (auto-created worktrees, transcripts, etc.)
+.claude/
+
 # Local working notes (not committed)
 notes/
 pi-webui-dev-plan.md
