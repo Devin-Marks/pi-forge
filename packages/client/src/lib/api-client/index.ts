@@ -1126,6 +1126,27 @@ export const api = {
     const qs = path !== undefined ? `?path=${encodeURIComponent(path)}` : "";
     return request(`/api/v1/projects/browse${qs}`, vBrowse);
   },
+  getProjectSystemPrompt: (id: string) =>
+    request(
+      `/api/v1/projects/${encodeURIComponent(id)}/system-prompt`,
+      (v, s): { addendum: string; maxBytes: number } => {
+        if (!isObject(v) || typeof v.addendum !== "string" || typeof v.maxBytes !== "number") {
+          fail(s, "expected { addendum: string, maxBytes: number }");
+        }
+        return { addendum: v.addendum, maxBytes: v.maxBytes };
+      },
+    ),
+  setProjectSystemPrompt: (id: string, addendum: string) =>
+    request(
+      `/api/v1/projects/${encodeURIComponent(id)}/system-prompt`,
+      (v, s): { addendum: string; maxBytes: number } => {
+        if (!isObject(v) || typeof v.addendum !== "string" || typeof v.maxBytes !== "number") {
+          fail(s, "expected { addendum: string, maxBytes: number }");
+        }
+        return { addendum: v.addendum, maxBytes: v.maxBytes };
+      },
+      { method: "PUT", body: { addendum } },
+    ),
   mkdir: (parentPath: string, name: string) =>
     request("/api/v1/projects/browse/mkdir", vMkdir, {
       method: "POST",

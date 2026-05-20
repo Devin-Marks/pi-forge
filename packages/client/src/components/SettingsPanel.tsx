@@ -28,6 +28,7 @@ type Tab =
   | "tools"
   | "skills"
   | "prompts"
+  | "systemPrompt"
   | "appearance"
   | "backup"
   | "general";
@@ -74,7 +75,15 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           // deployments often want to disable bash/edit/write at the
           // tool level, regardless of what providers / agent settings
           // are exposed.
-          (["skills", "prompts", "tools", "appearance", "backup", "general"] as const)
+          ([
+            "skills",
+            "prompts",
+            "systemPrompt",
+            "tools",
+            "appearance",
+            "backup",
+            "general",
+          ] as const)
         : ([
             "providers",
             "agent",
@@ -82,6 +91,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
             "tools",
             "skills",
             "prompts",
+            "systemPrompt",
             "appearance",
             "backup",
             "general",
@@ -143,11 +153,13 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
                           ? "Skills"
                           : t === "prompts"
                             ? "Prompts"
-                            : t === "appearance"
-                              ? "Appearance"
-                              : t === "backup"
-                                ? "Backup"
-                                : "General"}
+                            : t === "systemPrompt"
+                              ? "System Prompt"
+                              : t === "appearance"
+                                ? "Appearance"
+                                : t === "backup"
+                                  ? "Backup"
+                                  : "General"}
               </button>
             ))}
           </div>
@@ -197,6 +209,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           {tab === "tools" && <ToolsTab onError={setError} />}
           {tab === "skills" && <SkillsTab onError={setError} />}
           {tab === "prompts" && <PromptsTab onError={setError} />}
+          {tab === "systemPrompt" && <SystemPromptTab onError={setError} />}
           {tab === "appearance" && <AppearanceTab />}
           {tab === "backup" && <BackupTab onError={setError} />}
           {tab === "general" && <GeneralTab />}
@@ -1744,6 +1757,172 @@ function ToolCascadeRow({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------- System Prompt tab ----------------
+
+/**
+ * Per-project addendum appended to the agent's base system prompt
+ * via pi's `appendSystemPrompt` extension hook. Pi's base prompt
+ * defines the tool-calling protocol — REPLACING it would break
+ * tool use, so this surface is APPEND-only. Changes take effect on
+ * the NEXT session created in the project; already-running sessions
+ * keep the prompt they were built with.
+ */
+function SystemPromptTab({ onError }: { onError: (msg: string | undefined) => void }) {
+  const project = useActiveProject();
+  const [addendum, setAddendum] = useState<string | undefined>(undefined);
+  const [draft, setDraft] = useState("");
+  const [maxBytes, setMaxBytes] = useState(20_000);
+  const [busy, setBusy] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (project === undefined) {
+      setAddendum(undefined);
+      setDraft("");
+      return;
+    }
+    let cancelled = false;
+    onError(undefined);
+    void (async () => {
+      try {
+        const res = await api.getProjectSystemPrompt(project.id);
+        if (cancelled) return;
+        setAddendum(res.addendum);
+        setDraft(res.addendum);
+        setMaxBytes(res.maxBytes);
+      } catch (err) {
+        if (cancelled) return;
+        onError(`Failed to load system prompt: ${errorCode(err)}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
+
+  if (project === undefined) {
+    return (
+      <p className="text-xs italic text-neutral-500">
+        Pick a project from the header to edit its system prompt addendum.
+      </p>
+    );
+  }
+  if (addendum === undefined) {
+    return (
+      <p className="text-xs italic text-neutral-500">Loading system prompt for {project.name}…</p>
+    );
+  }
+
+  const byteLen = new Blob([draft]).size;
+  const overBudget = byteLen > maxBytes;
+  const dirty = draft !== addendum;
+
+  const save = async (): Promise<void> => {
+    if (overBudget) return;
+    setBusy(true);
+    setSavedMsg(undefined);
+    onError(undefined);
+    try {
+      const res = await api.setProjectSystemPrompt(project.id, draft);
+      setAddendum(res.addendum);
+      setDraft(res.addendum);
+      setMaxBytes(res.maxBytes);
+      setSavedMsg("Saved. Applies to the next session you start in this project.");
+      window.setTimeout(() => setSavedMsg(undefined), 4_000);
+    } catch (err) {
+      onError(`Save failed: ${errorCode(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clear = async (): Promise<void> => {
+    if (!confirm(`Clear the system prompt addendum for "${project.name}"?`)) return;
+    setBusy(true);
+    setSavedMsg(undefined);
+    onError(undefined);
+    try {
+      const res = await api.setProjectSystemPrompt(project.id, "");
+      setAddendum(res.addendum);
+      setDraft(res.addendum);
+      setMaxBytes(res.maxBytes);
+      setSavedMsg("Cleared. Applies to the next session you start in this project.");
+      window.setTimeout(() => setSavedMsg(undefined), 4_000);
+    } catch (err) {
+      onError(`Clear failed: ${errorCode(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1 text-xs text-neutral-400">
+        <p>
+          Free-form text appended to the agent's base system prompt for sessions in{" "}
+          <strong className="text-neutral-200">{project.name}</strong>. Use this to layer
+          project-specific behavior on top of pi's defaults — coding conventions, domain context,
+          persona, etc.
+        </p>
+        <p className="text-[11px]">
+          Append-only — the base prompt (which defines the tool-calling protocol) is not editable.
+          Changes apply to the <strong>next session</strong> you start in this project; running
+          sessions keep the prompt they were built with.
+        </p>
+      </div>
+
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        disabled={busy}
+        rows={14}
+        spellCheck={false}
+        placeholder="e.g. This project uses TypeScript strict mode and never uses default exports. Always run `npm run check` before declaring a task complete."
+        className="w-full resize-y rounded border border-neutral-800 bg-neutral-900 px-3 py-2 font-mono text-xs leading-relaxed text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none disabled:opacity-50"
+      />
+
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+        <span className={overBudget ? "text-red-400" : "text-neutral-500"}>
+          {byteLen.toLocaleString()} / {maxBytes.toLocaleString()} bytes
+          {overBudget && " — too long, please trim before saving"}
+        </span>
+        <div className="flex items-center gap-2">
+          {savedMsg !== undefined && <span className="text-green-400">{savedMsg}</span>}
+          {dirty && (
+            <button
+              type="button"
+              onClick={() => setDraft(addendum)}
+              disabled={busy}
+              className="rounded border border-neutral-800 px-3 py-1 text-xs text-neutral-300 hover:border-neutral-600 disabled:opacity-50"
+            >
+              Revert
+            </button>
+          )}
+          {addendum.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void clear()}
+              disabled={busy}
+              className="rounded border border-neutral-800 px-3 py-1 text-xs text-neutral-300 hover:border-red-500 hover:text-red-300 disabled:opacity-50"
+            >
+              Clear
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={busy || overBudget || !dirty}
+            className="rounded bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-900 hover:bg-white disabled:opacity-50"
+          >
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
