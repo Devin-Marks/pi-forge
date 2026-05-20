@@ -256,15 +256,15 @@ function FileDiff({
               // them from showing through during scroll.
               out.push(
                 <Decoration key={`dec-${hunk.content}`}>
-                  <div className="relative flex items-center justify-between gap-2 border-y border-blue-700/30 bg-blue-950/30 py-px leading-none">
-                    <span className="sticky left-0 z-10 bg-blue-950 px-2 py-px text-[9px] uppercase tracking-wider text-blue-400">
+                  <div className="relative flex items-center justify-between gap-2 border-y border-blue-700/30 bg-blue-950/30 py-px leading-none light:border-blue-300 light:bg-blue-50">
+                    <span className="sticky left-0 z-10 bg-blue-950 px-2 py-px text-[9px] uppercase tracking-wider text-blue-400 light:bg-blue-100 light:text-blue-700">
                       Hunk {idx + 1}
                     </span>
                     <button
                       type="button"
                       onClick={() => onHunkAction(idx)}
                       disabled={hunkActionDisabled === true}
-                      className="sticky right-1 z-10 rounded border border-blue-500/60 bg-blue-900 px-1.5 py-px text-[10px] text-blue-100 hover:border-blue-400 hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="sticky right-1 z-10 rounded border border-blue-500/60 bg-blue-900 px-1.5 py-px text-[10px] text-blue-100 hover:border-blue-400 hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50 light:border-blue-500 light:bg-blue-200 light:text-blue-900 light:hover:border-blue-600 light:hover:bg-blue-300"
                     >
                       {hunkActionLabel ?? "Apply hunk"}
                     </button>
@@ -486,17 +486,19 @@ function FallbackDiff({ diff }: { diff: string }) {
 
 function lineClass(line: string): string {
   // Order matters: check `+++` / `---` BEFORE `+` / `-`.
+  // Each branch ships a dark-mode default + a `light:` counterpart so
+  // raw-diff lines remain legible when the user is on the Light theme.
   if (line.startsWith("+++") || line.startsWith("---")) {
     return "text-neutral-500";
   }
   if (line.startsWith("@@")) {
-    return "bg-neutral-900 text-cyan-400";
+    return "bg-neutral-900 text-cyan-400 light:text-cyan-700";
   }
   if (line.startsWith("+")) {
-    return "bg-emerald-950/60 text-emerald-200";
+    return "bg-emerald-950/60 text-emerald-200 light:bg-emerald-50 light:text-emerald-800";
   }
   if (line.startsWith("-")) {
-    return "bg-red-950/60 text-red-200";
+    return "bg-red-950/60 text-red-200 light:bg-red-50 light:text-red-800";
   }
   return "text-neutral-400";
 }

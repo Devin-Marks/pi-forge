@@ -715,7 +715,7 @@ export function App() {
                                   ? "Git"
                                   : "Context"}
                           {t === "git" && gitChangedCount > 0 && (
-                            <span className="rounded bg-amber-900/40 px-1 py-0.5 text-[9px] text-amber-300">
+                            <span className="rounded bg-amber-900/40 px-1 py-0.5 text-[9px] text-amber-300 light:bg-amber-100 light:text-amber-800">
                               {gitChangedCount}
                             </span>
                           )}

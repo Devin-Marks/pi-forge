@@ -280,7 +280,7 @@ export function ChatView({ sessionId }: Props) {
             </div>
           )}
           {exportError !== undefined && (
-            <span className="text-[10px] text-amber-400" role="status">
+            <span className="text-[10px] text-amber-400 light:text-amber-700" role="status">
               Export failed: {exportError}
             </span>
           )}
@@ -299,7 +299,7 @@ export function ChatView({ sessionId }: Props) {
             which meant a long-running streaming session pushed the
             "Reconnecting…" / compaction banners off-screen. */}
         {banner !== undefined && (
-          <div className="border-b border-amber-700/40 bg-amber-900/20 px-6 py-2 text-xs text-amber-200">
+          <div className="border-b border-amber-700/40 bg-amber-900/20 px-6 py-2 text-xs text-amber-200 light:border-amber-300 light:bg-amber-50 light:text-amber-800">
             {banner}
           </div>
         )}
@@ -451,7 +451,7 @@ function QueuedMessages({ queued }: { queued: { steering: string[]; followUp: st
             <span
               className={
                 q.kind === "steer"
-                  ? "shrink-0 rounded bg-amber-900/30 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-amber-300"
+                  ? "shrink-0 rounded bg-amber-900/30 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-amber-300 light:bg-amber-100 light:text-amber-800"
                   : "shrink-0 rounded bg-neutral-800 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-neutral-400"
               }
               title={
@@ -478,7 +478,20 @@ function QueuedMessages({ queued }: { queued: { steering: string[]; followUp: st
  */
 function ActiveToolPlaceholder({ tool }: { tool: ActiveTool | undefined }) {
   if (tool === undefined) {
-    return <div className="text-xs italic text-neutral-500">Thinking…</div>;
+    return (
+      <div
+        className="flex items-center gap-2 text-xs italic text-neutral-500"
+        aria-live="polite"
+        aria-label="Agent is thinking"
+      >
+        <span>Thinking</span>
+        <span className="pi-thinking-dots" aria-hidden="true">
+          <span>.</span>
+          <span>.</span>
+          <span>.</span>
+        </span>
+      </div>
+    );
   }
   return (
     <div className="flex items-center gap-2 text-xs text-neutral-400">
@@ -525,8 +538,8 @@ function ChatEditDiff({
         <span className="flex min-w-0 items-baseline gap-2">
           <span className="text-neutral-500">edit{filename !== undefined ? " " : ""}</span>
           {filename !== undefined && <span className="truncate font-mono">{filename}</span>}
-          <span className="ml-2 text-emerald-400">+{adds}</span>
-          <span className="ml-1 text-red-400">−{dels}</span>
+          <span className="ml-2 text-emerald-400 light:text-emerald-700">+{adds}</span>
+          <span className="ml-1 text-red-400 light:text-red-700">−{dels}</span>
         </span>
         <button
           onClick={(e) => {
@@ -633,7 +646,9 @@ function FileRefBadge({ ref: r }: { ref: FileRef }) {
         onClick={() => isInline && setExpanded((v) => !v)}
         disabled={!isInline}
         className={`flex min-h-11 w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] md:min-h-0 ${
-          isInline ? "text-neutral-200 hover:bg-neutral-800" : "cursor-default text-emerald-200"
+          isInline
+            ? "text-neutral-200 hover:bg-neutral-800"
+            : "cursor-default text-emerald-200 light:text-emerald-800"
         }`}
         title={
           isInline
@@ -648,7 +663,7 @@ function FileRefBadge({ ref: r }: { ref: FileRef }) {
             <ChevronRight size={12} />
           )
         ) : (
-          <AtSign size={12} className="text-emerald-300/80" />
+          <AtSign size={12} className="text-emerald-300/80 light:text-emerald-700" />
         )}
         <FileCode size={12} className={isInline ? "text-neutral-400" : "text-emerald-300/80"} />
         <span className="font-mono">{r.path}</span>
@@ -659,7 +674,11 @@ function FileRefBadge({ ref: r }: { ref: FileRef }) {
               : `${(r.content.length / 1024).toFixed(1)} KB`}
           </span>
         )}
-        {!isInline && <span className="text-[10px] text-emerald-300/70">on demand</span>}
+        {!isInline && (
+          <span className="text-[10px] text-emerald-300/70 light:text-emerald-700/80">
+            on demand
+          </span>
+        )}
       </button>
       {isInline && expanded && (
         <pre className="max-h-72 overflow-auto border-t border-neutral-800 bg-neutral-950 px-3 py-2 font-mono text-[11px] leading-relaxed text-neutral-300">
@@ -1009,7 +1028,7 @@ function ToolCallEntry({
             </span>
           )}
           {isError && (
-            <span className="rounded bg-red-900/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-red-300">
+            <span className="rounded bg-red-900/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-red-300 light:bg-red-100 light:text-red-800">
               error
             </span>
           )}
@@ -1033,8 +1052,8 @@ function ToolCallEntry({
             Output
             {editStats !== undefined && (
               <span className="ml-2 font-mono text-[10px]">
-                <span className="text-emerald-400">+{editStats.adds}</span>{" "}
-                <span className="text-red-400">-{editStats.dels}</span>
+                <span className="text-emerald-400 light:text-emerald-700">+{editStats.adds}</span>{" "}
+                <span className="text-red-400 light:text-red-700">-{editStats.dels}</span>
               </span>
             )}
             {editFn !== undefined && (
@@ -1137,11 +1156,11 @@ function ToolResult({ message }: { message: AgentMessageLike }) {
   // Generic tool result fallback.
   return (
     <details
-      className={`rounded border ${isError ? "border-red-700/40" : "border-neutral-800"} bg-neutral-950 text-xs`}
+      className={`rounded border ${isError ? "border-red-700/40 light:border-red-300" : "border-neutral-800"} bg-neutral-950 text-xs`}
     >
       <summary className="cursor-pointer px-3 py-2 text-neutral-300">
         <span className="text-neutral-500">{toolName}</span>
-        {isError && <span className="ml-2 text-red-400">error</span>}
+        {isError && <span className="ml-2 text-red-400 light:text-red-700">error</span>}
       </summary>
       <pre className="overflow-auto px-3 pb-2 font-mono text-[11px] text-neutral-400">{text}</pre>
     </details>
@@ -1206,13 +1225,18 @@ function SubagentInflightOrResult({
     else if (agent !== undefined) summary = agent;
   }
   return (
-    <div className="overflow-hidden rounded border border-l-2 border-sky-700/50 border-l-sky-400 bg-sky-950/15 text-xs">
+    <div className="overflow-hidden rounded border border-l-2 border-sky-700/50 border-l-sky-400 bg-sky-950/15 text-xs light:border-sky-300 light:border-l-sky-600 light:bg-sky-50">
       <div className="flex items-center justify-between gap-2 px-2.5 py-1.5">
         <div className="flex min-w-0 items-center gap-1.5">
-          <Users size={11} className="shrink-0 text-sky-300" />
-          <span className="truncate font-medium text-sky-100">Sub-agent running…</span>
+          <Users size={11} className="shrink-0 text-sky-300 light:text-sky-700" />
+          <span className="truncate font-medium text-sky-100 light:text-sky-900">
+            Sub-agent running…
+          </span>
           {summary !== undefined && (
-            <span className="ml-1 truncate font-mono text-[11px] text-sky-200/70" title={summary}>
+            <span
+              className="ml-1 truncate font-mono text-[11px] text-sky-200/70 light:text-sky-800/80"
+              title={summary}
+            >
               {summary}
             </span>
           )}
@@ -1292,25 +1316,25 @@ function SubagentResultCard({
   // intact (so the input + output sections are still inspectable
   // when the call errored).
   const borderColors = isError
-    ? "border-red-700/50 border-l-red-400 bg-red-950/15"
-    : "border-sky-700/50 border-l-sky-400 bg-sky-950/15";
+    ? "border-red-700/50 border-l-red-400 bg-red-950/15 light:border-red-300 light:border-l-red-600 light:bg-red-50"
+    : "border-sky-700/50 border-l-sky-400 bg-sky-950/15 light:border-sky-300 light:border-l-sky-600 light:bg-sky-50";
 
   return (
     <div className={`overflow-hidden rounded border border-l-2 ${borderColors} text-xs`}>
       <div className="flex items-center justify-between gap-2 px-2.5 py-1.5">
         <div className="flex min-w-0 items-center gap-1.5">
-          <Users size={11} className="shrink-0 text-sky-300" />
-          <span className="truncate font-medium text-sky-100">{headline}</span>
+          <Users size={11} className="shrink-0 text-sky-300 light:text-sky-700" />
+          <span className="truncate font-medium text-sky-100 light:text-sky-900">{headline}</span>
           {parsed.context !== undefined && (
             <span
-              className="shrink-0 rounded bg-sky-900/40 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wider text-sky-200"
+              className="shrink-0 rounded bg-sky-900/40 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wider text-sky-200 light:bg-sky-100 light:text-sky-800"
               title={parsed.context === "fork" ? "Forked from parent context" : "Fresh context"}
             >
               {parsed.context}
             </span>
           )}
           {isError && (
-            <span className="shrink-0 rounded bg-red-900/40 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wider text-red-200">
+            <span className="shrink-0 rounded bg-red-900/40 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wider text-red-200 light:bg-red-100 light:text-red-800">
               error
             </span>
           )}
@@ -1318,7 +1342,7 @@ function SubagentResultCard({
         {parsed.results.length === 1 && parsed.results[0]!.sessionFile !== undefined && (
           <button
             onClick={() => openByFile(parsed.results[0]!.sessionFile)}
-            className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded border border-sky-700/60 px-2 py-1 text-[12px] font-medium text-sky-200 hover:border-sky-500 hover:bg-sky-900/30 hover:text-sky-100 md:min-h-0 md:px-1.5 md:py-0.5 md:text-[10px]"
+            className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded border border-sky-700/60 px-2 py-1 text-[12px] font-medium text-sky-200 hover:border-sky-500 hover:bg-sky-900/30 hover:text-sky-100 light:border-sky-400 light:text-sky-800 light:hover:border-sky-600 light:hover:bg-sky-100 light:hover:text-sky-900 md:min-h-0 md:px-1.5 md:py-0.5 md:text-[10px]"
             title={`Open sub-agent session — ${parsed.results[0]!.sessionFile}`}
           >
             <ExternalLink size={12} />
@@ -1383,13 +1407,17 @@ function SubagentResultRow({
   const failed = result.exitCode !== 0;
   return (
     <div
-      className={`flex items-center justify-between gap-2 rounded border ${failed ? "border-red-700/40" : "border-sky-900/40"} bg-neutral-950/60 px-2 py-1.5`}
+      className={`flex items-center justify-between gap-2 rounded border ${failed ? "border-red-700/40 light:border-red-300" : "border-sky-900/40 light:border-sky-300"} bg-neutral-950/60 px-2 py-1.5`}
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span className="font-mono text-[11px] font-medium text-sky-200">{result.agent}</span>
+          <span className="font-mono text-[11px] font-medium text-sky-200 light:text-sky-800">
+            {result.agent}
+          </span>
           {failed && (
-            <span className="text-[10px] font-medium text-red-400">exit {result.exitCode}</span>
+            <span className="text-[10px] font-medium text-red-400 light:text-red-700">
+              exit {result.exitCode}
+            </span>
           )}
         </div>
         {result.task.length > 0 && (
@@ -1401,7 +1429,7 @@ function SubagentResultRow({
       {result.sessionFile !== undefined && (
         <button
           onClick={() => onOpenFile(result.sessionFile)}
-          className="inline-flex shrink-0 items-center gap-1 rounded border border-sky-700/60 px-1.5 py-0.5 text-[10px] font-medium text-sky-200 hover:border-sky-500 hover:bg-sky-900/30 hover:text-sky-100"
+          className="inline-flex shrink-0 items-center gap-1 rounded border border-sky-700/60 px-1.5 py-0.5 text-[10px] font-medium text-sky-200 hover:border-sky-500 hover:bg-sky-900/30 hover:text-sky-100 light:border-sky-400 light:text-sky-800 light:hover:border-sky-600 light:hover:bg-sky-100 light:hover:text-sky-900"
           title={result.sessionFile}
         >
           <ExternalLink size={10} />
@@ -1436,19 +1464,21 @@ function BashExecution({ message }: { message: AgentMessageLike }) {
             </span>
           )}
           {cancelled && (
-            <span className="rounded bg-amber-900/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-amber-300">
+            <span className="rounded bg-amber-900/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-amber-300 light:bg-amber-100 light:text-amber-800">
               timed out
             </span>
           )}
           {truncated && !cancelled && (
-            <span className="rounded bg-amber-900/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-amber-300">
+            <span className="rounded bg-amber-900/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-amber-300 light:bg-amber-100 light:text-amber-800">
               truncated
             </span>
           )}
           {exitCode !== undefined && (
             <span
               className={`rounded px-1.5 py-0.5 text-[10px] font-mono ${
-                exitCode === 0 ? "bg-emerald-900/30 text-emerald-300" : "bg-red-900/30 text-red-300"
+                exitCode === 0
+                  ? "bg-emerald-900/30 text-emerald-300 light:bg-emerald-100 light:text-emerald-800"
+                  : "bg-red-900/30 text-red-300 light:bg-red-100 light:text-red-800"
               }`}
               title={exitCode === 0 ? "exit 0" : `exit ${String(exitCode)}`}
             >

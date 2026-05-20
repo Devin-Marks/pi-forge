@@ -1,5 +1,17 @@
 @import "tailwindcss";
 
+/* Custom Tailwind variant: `light:` applies when the active theme is
+   the Light theme (data-theme="light" on <html>). The dark themes
+   remap only the neutral scale via CSS vars (see the `[data-theme]`
+   blocks below), but semantic-colored utilities like `text-red-300`,
+   `bg-sky-900/40`, `text-blue-400` are raw Tailwind palette values
+   that don't change between themes — so on a light background they
+   collapse into low-contrast washes. Use `light:` to attach a
+   higher-contrast counterpart, e.g.
+   `text-red-300 light:text-red-700` or
+   `bg-sky-900/40 light:bg-sky-100`. */
+@custom-variant light (&:where([data-theme="light"] *));
+
 /* ----------------------------- themes -----------------------------
    Tailwind v4 emits `bg-neutral-950` etc. as
    `background-color: var(--color-neutral-950)`. We retheme the app
@@ -198,6 +210,95 @@
   color: #a3a3a3;
 }
 
+/* Light-mode overrides for the diff renderer. The dark-mode defaults
+   above are hardcoded hex values (not `var(--color-neutral-*)`)
+   because they have to compose with react-diff-view's own internal
+   variable scheme, and the green/red diff swatches don't belong on
+   the neutral scale. To support light mode we re-declare the same
+   variables and direct properties under the light-theme scope so
+   text stays readable on white, the sticky gutter blends into the
+   page background, and added/deleted line highlights use light
+   tinted backgrounds instead of near-black dark ones. */
+[data-theme="light"] .pi-diff-block {
+  --diff-text-color: #0a0a0a;
+  --diff-selection-background-color: #cbd5e1;
+  --diff-gutter-insert-background-color: #bbf7d0;
+  --diff-gutter-insert-text-color: #14532d;
+  --diff-gutter-delete-background-color: #fecaca;
+  --diff-gutter-delete-text-color: #7f1d1d;
+  --diff-code-insert-background-color: #dcfce7;
+  --diff-code-insert-text-color: #14532d;
+  --diff-code-insert-edit-background-color: #86efac;
+  --diff-code-insert-edit-text-color: #052e16;
+  --diff-code-delete-background-color: #fee2e2;
+  --diff-code-delete-text-color: #7f1d1d;
+  --diff-code-delete-edit-background-color: #fca5a5;
+  --diff-code-delete-edit-text-color: #450a0a;
+  --diff-omit-gutter-line-color: #cbd5e1;
+}
+[data-theme="light"] .pi-diff-block .diff {
+  color: #0a0a0a;
+}
+[data-theme="light"] .pi-diff-block .diff-gutter {
+  color: #525252;
+  background: #ffffff;
+}
+[data-theme="light"] .pi-diff-block .diff-decoration {
+  background: #f3f4f6;
+  color: #525252;
+}
+/* Syntax token colors re-tuned for white backgrounds — keep the
+   hue family (orange/green/cyan/pink/indigo/yellow) from dark mode
+   for muscle-memory continuity, drop the lightness so AA contrast
+   holds against the light tinted diff backgrounds. */
+[data-theme="light"] .pi-diff-block .token.comment,
+[data-theme="light"] .pi-diff-block .token.prolog,
+[data-theme="light"] .pi-diff-block .token.doctype,
+[data-theme="light"] .pi-diff-block .token.cdata {
+  color: #6b7280;
+}
+[data-theme="light"] .pi-diff-block .token.punctuation {
+  color: #475569;
+}
+[data-theme="light"] .pi-diff-block .token.property,
+[data-theme="light"] .pi-diff-block .token.tag,
+[data-theme="light"] .pi-diff-block .token.boolean,
+[data-theme="light"] .pi-diff-block .token.number,
+[data-theme="light"] .pi-diff-block .token.constant,
+[data-theme="light"] .pi-diff-block .token.symbol,
+[data-theme="light"] .pi-diff-block .token.deleted {
+  color: #b45309;
+}
+[data-theme="light"] .pi-diff-block .token.selector,
+[data-theme="light"] .pi-diff-block .token.attr-name,
+[data-theme="light"] .pi-diff-block .token.string,
+[data-theme="light"] .pi-diff-block .token.char,
+[data-theme="light"] .pi-diff-block .token.builtin,
+[data-theme="light"] .pi-diff-block .token.inserted {
+  color: #15803d;
+}
+[data-theme="light"] .pi-diff-block .token.operator,
+[data-theme="light"] .pi-diff-block .token.entity,
+[data-theme="light"] .pi-diff-block .token.url,
+[data-theme="light"] .pi-diff-block .language-css .token.string,
+[data-theme="light"] .pi-diff-block .style .token.string {
+  color: #0e7490;
+}
+[data-theme="light"] .pi-diff-block .token.atrule,
+[data-theme="light"] .pi-diff-block .token.attr-value,
+[data-theme="light"] .pi-diff-block .token.keyword {
+  color: #be185d;
+}
+[data-theme="light"] .pi-diff-block .token.function,
+[data-theme="light"] .pi-diff-block .token.class-name {
+  color: #4338ca;
+}
+[data-theme="light"] .pi-diff-block .token.regex,
+[data-theme="light"] .pi-diff-block .token.important,
+[data-theme="light"] .pi-diff-block .token.variable {
+  color: #a16207;
+}
+
 /* Single-column gutter (UNIFIED ONLY). react-diff-view's unified
    mode renders TWO `<col class="diff-gutter-col">` elements + two
    `<td.diff-gutter>` per row (old + new line number). Our
@@ -305,4 +406,56 @@
      the bubble instead of pushing the selection rectangle out past
      the right edge. */
   overflow-wrap: anywhere;
+}
+
+/* ----------------------------- thinking indicator -----------------------------
+   Three-dot ellipsis with staggered opacity pulse, used by the chat
+   "Thinking…" placeholder while the agent is busy. Independent of
+   Tailwind's `animate-pulse` because we want each dot offset by 200ms
+   so the eye reads it as motion, not a synchronized fade. Keeps the
+   user oriented that the stream is alive vs. silently disconnected. */
+@keyframes pi-thinking-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.2;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+.pi-thinking-dots {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.15em;
+  margin-left: 0.25em;
+}
+.pi-thinking-dots > span {
+  animation: pi-thinking-dot 1.4s infinite ease-in-out both;
+}
+.pi-thinking-dots > span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.pi-thinking-dots > span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pi-thinking-dots > span {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* ----------------------------- logo recolor -----------------------------
+   The app logo at `/icons/icon.svg` is a pure-white-on-transparent
+   shape, picked to read against the default dark chrome. In light
+   mode it disappears against the white page surface. Inverting the
+   image with `filter: invert(1)` turns pure-white pixels into pure
+   black, which is exactly the black variant we need for the light
+   theme. Avoids shipping a parallel asset file or threading a
+   theme-aware `src` swap through every `<img>` usage. Scoped to
+   the existing icon src attribute so it can't accidentally invert
+   any other image. */
+[data-theme="light"] img[src="/icons/icon.svg"] {
+  filter: invert(1);
 }

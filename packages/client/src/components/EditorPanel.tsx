@@ -227,7 +227,9 @@ function Tabs({
           const baseClass = active
             ? "bg-neutral-950 text-neutral-100"
             : "text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200";
-          const conflictClass = extChanged ? "bg-amber-900/30 text-amber-200" : "";
+          const conflictClass = extChanged
+            ? "bg-amber-900/30 text-amber-200 light:bg-amber-100 light:text-amber-800"
+            : "";
           return (
             <div
               key={f.tabId}
@@ -240,7 +242,10 @@ function Tabs({
             >
               <button onClick={() => onActivate(f.path)} className="truncate">
                 {extChanged ? (
-                  <AlertTriangle size={11} className="mr-1 inline text-amber-400" />
+                  <AlertTriangle
+                    size={11}
+                    className="mr-1 inline text-amber-400 light:text-amber-700"
+                  />
                 ) : f.dirty ? (
                   // Filled 10-px circle (was a 12-px bullet character that
                   // mostly disappeared into the surrounding text). aria-
@@ -278,15 +283,17 @@ function ExternalChangeBanner({
   onDiscard: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-amber-700/40 bg-amber-900/20 px-4 py-1.5 text-xs text-amber-200">
+    <div className="flex items-center justify-between gap-3 border-b border-amber-700/40 bg-amber-900/20 px-4 py-1.5 text-xs text-amber-200 light:border-amber-300 light:bg-amber-50 light:text-amber-800">
       <span>
         File changed externally — local edits in this tab are stale. Reload from disk?
-        <span className="ml-2 font-mono text-[10px] text-amber-400/70">{path}</span>
+        <span className="ml-2 font-mono text-[10px] text-amber-400/70 light:text-amber-700/80">
+          {path}
+        </span>
       </span>
       <div className="flex gap-1">
         <button
           onClick={onReload}
-          className="rounded border border-amber-700/50 px-2 py-0.5 hover:bg-amber-900/30"
+          className="rounded border border-amber-700/50 px-2 py-0.5 hover:bg-amber-900/30 light:border-amber-400 light:hover:bg-amber-100"
         >
           Reload
         </button>
@@ -323,16 +330,16 @@ function StatusBar({
   // editing or retry. Cleared on the next successful save.
   if (saveError !== undefined) {
     label = `Save failed (${saveError}) — Cmd/Ctrl+S or Save to retry`;
-    className = "text-rose-400";
+    className = "text-rose-400 light:text-rose-700";
   } else if (saving) {
     label = "Saving…";
   } else if (dirty) {
     label = "Unsaved changes";
-    className = "text-amber-400";
+    className = "text-amber-400 light:text-amber-700";
   } else if (savedAt !== undefined) {
     const t = new Date(savedAt);
     label = `Saved ${t.toLocaleTimeString()}`;
-    className = "text-emerald-500";
+    className = "text-emerald-500 light:text-emerald-700";
   } else {
     label = "Up to date";
   }

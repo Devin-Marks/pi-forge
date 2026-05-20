@@ -184,7 +184,9 @@ export function GlobalSearchBar() {
     return (
       <>
         {before}
-        <mark className="rounded bg-amber-300/30 text-amber-100">{hit}</mark>
+        <mark className="rounded bg-amber-300/30 text-amber-100 light:bg-amber-200 light:text-amber-900">
+          {hit}
+        </mark>
         {after}
       </>
     );
@@ -241,7 +243,7 @@ export function GlobalSearchBar() {
         >
           {loading && <div className="px-3 py-2 text-xs text-neutral-400">Searching…</div>}
           {!loading && error !== undefined && (
-            <div className="px-3 py-2 text-xs text-amber-400">{error}</div>
+            <div className="px-3 py-2 text-xs text-amber-400 light:text-amber-700">{error}</div>
           )}
           {!loading && error === undefined && flatTargets.length === 0 && (
             <div className="px-3 py-2 text-xs text-neutral-500">No matches.</div>

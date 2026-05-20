@@ -450,13 +450,13 @@ export function FileBrowserPanel() {
         onChange={(e) => void onUploadInputChange(e)}
       />
       {uploadStatus !== undefined && (
-        <div className="flex items-center gap-1.5 border-b border-emerald-700/40 bg-emerald-900/20 px-3 py-1.5 text-[11px] text-emerald-200">
+        <div className="flex items-center gap-1.5 border-b border-emerald-700/40 bg-emerald-900/20 px-3 py-1.5 text-[11px] text-emerald-200 light:border-emerald-300 light:bg-emerald-50 light:text-emerald-800">
           {!uploadStatus.startsWith("Uploaded") && <Loader2 size={11} className="animate-spin" />}
           <span>{uploadStatus}</span>
         </div>
       )}
       {error !== undefined && (
-        <div className="border-b border-red-700/40 bg-red-900/20 px-3 py-1.5 text-[11px] text-red-300">
+        <div className="border-b border-red-700/40 bg-red-900/20 px-3 py-1.5 text-[11px] text-red-300 light:border-red-300 light:bg-red-50 light:text-red-700">
           {error}
         </div>
       )}
@@ -469,7 +469,7 @@ export function FileBrowserPanel() {
           <div className="flex gap-1">
             <button
               onClick={() => setDialog({ kind: "deleteMany", paths: Array.from(selectedPaths) })}
-              className="rounded border border-red-700/50 px-2 py-0.5 text-red-300 hover:bg-red-900/20"
+              className="rounded border border-red-700/50 px-2 py-0.5 text-red-300 hover:bg-red-900/20 light:border-red-400 light:text-red-700 light:hover:bg-red-50"
             >
               Delete selected
             </button>
@@ -769,7 +769,7 @@ function ContextMenuItem(props: {
       title={props.title}
       className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${
         danger
-          ? "text-red-300 hover:bg-red-900/30 hover:text-red-100"
+          ? "text-red-300 hover:bg-red-900/30 hover:text-red-100 light:text-red-700 light:hover:bg-red-100 light:hover:text-red-900"
           : "text-neutral-200 hover:bg-neutral-800"
       }`}
     >
@@ -1024,7 +1024,7 @@ function Tree(props: TreeProps) {
                 e.stopPropagation();
                 props.onDelete(absPath, node.name, isDir);
               }}
-              className="rounded p-0.5 text-neutral-500 hover:bg-red-900/30 hover:text-red-300"
+              className="rounded p-0.5 text-neutral-500 hover:bg-red-900/30 hover:text-red-300 light:hover:bg-red-100 light:hover:text-red-700"
               title="Delete"
             >
               <Trash2 size={11} />
