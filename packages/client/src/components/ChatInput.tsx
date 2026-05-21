@@ -13,6 +13,7 @@ import { EMPTY_MESSAGES, useSessionStore, type AgentMessageLike } from "../store
 import { useActiveProject } from "../store/project-store";
 import { useUiConfigStore } from "../store/ui-config-store";
 import { useUiStore } from "../store/ui-store";
+import { useComposerStore } from "../store/composer-store";
 
 /**
  * Pull the user's prior prompts out of the session message history,
@@ -422,6 +423,37 @@ export function ChatInput({ sessionId }: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id, promptsRefreshTrigger]);
+
+  // Quick-action prompt chips with `mode: "insert"` (and the "Use as
+  // context" button on completed run cards) bridge through
+  // composer-store: they set a `pendingInsert` keyed to a sessionId;
+  // the matching ChatInput consumes it on mount/effect, appending to
+  // the live textarea value and focusing. Scoped by sessionId so a
+  // stale insert from a now-hidden session doesn't land in the
+  // currently-mounted one.
+  const pendingInsert = useComposerStore((s) => s.pendingInsert);
+  const consumePendingInsert = useComposerStore((s) => s.consumePendingInsert);
+  useEffect(() => {
+    if (pendingInsert === undefined) return;
+    if (pendingInsert.sessionId !== sessionId) return;
+    setText((cur) => {
+      // If the current draft is non-empty and doesn't end on a newline,
+      // separate the inserted text with a blank line so the two
+      // sections don't run together.
+      if (cur.length === 0) return pendingInsert.text;
+      const sep = cur.endsWith("\n") ? "" : "\n\n";
+      return cur + sep + pendingInsert.text;
+    });
+    consumePendingInsert();
+    // Defer focus to the next tick so the textarea has the new value
+    // before the cursor moves to its end.
+    setTimeout(() => {
+      const el = textareaRef.current;
+      if (el === null) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }, 0);
+  }, [pendingInsert, sessionId, consumePendingInsert]);
 
   // Bang-prefix mode for the visual treatment around the textarea.
   // `!!` runs bash local-only (output stays out of LLM context); `!`

@@ -29,6 +29,9 @@ import { ChatMarkdown } from "./ChatMarkdown";
 import { CompactionCard } from "./CompactionCard";
 import { DiffBlock } from "./DiffBlock";
 import { SessionTreePanel } from "./SessionTreePanel";
+import { QuickActionsMenu } from "./QuickActionsMenu";
+import { QuickActionRunCard } from "./QuickActionRunCard";
+import { useQuickActionRunsStore } from "../store/quick-actions-store";
 import { parseSubagentDetails, type SubagentResult } from "../lib/subagent-parser";
 
 /**
@@ -99,6 +102,15 @@ export function ChatView({ sessionId }: Props) {
   // map and reading by key would re-run on every map mutation).
   const pendingScrollTarget = useSessionStore((s) => s.pendingScrollByMessageIndex[sessionId]);
   const consumePendingScroll = useSessionStore((s) => s.consumePendingScroll);
+  // Quick-action run cards for THIS session — empty array when none.
+  // The store mutation triggers a re-render which the sticky-bottom
+  // effect picks up automatically, so a new run appearing at the
+  // bottom scrolls into view the same way a new message would.
+  const allRuns = useQuickActionRunsStore((s) => s.runs);
+  const sessionRuns = useMemo(
+    () => allRuns.filter((r) => r.sessionId === sessionId),
+    [allRuns, sessionId],
+  );
 
   const [chatViewType, setChatViewType] = useState<ChatViewType>(readChatViewType);
   const setAndPersistChatViewType = (next: ChatViewType): void => {
@@ -243,55 +255,67 @@ export function ChatView({ sessionId }: Props) {
         {/* Chat-level toolbar. Per-session controls (export, session
             tree, etc.) — pinned above the scroll container so the
             affordances stay reachable from any scroll position. */}
-        <div className="flex items-center justify-end gap-1 border-b border-neutral-800 bg-neutral-900/30 px-3 py-1">
-          {!isMobile && (
-            <div ref={exportMenuRef} className="relative">
-              <button
-                onClick={() => setExportMenuOpen((v) => !v)}
-                aria-haspopup="menu"
-                aria-expanded={exportMenuOpen}
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
-                title="Export this conversation"
-              >
-                <Download size={11} />
-                Export
-              </button>
-              {exportMenuOpen && (
-                <div
-                  role="menu"
-                  className="absolute right-0 top-full z-30 mt-1 min-w-[12rem] rounded-md border border-neutral-700 bg-neutral-900 py-1 shadow-xl"
+        <div className="flex items-center justify-between gap-1 border-b border-neutral-800 bg-neutral-900/30 px-3 py-1">
+          {/* Left cluster — quick-action chips. Empty when no actions
+              are defined, in minimal mode with only command chips,
+              or while the store is still loading. The container is
+              always rendered so the right cluster stays anchored
+              right via flex justify-between. */}
+          <div className="flex items-center gap-1">
+            {project !== undefined && (
+              <QuickActionsMenu sessionId={sessionId} projectId={project.id} />
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            {!isMobile && (
+              <div ref={exportMenuRef} className="relative">
+                <button
+                  onClick={() => setExportMenuOpen((v) => !v)}
+                  aria-haspopup="menu"
+                  aria-expanded={exportMenuOpen}
+                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+                  title="Export this conversation"
                 >
-                  <button
-                    role="menuitem"
-                    onClick={() => void doExport("markdown")}
-                    className="block w-full px-3 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-800"
+                  <Download size={11} />
+                  Export
+                </button>
+                {exportMenuOpen && (
+                  <div
+                    role="menu"
+                    className="absolute right-0 top-full z-30 mt-1 min-w-[12rem] rounded-md border border-neutral-700 bg-neutral-900 py-1 shadow-xl"
                   >
-                    Markdown <span className="text-neutral-500">(.md)</span>
-                  </button>
-                  <button
-                    role="menuitem"
-                    onClick={() => void doExport("jsonl")}
-                    className="block w-full px-3 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-800"
-                  >
-                    Raw JSONL <span className="text-neutral-500">(.jsonl)</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-          {exportError !== undefined && (
-            <span className="text-[10px] text-amber-400 light:text-amber-700" role="status">
-              Export failed: {exportError}
-            </span>
-          )}
-          <button
-            onClick={() => setTreeOpen(true)}
-            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
-            title="Open session tree (navigate / fork from any prior point)"
-          >
-            <GitBranch size={11} />
-            Tree
-          </button>
+                    <button
+                      role="menuitem"
+                      onClick={() => void doExport("markdown")}
+                      className="block w-full px-3 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-800"
+                    >
+                      Markdown <span className="text-neutral-500">(.md)</span>
+                    </button>
+                    <button
+                      role="menuitem"
+                      onClick={() => void doExport("jsonl")}
+                      className="block w-full px-3 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-800"
+                    >
+                      Raw JSONL <span className="text-neutral-500">(.jsonl)</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            {exportError !== undefined && (
+              <span className="text-[10px] text-amber-400 light:text-amber-700" role="status">
+                Export failed: {exportError}
+              </span>
+            )}
+            <button
+              onClick={() => setTreeOpen(true)}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+              title="Open session tree (navigate / fork from any prior point)"
+            >
+              <GitBranch size={11} />
+              Tree
+            </button>
+          </div>
         </div>
         {/* Banner sits ABOVE the scroll container so it stays pinned to the top
             of the chat view regardless of how far the user has scrolled into a
@@ -406,6 +430,9 @@ export function ChatView({ sessionId }: Props) {
               <ActiveToolPlaceholder tool={activeTool} />
             )}
             {queued !== undefined && <QueuedMessages queued={queued} />}
+            {sessionRuns.map((run) => (
+              <QuickActionRunCard key={run.runId} run={run} />
+            ))}
           </div>
         </div>
       </div>

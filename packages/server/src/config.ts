@@ -243,6 +243,16 @@ export const config = Object.freeze({
    */
   systemPromptOverridesFile: join(FORGE_DATA_DIR, "system-prompt-overrides.json"),
   /**
+   * Path to the forge-private quick-actions registry. One flat JSON
+   * array of "chips" the user can click from the chat-view toolbar to
+   * fire either a shell command (run in the current project's cwd) or
+   * a templated prompt (sent to / inserted into the active session).
+   * Global (not per-project) by design — chips are the operator's
+   * personal toolbox, same install-private rationale as the other
+   * forge-owned files.
+   */
+  quickActionsFile: join(FORGE_DATA_DIR, "quick-actions.json"),
+  /**
    * Whether `/api/docs` (Swagger UI + OpenAPI JSON spec) is reachable.
    * Defaults to true so Docker / production deploys keep working without
    * extra config (the README quickstart documents `/api/docs`). When
