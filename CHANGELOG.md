@@ -15,6 +15,85 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Added
+
+- **Per-project system prompt addendum.** New Settings → System
+  Prompt tab lets each project store a free-form text block that
+  gets appended to the agent's base system prompt for every
+  session created in that project. Append-only (pi's base prompt
+  defines the tool-calling protocol; replacing it would break
+  tool use) via pi's `appendSystemPrompt` extension hook. Stored
+  per-project at `${FORGE_DATA_DIR}/system-prompt-overrides.json`
+  (mode 0600, atomic write, 20 KB cap). Applies on the next
+  session created in the project; running sessions keep the
+  prompt they were built with. Cascade-deletes when the project
+  is removed. (#129)
+- **Stdio (subprocess) MCP servers.** Adds support for stdio MCP
+  alongside the existing remote (HTTP/SSE) transports. Most
+  official MCP servers (`server-filesystem`, `server-everything`,
+  `server-memory`, `server-github`, etc.) are stdio-only; this
+  closes that gap. Server kind is discriminated by which field is
+  set — `url` ↦ remote, `command` ↦ stdio — matching the Claude
+  Desktop / pi-mcp-adapter convention so existing `.mcp.json`
+  files work unchanged. Env-passthrough preserves the MCP SDK's
+  safe default: the subprocess sees `getDefaultEnvironment() ∪
+  cfg.env`, never the pi-forge process env unless explicitly
+  listed. Env values are secret-redacted on the GET path with
+  the same `***REDACTED***` sentinel round-trip as remote
+  headers. (#131)
+- **Per-project stdio MCP trust gate.** Project-scoped stdio
+  entries (declared in `<projectPath>/.mcp.json`) are gated
+  behind a per-project trust decision stored at
+  `${FORGE_DATA_DIR}/mcp-stdio-trust.json`. Until the operator
+  grants trust via Settings → MCP, the entry sits in
+  `trust_required` state and is not spawned. Global stdio entries
+  (operator wrote those themselves) and remote project entries
+  bypass the gate. Threat model: a hostile repo's `.mcp.json`
+  shouldn't get free subprocess spawn on `git clone` + open.
+  Trust persists per-project, indefinite; revoke from Settings
+  at any time. (#131)
+
+### Fixed
+
+- **Thinking indicator now animates.** The chat "Thinking…"
+  placeholder was a static italic string with no motion, leaving
+  users wondering whether the SSE stream had silently dropped.
+  Now renders three opacity-pulsed dots staggered 200 ms apart so
+  the eye reads it as active. Honors `prefers-reduced-motion`;
+  `aria-live="polite"` announces the state to screen readers.
+  (#130)
+- **Light-mode contrast pass across semantic-colored UI.** The
+  existing `data-theme` scheme only remapped the neutral scale;
+  semantic colors (red errors, sky subagent cards, blue links,
+  amber warnings, emerald success, etc.) stayed as raw Tailwind
+  palette values and collapsed into low-contrast washes on
+  white. Adds a Tailwind `light:` custom-variant scoped to
+  `[data-theme="light"]` and threads `light:` modifiers across
+  every colored element: error banners + buttons, subagent
+  cards + Open buttons, blue links, DiffBlock hunk-staging row,
+  status badges (Skills / Prompts / Tools / Providers),
+  compaction card, queue badges, search highlights, git
+  changed-count badge, provider settings model list, terminal
+  pane "New" button, role badges, and the raw-diff line classes.
+  Also: `[data-theme="light"] .pi-diff-block { ... }` block
+  re-declares the diff renderer's hardcoded dark colors (sticky
+  gutter background, text color, add/delete tints, 8 syntax-
+  token color families); ChatMarkdown code blocks swap Prism
+  `vsDark` → `vsLight` based on the active theme; app logo at
+  `/icons/icon.svg` is `filter: invert(1)`'d in light mode for a
+  pure-black variant without shipping a parallel asset. (#130)
+
+### Changed
+
+- **Ignored `.claude/`** to keep Claude Code harness state out of
+  version control (auto-created worktrees, transcripts, etc.).
+  (#129)
+- **Routine dependency updates.** Bumped `lucide-react`,
+  `@types/node`, `typescript-eslint`, `@vitejs/plugin-react`,
+  `@codemirror/legacy-modes`, `katex`, `protobufjs`, `tsx`,
+  `ws`, and `vite` to their latest minor / patch versions.
+  (#121–#128, #132, #133)
+
 ## [1.2.2] — 2026-05-11
 
 ### Fixed
