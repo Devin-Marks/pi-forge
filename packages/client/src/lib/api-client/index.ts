@@ -11,6 +11,9 @@ import {
   type McpServersResponse,
   type McpSettingsResponse,
   type McpToolSummary,
+  type QuickAction,
+  type QuickActionsResponse,
+  type QuickActionRunResult,
   type Project,
   type BrowseEntry,
   type BrowseResponse,
@@ -534,6 +537,44 @@ function vMcpDelete(value: unknown, status: number): { removed: boolean } {
     fail(status, "expected { removed: boolean }");
   }
   return { removed: value.removed };
+}
+
+function vQuickAction(value: unknown, status: number): QuickAction {
+  if (!isObject(value) || typeof value.id !== "string" || typeof value.name !== "string") {
+    fail(status, "expected QuickAction shape");
+  }
+  return value as unknown as QuickAction;
+}
+
+function vQuickActions(value: unknown, status: number): QuickActionsResponse {
+  if (!isObject(value) || !Array.isArray(value.actions)) {
+    fail(status, "expected { actions: [...] }");
+  }
+  return { actions: value.actions as QuickAction[] };
+}
+
+function vQuickActionRunResult(value: unknown, status: number): QuickActionRunResult {
+  if (
+    !isObject(value) ||
+    typeof value.success !== "boolean" ||
+    typeof value.stdout !== "string" ||
+    typeof value.stderr !== "string" ||
+    typeof value.durationMs !== "number" ||
+    typeof value.timedOut !== "boolean" ||
+    typeof value.truncated !== "boolean"
+  ) {
+    fail(status, "expected QuickActionRunResult shape");
+  }
+  const exitCode = value.exitCode;
+  return {
+    success: value.success,
+    exitCode: typeof exitCode === "number" ? exitCode : null,
+    stdout: value.stdout,
+    stderr: value.stderr,
+    durationMs: value.durationMs,
+    timedOut: value.timedOut,
+    truncated: value.truncated,
+  };
 }
 
 function vAuthSummary(value: unknown, status: number): AuthSummary {
@@ -1418,6 +1459,23 @@ export const api = {
       },
       { method: "DELETE" },
     ),
+  // ---------------- quick actions ----------------
+  listQuickActions: () => request("/api/v1/quick-actions", vQuickActions),
+  createQuickAction: (body: Omit<QuickAction, "id">) =>
+    request("/api/v1/quick-actions", vQuickAction, { method: "POST", body }),
+  updateQuickAction: (id: string, body: Omit<QuickAction, "id">) =>
+    request(`/api/v1/quick-actions/${encodeURIComponent(id)}`, vQuickAction, {
+      method: "PUT",
+      body,
+    }),
+  deleteQuickAction: (id: string) =>
+    request(`/api/v1/quick-actions/${encodeURIComponent(id)}`, vVoid, { method: "DELETE" }),
+  runQuickAction: (id: string, projectId: string) =>
+    request(`/api/v1/quick-actions/${encodeURIComponent(id)}/run`, vQuickActionRunResult, {
+      method: "POST",
+      body: { projectId },
+    }),
+
   listSkills: (projectId: string) =>
     request(
       `/api/v1/config/skills?projectId=${encodeURIComponent(projectId)}`,

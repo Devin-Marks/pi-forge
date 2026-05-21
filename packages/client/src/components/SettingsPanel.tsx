@@ -17,6 +17,7 @@ import { useActiveProject, useProjectStore } from "../store/project-store";
 import { useUiConfigStore } from "../store/ui-config-store";
 import { useUiStore } from "../store/ui-store";
 import { EMPTY_STATUS, useMcpStore } from "../store/mcp-store";
+import { useQuickActionsStore } from "../store/quick-actions-store";
 import { THEME_DEFS, useThemeStore, type ThemeId } from "../lib/theme";
 import { getStoredToken } from "../lib/auth-client";
 import { useAuthStore } from "../store/auth-store";
@@ -29,6 +30,7 @@ type Tab =
   | "skills"
   | "prompts"
   | "systemPrompt"
+  | "quickActions"
   | "appearance"
   | "backup"
   | "general";
@@ -80,6 +82,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
             "prompts",
             "systemPrompt",
             "tools",
+            "quickActions",
             "appearance",
             "backup",
             "general",
@@ -92,6 +95,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
             "skills",
             "prompts",
             "systemPrompt",
+            "quickActions",
             "appearance",
             "backup",
             "general",
@@ -155,11 +159,13 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
                             ? "Prompts"
                             : t === "systemPrompt"
                               ? "System Prompt"
-                              : t === "appearance"
-                                ? "Appearance"
-                                : t === "backup"
-                                  ? "Backup"
-                                  : "General"}
+                              : t === "quickActions"
+                                ? "Quick Actions"
+                                : t === "appearance"
+                                  ? "Appearance"
+                                  : t === "backup"
+                                    ? "Backup"
+                                    : "General"}
               </button>
             ))}
           </div>
@@ -210,6 +216,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           {tab === "skills" && <SkillsTab onError={setError} />}
           {tab === "prompts" && <PromptsTab onError={setError} />}
           {tab === "systemPrompt" && <SystemPromptTab onError={setError} />}
+          {tab === "quickActions" && <QuickActionsTab onError={setError} />}
           {tab === "appearance" && <AppearanceTab />}
           {tab === "backup" && <BackupTab onError={setError} />}
           {tab === "general" && <GeneralTab />}
@@ -1932,6 +1939,375 @@ function SystemPromptTab({ onError }: { onError: (msg: string | undefined) => vo
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---------------- Quick Actions tab ----------------
+
+interface DraftAction {
+  id?: string;
+  name: string;
+  kind: "command" | "prompt";
+  enabled: boolean;
+  command: string;
+  timeoutSec: string;
+  text: string;
+  mode: "send" | "insert";
+}
+
+function emptyActionDraft(kind: "command" | "prompt"): DraftAction {
+  return {
+    name: "",
+    kind,
+    enabled: true,
+    command: "",
+    timeoutSec: "30",
+    text: "",
+    mode: "send",
+  };
+}
+
+function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => void }) {
+  const minimal = useUiConfigStore((s) => s.minimal);
+  const loaded = useQuickActionsStore((s) => s.loaded);
+  const actions = useQuickActionsStore((s) => s.actions);
+  const load = useQuickActionsStore((s) => s.load);
+  const create = useQuickActionsStore((s) => s.create);
+  const update = useQuickActionsStore((s) => s.update);
+  const remove = useQuickActionsStore((s) => s.remove);
+
+  const [draft, setDraft] = useState<DraftAction | undefined>(undefined);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    onError(undefined);
+    if (!loaded) void load();
+  }, [load, loaded, onError]);
+
+  const startEdit = (a: (typeof actions)[number]): void => {
+    const isCmd = typeof a.command === "string" && a.command.length > 0;
+    setDraft({
+      id: a.id,
+      name: a.name,
+      kind: isCmd ? "command" : "prompt",
+      enabled: a.enabled !== false,
+      command: a.command ?? "",
+      timeoutSec: String(Math.round((a.timeoutMs ?? 30_000) / 1000)),
+      text: a.text ?? "",
+      mode: a.mode ?? "send",
+    });
+  };
+
+  const save = async (): Promise<void> => {
+    if (draft === undefined) return;
+    const trimmedName = draft.name.trim();
+    if (trimmedName.length === 0) {
+      onError("Name is required");
+      return;
+    }
+    const body: {
+      name: string;
+      enabled?: boolean;
+      command?: string;
+      timeoutMs?: number;
+      text?: string;
+      mode?: "send" | "insert";
+    } = { name: trimmedName, enabled: draft.enabled };
+    if (draft.kind === "command") {
+      const cmd = draft.command.trim();
+      if (cmd.length === 0) {
+        onError("Command is required");
+        return;
+      }
+      body.command = cmd;
+      const secs = Number.parseInt(draft.timeoutSec, 10);
+      if (Number.isFinite(secs) && secs > 0) body.timeoutMs = secs * 1000;
+    } else {
+      const text = draft.text.trim();
+      if (text.length === 0) {
+        onError("Prompt text is required");
+        return;
+      }
+      body.text = text;
+      body.mode = draft.mode;
+    }
+    setBusy(true);
+    try {
+      if (draft.id === undefined) await create(body);
+      else await update(draft.id, body);
+      setDraft(undefined);
+      onError(undefined);
+    } catch (err) {
+      onError(`Save failed: ${errorCode(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doDelete = async (id: string): Promise<void> => {
+    setBusy(true);
+    try {
+      await remove(id);
+      setPendingDeleteId(undefined);
+      if (draft?.id === id) setDraft(undefined);
+    } catch (err) {
+      onError(`Delete failed: ${errorCode(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-sm font-semibold text-neutral-100 light:text-neutral-900">
+          Quick action chips
+        </h2>
+        <p className="mt-1 text-xs text-neutral-400 light:text-neutral-600">
+          One-click buttons on the chat toolbar. Two kinds:{" "}
+          <span className="text-amber-400 light:text-amber-700">command</span> chips run a shell
+          snippet in the active project&apos;s folder;{" "}
+          <span className="text-sky-400 light:text-sky-700">prompt</span> chips either send a
+          templated prompt to the agent or insert it into the composer so you can tweak it before
+          sending. Chips are stored globally (not per-project) — they&apos;re your personal toolbox.
+        </p>
+      </div>
+
+      {minimal && (
+        <div className="rounded border border-amber-700/40 bg-amber-900/20 px-3 py-2 text-xs text-amber-200 light:border-amber-300 light:bg-amber-50 light:text-amber-800">
+          MINIMAL_UI is enabled. Command chips are listed below but are hidden from the toolbar and
+          the server refuses to run them. Prompt chips are unaffected.
+        </div>
+      )}
+
+      <div className="space-y-1">
+        {actions.length === 0 && loaded && (
+          <p className="text-xs italic text-neutral-500 light:text-neutral-600">
+            No chips defined yet. Click &ldquo;New&rdquo; below to add one.
+          </p>
+        )}
+        {actions.map((a) => {
+          const isCmd = typeof a.command === "string" && a.command.length > 0;
+          const hiddenInMinimal = minimal && isCmd;
+          return (
+            <div
+              key={a.id}
+              className={`flex items-center gap-2 rounded border border-neutral-800 bg-neutral-900/40 px-3 py-2 text-xs light:border-neutral-300 light:bg-neutral-50 ${
+                a.enabled === false ? "opacity-60" : ""
+              }`}
+            >
+              <span
+                className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${
+                  isCmd
+                    ? "bg-amber-900/40 text-amber-300 light:bg-amber-100 light:text-amber-900"
+                    : "bg-sky-900/40 text-sky-300 light:bg-sky-100 light:text-sky-900"
+                }`}
+              >
+                {isCmd ? "cmd" : "prompt"}
+              </span>
+              <span className="flex-1 truncate font-medium text-neutral-200 light:text-neutral-900">
+                {a.name}
+              </span>
+              {a.enabled === false && (
+                <span className="text-[10px] uppercase tracking-wider text-neutral-500">
+                  disabled
+                </span>
+              )}
+              {hiddenInMinimal && (
+                <span className="text-[10px] uppercase tracking-wider text-amber-400 light:text-amber-700">
+                  hidden by MINIMAL_UI
+                </span>
+              )}
+              <button
+                onClick={() => startEdit(a)}
+                className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 light:border-neutral-400 light:text-neutral-700"
+              >
+                Edit
+              </button>
+              {pendingDeleteId === a.id ? (
+                <>
+                  <button
+                    onClick={() => void doDelete(a.id)}
+                    disabled={busy}
+                    className="rounded border border-red-700 px-2 py-0.5 text-[11px] text-red-300 hover:bg-red-900/40 light:border-red-400 light:text-red-700"
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    onClick={() => setPendingDeleteId(undefined)}
+                    className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-400 hover:border-neutral-500 light:border-neutral-400 light:text-neutral-600"
+                  >
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => setPendingDeleteId(a.id)}
+                  className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-400 hover:border-red-500 hover:text-red-300 light:border-neutral-400 light:text-neutral-600"
+                >
+                  Delete
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {draft === undefined && (
+        <button
+          onClick={() => setDraft(emptyActionDraft("prompt"))}
+          className="rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-200 hover:border-neutral-500 light:border-neutral-400 light:text-neutral-800"
+        >
+          + New chip
+        </button>
+      )}
+
+      {draft !== undefined && (
+        <div className="space-y-3 rounded border border-neutral-700 bg-neutral-900/60 p-3 light:border-neutral-300 light:bg-white">
+          <div>
+            <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400 light:text-neutral-600">
+              Name
+            </label>
+            <input
+              value={draft.name}
+              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+              placeholder="e.g. Run tests"
+              className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm text-neutral-100 light:border-neutral-300 light:bg-white light:text-neutral-900"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400 light:text-neutral-600">
+              Kind
+            </label>
+            <div className="flex items-center gap-3 text-xs text-neutral-300 light:text-neutral-800">
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="radio"
+                  checked={draft.kind === "prompt"}
+                  onChange={() => setDraft({ ...draft, kind: "prompt" })}
+                />
+                Prompt
+              </label>
+              <label
+                className={`flex items-center gap-1.5 ${minimal ? "opacity-50" : ""}`}
+                title={
+                  minimal
+                    ? "Command chips are disabled by MINIMAL_UI. The server refuses to run them."
+                    : undefined
+                }
+              >
+                <input
+                  type="radio"
+                  checked={draft.kind === "command"}
+                  disabled={minimal}
+                  onChange={() => setDraft({ ...draft, kind: "command" })}
+                />
+                Command{minimal ? " (disabled by MINIMAL_UI)" : ""}
+              </label>
+            </div>
+          </div>
+          {draft.kind === "command" ? (
+            <>
+              <div>
+                <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400 light:text-neutral-600">
+                  Command
+                </label>
+                <textarea
+                  value={draft.command}
+                  onChange={(e) => setDraft({ ...draft, command: e.target.value })}
+                  rows={3}
+                  placeholder="npm test"
+                  className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-100 light:border-neutral-300 light:bg-white light:text-neutral-900"
+                />
+                <p className="mt-1 text-[11px] text-neutral-500 light:text-neutral-600">
+                  Runs in the active project&apos;s folder via <code>/bin/sh -c</code>. Multi-line
+                  is fine (<code>&amp;&amp;</code>, <code>;</code>, etc.). Environment is scrubbed
+                  of pi-forge and provider secrets (same as the integrated terminal).
+                </p>
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400 light:text-neutral-600">
+                  Timeout (seconds)
+                </label>
+                <input
+                  value={draft.timeoutSec}
+                  onChange={(e) => setDraft({ ...draft, timeoutSec: e.target.value })}
+                  placeholder="30"
+                  className="w-24 rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm text-neutral-100 light:border-neutral-300 light:bg-white light:text-neutral-900"
+                />
+                <p className="mt-1 text-[11px] text-neutral-500 light:text-neutral-600">
+                  Max 300 (five minutes). Past that, use the integrated terminal.
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400 light:text-neutral-600">
+                  Prompt text
+                </label>
+                <textarea
+                  value={draft.text}
+                  onChange={(e) => setDraft({ ...draft, text: e.target.value })}
+                  rows={4}
+                  placeholder="Review the staged changes for security issues."
+                  className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 light:border-neutral-300 light:bg-white light:text-neutral-900"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400 light:text-neutral-600">
+                  Mode
+                </label>
+                <div className="flex items-center gap-3 text-xs text-neutral-300 light:text-neutral-800">
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      checked={draft.mode === "send"}
+                      onChange={() => setDraft({ ...draft, mode: "send" })}
+                    />
+                    Send immediately
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      checked={draft.mode === "insert"}
+                      onChange={() => setDraft({ ...draft, mode: "insert" })}
+                    />
+                    Insert into composer
+                  </label>
+                </div>
+              </div>
+            </>
+          )}
+          <div>
+            <label className="flex items-center gap-1.5 text-xs text-neutral-300 light:text-neutral-800">
+              <input
+                type="checkbox"
+                checked={draft.enabled}
+                onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
+              />
+              Enabled (visible in the menu)
+            </label>
+          </div>
+          <div className="flex items-center gap-2 border-t border-neutral-800 pt-3 light:border-neutral-300">
+            <button
+              onClick={() => void save()}
+              disabled={busy}
+              className="rounded bg-emerald-700 px-3 py-1 text-xs text-white hover:bg-emerald-600 disabled:opacity-50"
+            >
+              {draft.id === undefined ? "Create" : "Save"}
+            </button>
+            <button
+              onClick={() => setDraft(undefined)}
+              className="rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:border-neutral-500 light:border-neutral-400 light:text-neutral-700"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { useActiveProject, useProjectStore } from "./store/project-store";
 import { useSessionStore } from "./store/session-store";
 import { useFileStore } from "./store/file-store";
 import { useUiConfigStore } from "./store/ui-config-store";
+import { useQuickActionsStore } from "./store/quick-actions-store";
 import { LoginScreen } from "./components/LoginScreen";
 import { ChangePasswordScreen } from "./components/ChangePasswordScreen";
 import { InstallPrompt } from "./components/InstallPrompt";
@@ -309,6 +310,14 @@ export function App() {
     // path by transitioning isAuthenticated→true with mustChange→false.
     if (isAuthenticated && !mustChangePassword) void loadProjects();
   }, [isAuthenticated, mustChangePassword, loadProjects]);
+
+  // Quick-action chips load once after auth — same trigger as projects.
+  // Failure is non-fatal (the store keeps `loaded: false` and the
+  // chip simply never appears in the toolbar).
+  const loadQuickActions = useQuickActionsStore((s) => s.load);
+  useEffect(() => {
+    if (isAuthenticated && !mustChangePassword) void loadQuickActions();
+  }, [isAuthenticated, mustChangePassword, loadQuickActions]);
 
   // MCP status polling — single 30s ticker shared by the header badge
   // and the Settings MCP tab. Starts after auth (the route is

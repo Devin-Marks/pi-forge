@@ -104,6 +104,40 @@ export interface McpSettingsResponse {
   total: number;
 }
 
+// ---------------- Quick actions ----------------
+
+/**
+ * Discriminator-by-presence (matches `McpServerConfig`): `command` is
+ * set → command action; `text` is set → prompt action. The wire
+ * surface enforces "exactly one of" with a 400 — never both, never
+ * neither.
+ */
+export interface QuickAction {
+  id: string;
+  name: string;
+  enabled?: boolean;
+  // command-only
+  command?: string;
+  timeoutMs?: number;
+  // prompt-only
+  text?: string;
+  mode?: "send" | "insert";
+}
+
+export interface QuickActionsResponse {
+  actions: QuickAction[];
+}
+
+export interface QuickActionRunResult {
+  success: boolean;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  timedOut: boolean;
+  truncated: boolean;
+}
+
 export interface McpToolSummary {
   name: string;
   description: string;
