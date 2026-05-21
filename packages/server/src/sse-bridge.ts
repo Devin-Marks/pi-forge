@@ -3,6 +3,11 @@ import type { FastifyReply } from "fastify";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { LiveSession, SSEClient } from "./session-registry.js";
+import { getSession } from "./session-registry.js";
+import {
+  getPendingForSession as getPendingAskQuestions,
+  subscribe as subscribeAskQuestions,
+} from "./ask-user-question/registry.js";
 
 /**
  * Per-client outbound-buffer cap. When Node's internal socket buffer
@@ -67,6 +72,12 @@ const ALLOWED_EVENT_TYPES = new Set<string>([
   "auto_retry_start",
   "auto_retry_end",
   "snapshot",
+  // Forge-native events for the ask_user_question tool. Not part of
+  // the SDK's AgentSessionEvent union — emitted by the
+  // ask-user-question registry and fanned out by initAskUserQuestionFanout
+  // (below) to every live SSE client of the affected session.
+  "ask_user_question",
+  "ask_user_question_cancelled",
 ]);
 
 export function isAllowedEvent(event: { type: string }): boolean {
@@ -74,10 +85,29 @@ export function isAllowedEvent(event: { type: string }): boolean {
 }
 
 /**
+ * Wire the ask-user-question registry's per-session events into the
+ * SSE bridge. Called once at server boot from index.ts. The returned
+ * unsubscribe is exposed for tests; production never tears it down.
+ */
+export function initAskUserQuestionFanout(): () => void {
+  return subscribeAskQuestions((event) => {
+    const live = getSession(event.sessionId);
+    if (live === undefined) return;
+    for (const c of live.clients) {
+      try {
+        c.send(event);
+      } catch {
+        // Best-effort fanout — client drop is handled by sse-bridge close.
+      }
+    }
+  });
+}
+
+/**
  * Serialize an event into the SSE wire format. Returns the full chunk
  * including the trailing blank line that delimits messages.
  */
-export function serializeSSE(event: object & { type: string }): string {
+export function serializeSSE(event: { type: string; [k: string]: unknown }): string {
   return `data: ${JSON.stringify(event)}\n\n`;
 }
 
@@ -206,8 +236,26 @@ export function createSSEClient(reply: FastifyReply, live: LiveSession): SSEClie
     // Snapshot bypass — uses writeRaw, the same surface a future heartbeat
     // would use. Server-issued synthetic frames flow through writeRaw;
     // SDK-relayed events flow through send (which applies the filter).
-    writeRaw(serializeSSE(buildSnapshot(live)));
+    writeRaw(
+      serializeSSE(buildSnapshot(live) as unknown as { type: string; [k: string]: unknown }),
+    );
     live.clients.add(client);
+
+    // Re-deliver any in-flight ask_user_question requests so a
+    // reconnect (browser refresh, network drop) resurfaces the
+    // modal. Order: AFTER the snapshot, since the snapshot is
+    // authoritative for message state — these events are separate
+    // and won't be clobbered.
+    for (const p of getPendingAskQuestions(live.sessionId)) {
+      writeRaw(
+        serializeSSE({
+          type: "ask_user_question",
+          sessionId: p.sessionId,
+          requestId: p.requestId,
+          questions: p.questions,
+        }),
+      );
+    }
 
     // Wire close listeners AFTER the snapshot write so an immediate socket
     // close can't double-fire close() before the registry is in a coherent

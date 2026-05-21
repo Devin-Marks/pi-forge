@@ -1633,4 +1633,8 @@ const BUILTIN_TOOL_DESCRIPTIONS: Record<string, string> = {
   grep: "Search file contents with a regex (ripgrep-backed).",
   find: "Find files by path glob.",
   ls: "List directory entries.",
+  ask_user_question:
+    "Surface a structured multi-choice questionnaire in the browser when the agent " +
+    "needs to clarify ambiguous instructions. Implemented in pi-forge (contract-" +
+    "compatible with @juicesharp/rpiv-ask-user-question).",
 };

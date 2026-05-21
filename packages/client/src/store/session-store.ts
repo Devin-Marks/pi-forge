@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api, ApiError, type SessionSummary, type UnifiedSession } from "../lib/api-client";
 import { streamSSE } from "../lib/sse-client";
 import { postCrossTab, subscribeCrossTab } from "../lib/cross-tab";
+import { useAskUserQuestionStore, type PendingAskQuestion } from "./ask-user-question-store";
 
 const ACTIVE_SESSION_KEY = "pi-forge/active-session-id";
 
@@ -891,6 +892,24 @@ function applyEvent(
     // that finalize an assistant message containing a toolCall before
     // any execution event fires).
     scheduleMessagesRefetch(set, sessionId);
+    return;
+  }
+
+  if (event.type === "ask_user_question") {
+    const requestId = typeof event.requestId === "string" ? event.requestId : undefined;
+    const questions = Array.isArray(event.questions) ? event.questions : undefined;
+    if (requestId === undefined || questions === undefined) return;
+    useAskUserQuestionStore.getState().setPending({
+      requestId,
+      sessionId,
+      questions: questions as PendingAskQuestion["questions"],
+    });
+    return;
+  }
+
+  if (event.type === "ask_user_question_cancelled") {
+    const requestId = typeof event.requestId === "string" ? event.requestId : undefined;
+    useAskUserQuestionStore.getState().clearPending(sessionId, requestId);
     return;
   }
 

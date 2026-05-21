@@ -104,6 +104,25 @@ export interface McpSettingsResponse {
   total: number;
 }
 
+// ---------------- ask_user_question ----------------
+
+/**
+ * Per-question answer envelope POSTed to
+ * /sessions/:id/ask-user-question/answer. Mirrors the
+ * `@juicesharp/rpiv-ask-user-question` plugin's response shape
+ * so an agent prompt authored against the plugin sees the same
+ * structured payload either way.
+ */
+export interface AskUserQuestionAnswer {
+  questionIndex: number;
+  question: string;
+  kind: "option" | "custom" | "chat" | "multi";
+  answer: string | null;
+  selected?: string[];
+  notes?: string;
+  preview?: string;
+}
+
 // ---------------- Quick actions ----------------
 
 /**

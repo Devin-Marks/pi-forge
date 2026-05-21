@@ -11,6 +11,7 @@ import {
   type McpServersResponse,
   type McpSettingsResponse,
   type McpToolSummary,
+  type AskUserQuestionAnswer,
   type QuickAction,
   type QuickActionsResponse,
   type QuickActionRunResult,
@@ -1474,6 +1475,21 @@ export const api = {
     request(`/api/v1/quick-actions/${encodeURIComponent(id)}/run`, vQuickActionRunResult, {
       method: "POST",
       body: { projectId },
+    }),
+
+  // ---------------- ask_user_question ----------------
+  submitAskUserQuestionAnswer: (
+    sessionId: string,
+    body: { requestId: string; answers: AskUserQuestionAnswer[]; cancelled?: boolean },
+  ) =>
+    request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/ask-user-question/answer`, vVoid, {
+      method: "POST",
+      body,
+    }),
+  cancelAskUserQuestion: (sessionId: string, requestId: string) =>
+    request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/ask-user-question/answer`, vVoid, {
+      method: "POST",
+      body: { requestId, cancelled: true, answers: [] },
     }),
 
   listSkills: (projectId: string) =>
