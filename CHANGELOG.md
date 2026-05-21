@@ -15,6 +15,8 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.2.3] — 2026-05-20
+
 ### Added
 
 - **Per-project system prompt addendum.** New Settings → System
