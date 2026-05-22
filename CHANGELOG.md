@@ -15,6 +15,8 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.2.4] — 2026-05-22
+
 ### Added
 
 - **Quick-action chips.** New left-aligned "Actions" dropdown in
