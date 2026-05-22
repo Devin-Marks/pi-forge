@@ -17,6 +17,7 @@ import { ChatInput } from "./components/ChatInput";
 import { ChangedFilesBadge } from "./components/ChangedFilesBadge";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { AskUserQuestionPanel } from "./components/AskUserQuestionPanel";
+import { TodoPanel } from "./components/TodoPanel";
 import { FileBrowserPanel } from "./components/FileBrowserPanel";
 import { EditorPanel } from "./components/EditorPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
@@ -39,13 +40,16 @@ type RightPaneTab = "files" | "search" | "changes" | "git" | "context";
 const FILES_WIDTH_KEY = "pi-forge/files-width";
 const EDITOR_WIDTH_KEY = "pi-forge/editor-width";
 const TERMINAL_HEIGHT_KEY = "pi-forge/terminal-height";
+const TODO_PANEL_HEIGHT_KEY = "pi-forge/todo-panel-height";
 const DEFAULT_FILES_WIDTH = 280;
 const DEFAULT_EDITOR_WIDTH = 480;
 const DEFAULT_TERMINAL_HEIGHT = 280;
+const DEFAULT_TODO_PANEL_HEIGHT = 200;
 const MIN_FILES_WIDTH = 200;
 const MIN_EDITOR_WIDTH = 320;
 const MIN_CHAT_WIDTH = 320;
 const MIN_TERMINAL_HEIGHT = 140;
+const MIN_TODO_PANEL_HEIGHT = 100;
 
 function readPersistedWidth(key: string, fallback: number): number {
   const raw = localStorage.getItem(key);
@@ -151,6 +155,33 @@ export function App() {
     terminalHeightRef.current = terminalHeight;
     localStorage.setItem(TERMINAL_HEIGHT_KEY, String(terminalHeight));
   }, [terminalHeight]);
+
+  // Todo-panel height (bottom strip of the right pane). Persisted
+  // independently of the other panes' sizes — same pattern as
+  // terminalHeight.
+  const [todoPanelHeight, setTodoPanelHeight] = useState<number>(() =>
+    readPersistedWidth(TODO_PANEL_HEIGHT_KEY, DEFAULT_TODO_PANEL_HEIGHT),
+  );
+  const todoPanelHeightRef = useRef(todoPanelHeight);
+  useEffect(() => {
+    todoPanelHeightRef.current = todoPanelHeight;
+    localStorage.setItem(TODO_PANEL_HEIGHT_KEY, String(todoPanelHeight));
+  }, [todoPanelHeight]);
+
+  // Auto-open the right pane when the user toggles the todo panel
+  // on from a chat-only view. Without this, clicking the todo
+  // icon would set `todoPanelOpen=true` but nothing visible would
+  // change — the panel lives inside the right pane.
+  const todoPanelOpen = useUiStore((s) => s.todoPanelOpen);
+  useEffect(() => {
+    if (todoPanelOpen && !filesOpen && !isMobile) {
+      setFilesOpenPersisted(true);
+    }
+    // setFilesOpenPersisted is stable enough — we only react to the
+    // toggle flipping, not to filesOpen changes (a user closing the
+    // pane shouldn't immediately re-open it).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [todoPanelOpen]);
 
   // Pane widths (px). Persisted on every drag-end via the ref; we keep
   // the live value in state so drags re-render the layout, and mirror
@@ -739,22 +770,54 @@ export function App() {
                         </button>
                       ))}
                     </div>
-                    <div className="flex-1 overflow-hidden">
-                      {rightTab === "files" ? (
-                        <FileBrowserPanel />
-                      ) : rightTab === "search" ? (
-                        <SearchPanel />
-                      ) : !minimal && rightTab === "changes" ? (
-                        <TurnDiffPanel />
-                      ) : !minimal && rightTab === "git" ? (
-                        <GitPanel />
-                      ) : rightTab === "context" ? (
-                        <ContextInspectorPanel />
-                      ) : (
-                        // minimal mode: stale persisted "changes"/"git"/"context"
-                        // falls back to the file browser rather than rendering
-                        // a tab the user can't even see.
-                        <FileBrowserPanel />
+                    <div className="flex flex-1 flex-col overflow-hidden">
+                      <div className="flex-1 overflow-hidden">
+                        {rightTab === "files" ? (
+                          <FileBrowserPanel />
+                        ) : rightTab === "search" ? (
+                          <SearchPanel />
+                        ) : !minimal && rightTab === "changes" ? (
+                          <TurnDiffPanel />
+                        ) : !minimal && rightTab === "git" ? (
+                          <GitPanel />
+                        ) : rightTab === "context" ? (
+                          <ContextInspectorPanel />
+                        ) : (
+                          // minimal mode: stale persisted "changes"/"git"/"context"
+                          // falls back to the file browser rather than rendering
+                          // a tab the user can't even see.
+                          <FileBrowserPanel />
+                        )}
+                      </div>
+                      {/* Bottom-strip todo panel — splits the
+                          right pane's vertical column when the
+                          toggle in ChatInput is on AND a session is
+                          active. Width is whatever the right pane
+                          already has; height is independently
+                          resizable. */}
+                      {todoPanelOpen && activeSessionId !== undefined && (
+                        <>
+                          <ResizableDivider
+                            orientation="horizontal"
+                            getStartSize={() => todoPanelHeightRef.current}
+                            onResize={(next) => setTodoPanelHeight(next)}
+                            // Direction -1: the todo strip is BELOW the
+                            // divider — dragging DOWN (higher clientY)
+                            // shrinks the strip; UP grows it.
+                            direction={-1}
+                            minSize={MIN_TODO_PANEL_HEIGHT}
+                            maxSize={Math.max(MIN_TODO_PANEL_HEIGHT, window.innerHeight * 0.7)}
+                          />
+                          <div
+                            className="shrink-0 overflow-hidden border-t border-neutral-800 light:border-neutral-200"
+                            style={{ height: `${todoPanelHeight}px` }}
+                          >
+                            <TodoPanel
+                              sessionId={activeSessionId}
+                              onClose={() => useUiStore.getState().setTodoPanelOpen(false)}
+                            />
+                          </div>
+                        </>
                       )}
                     </div>
                   </>

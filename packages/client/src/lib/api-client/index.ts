@@ -12,6 +12,8 @@ import {
   type McpSettingsResponse,
   type McpToolSummary,
   type AskUserQuestionAnswer,
+  type TodoListResponse,
+  type TodoTask,
   type QuickAction,
   type QuickActionsResponse,
   type QuickActionRunResult,
@@ -576,6 +578,13 @@ function vQuickActionRunResult(value: unknown, status: number): QuickActionRunRe
     timedOut: value.timedOut,
     truncated: value.truncated,
   };
+}
+
+function vTodoList(value: unknown, status: number): TodoListResponse {
+  if (!isObject(value) || !Array.isArray(value.tasks) || typeof value.nextId !== "number") {
+    fail(status, "expected { tasks: [...], nextId: number }");
+  }
+  return { tasks: value.tasks as TodoTask[], nextId: value.nextId };
 }
 
 function vAuthSummary(value: unknown, status: number): AuthSummary {
@@ -1491,6 +1500,10 @@ export const api = {
       method: "POST",
       body: { requestId, cancelled: true, answers: [] },
     }),
+
+  // ---------------- todo ----------------
+  listTodos: (sessionId: string) =>
+    request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/todos`, vTodoList),
 
   listSkills: (projectId: string) =>
     request(

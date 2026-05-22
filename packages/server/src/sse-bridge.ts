@@ -8,6 +8,7 @@ import {
   getPendingForSession as getPendingAskQuestions,
   subscribe as subscribeAskQuestions,
 } from "./ask-user-question/registry.js";
+import { peekCached as peekCachedTodo, subscribe as subscribeTodo } from "./todo/store.js";
 
 /**
  * Per-client outbound-buffer cap. When Node's internal socket buffer
@@ -78,6 +79,10 @@ const ALLOWED_EVENT_TYPES = new Set<string>([
   // (below) to every live SSE client of the affected session.
   "ask_user_question",
   "ask_user_question_cancelled",
+  // Forge-native event for the `todo` tool — emitted by the todo
+  // store after every successful tool call so the UI panel updates
+  // live. Also re-emitted on SSE snapshot with the cached state.
+  "todo_update",
 ]);
 
 export function isAllowedEvent(event: { type: string }): boolean {
@@ -98,6 +103,32 @@ export function initAskUserQuestionFanout(): () => void {
         c.send(event);
       } catch {
         // Best-effort fanout — client drop is handled by sse-bridge close.
+      }
+    }
+  });
+}
+
+/**
+ * Wire the todo store's per-session change-listener into the SSE
+ * bridge. Called once at server boot from index.ts. Mirrors the
+ * ask-user-question fanout: every commit pushes a `todo_update`
+ * to every live client of that session.
+ */
+export function initTodoFanout(): () => void {
+  return subscribeTodo((change) => {
+    const live = getSession(change.sessionId);
+    if (live === undefined) return;
+    const frame = {
+      type: "todo_update" as const,
+      sessionId: change.sessionId,
+      tasks: change.state.tasks,
+      nextId: change.state.nextId,
+    };
+    for (const c of live.clients) {
+      try {
+        c.send(frame);
+      } catch {
+        // best-effort fanout
       }
     }
   });
@@ -256,6 +287,20 @@ export function createSSEClient(reply: FastifyReply, live: LiveSession): SSEClie
         }),
       );
     }
+
+    // Re-emit the latest todo state on connect so the UI panel
+    // hydrates without a separate GET. Empty state (no tasks) is
+    // still sent — the client treats `tasks: []` as "no badge" and
+    // hides the toggle icon.
+    const cachedTodo = peekCachedTodo(live.sessionId);
+    writeRaw(
+      serializeSSE({
+        type: "todo_update",
+        sessionId: live.sessionId,
+        tasks: cachedTodo.tasks,
+        nextId: cachedTodo.nextId,
+      }),
+    );
 
     // Wire close listeners AFTER the snapshot write so an immediate socket
     // close can't double-fire close() before the registry is in a coherent

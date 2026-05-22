@@ -1637,4 +1637,9 @@ const BUILTIN_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Surface a structured multi-choice questionnaire in the browser when the agent " +
     "needs to clarify ambiguous instructions. Implemented in pi-forge (contract-" +
     "compatible with @juicesharp/rpiv-ask-user-question).",
+  todo:
+    "Manage a session-scoped task list with status (pending / in_progress / completed " +
+    "/ deleted), descriptions, and blockedBy dependencies. State survives reload and " +
+    "compaction via branch replay. Implemented in pi-forge (contract-compatible with " +
+    "@juicesharp/rpiv-todo).",
 };

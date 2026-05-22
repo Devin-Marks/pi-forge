@@ -22,6 +22,11 @@ import {
   isGloballyEnabled as mcpIsGloballyEnabled,
 } from "./mcp/manager.js";
 import { createAskUserQuestionTool } from "./ask-user-question/tool.js";
+import { createTodoTool } from "./todo/tool.js";
+import {
+  clearForSession as clearTodoForSession,
+  refreshFromBranch as refreshTodoFromBranch,
+} from "./todo/store.js";
 
 /**
  * Minimal SSE client contract used by the registry to fan out events.
@@ -175,6 +180,10 @@ export const BUILTIN_TOOL_NAMES: readonly string[] = [
   // under "Built-in tools" — disabling it filters it out of the allowlist
   // passed to createAgentSession, so the agent never sees the tool.
   "ask_user_question",
+  // todo is implemented in pi-forge (see todo/), contract-compatible with
+  // @juicesharp/rpiv-todo. Same disable-via-settings semantics as
+  // ask_user_question.
+  "todo",
 ];
 
 /**
@@ -414,7 +423,8 @@ export async function createSession(
   // forge-native ask_user_question tool can bind to the right
   // session in its execute() closure.
   const askTool = createAskUserQuestionTool(sessionManager.getSessionId());
-  const customTools: ToolDefinition[] = [...mcpTools, askTool];
+  const todoTool = createTodoTool(sessionManager.getSessionId(), sessionManager);
+  const customTools: ToolDefinition[] = [...mcpTools, askTool, todoTool];
   const settingsManager = await buildSessionSettingsManager(workspacePath, projectId);
   const resourceLoader = await buildForgeResourceLoader(
     workspacePath,
@@ -632,7 +642,12 @@ export async function resumeSession(
     const sessionManager = SessionManager.open(match.path, childSessionDir, workspacePath);
     const mcpTools = await resolveMcpCustomTools(projectId, workspacePath);
     const askTool = createAskUserQuestionTool(sessionManager.getSessionId());
-    const customTools: ToolDefinition[] = [...mcpTools, askTool];
+    const todoTool = createTodoTool(sessionManager.getSessionId(), sessionManager);
+    const customTools: ToolDefinition[] = [...mcpTools, askTool, todoTool];
+    // Resumed session — refresh the todo cache from the branch so
+    // the UI panel sees the persisted state on first SSE connect,
+    // not an empty list.
+    refreshTodoFromBranch(sessionManager.getSessionId(), sessionManager);
     const settingsManager = await buildSessionSettingsManager(workspacePath, projectId);
     const resourceLoader = await buildForgeResourceLoader(
       workspacePath,
@@ -811,6 +826,10 @@ export async function disposeSession(sessionId: string): Promise<boolean> {
     } catch {
       // ignore — SDK doesn't currently throw, but H2-defensive
     }
+    // Drop the todo cache for this session. The cache is a fast
+    // path; even without this, a future session with the same id
+    // would recover via replay-on-miss. Cleaner to be explicit.
+    clearTodoForSession(sessionId);
   } finally {
     registry.delete(sessionId);
     // Tombstone the id so a polling SSE client can't re-resume the
@@ -1234,7 +1253,12 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
   const sessionManager = SessionManager.open(newPath, dir, source.workspacePath);
   const mcpTools = await resolveMcpCustomTools(source.projectId, source.workspacePath);
   const askTool = createAskUserQuestionTool(sessionManager.getSessionId());
-  const customTools: ToolDefinition[] = [...mcpTools, askTool];
+  const todoTool = createTodoTool(sessionManager.getSessionId(), sessionManager);
+  const customTools: ToolDefinition[] = [...mcpTools, askTool, todoTool];
+  // Forked session — replay the branch (which now belongs to the
+  // fork) so the new session's todo cache reflects the inherited
+  // state, not the parent's stale entry.
+  refreshTodoFromBranch(sessionManager.getSessionId(), sessionManager);
   const settingsManager = await buildSessionSettingsManager(source.workspacePath, source.projectId);
   const resourceLoader = await buildForgeResourceLoader(
     source.workspacePath,
@@ -1310,7 +1334,16 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
       const restoredManager = SessionManager.open(originalSourceFile, dir, source.workspacePath);
       const restoredMcpTools = await resolveMcpCustomTools(source.projectId, source.workspacePath);
       const restoredAskTool = createAskUserQuestionTool(restoredManager.getSessionId());
-      const restoredCustomTools: ToolDefinition[] = [...restoredMcpTools, restoredAskTool];
+      const restoredTodoTool = createTodoTool(restoredManager.getSessionId(), restoredManager);
+      const restoredCustomTools: ToolDefinition[] = [
+        ...restoredMcpTools,
+        restoredAskTool,
+        restoredTodoTool,
+      ];
+      // Re-derive the original source's todo cache from the (now
+      // un-mutated) source JSONL — the SDK's fork machinery left
+      // the cache pointing at fork state.
+      refreshTodoFromBranch(restoredManager.getSessionId(), restoredManager);
       const restoredSettingsManager = await buildSessionSettingsManager(
         source.workspacePath,
         source.projectId,

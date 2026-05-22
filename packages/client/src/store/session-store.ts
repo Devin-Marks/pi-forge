@@ -3,6 +3,7 @@ import { api, ApiError, type SessionSummary, type UnifiedSession } from "../lib/
 import { streamSSE } from "../lib/sse-client";
 import { postCrossTab, subscribeCrossTab } from "../lib/cross-tab";
 import { useAskUserQuestionStore, type PendingAskQuestion } from "./ask-user-question-store";
+import { useTodoStore, type Task as TodoTaskShape } from "./todo-store";
 
 const ACTIVE_SESSION_KEY = "pi-forge/active-session-id";
 
@@ -910,6 +911,13 @@ function applyEvent(
   if (event.type === "ask_user_question_cancelled") {
     const requestId = typeof event.requestId === "string" ? event.requestId : undefined;
     useAskUserQuestionStore.getState().clearPending(sessionId, requestId);
+    return;
+  }
+
+  if (event.type === "todo_update") {
+    const tasks = Array.isArray(event.tasks) ? (event.tasks as TodoTaskShape[]) : [];
+    const nextId = typeof event.nextId === "number" ? event.nextId : 1;
+    useTodoStore.getState().set(sessionId, { tasks, nextId });
     return;
   }
 

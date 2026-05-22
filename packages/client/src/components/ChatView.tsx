@@ -852,15 +852,7 @@ function Message({
           )}
         </div>
         <div className="space-y-2 text-sm text-neutral-100">
-          {content.map((block, i) => {
-            const blockProps: {
-              block: Record<string, unknown>;
-              toolResultsById?: Map<string, AgentMessageLike>;
-              showRaw?: boolean;
-            } = { block: block as Record<string, unknown>, showRaw };
-            if (toolResultsById !== undefined) blockProps.toolResultsById = toolResultsById;
-            return <AssistantBlock key={i} {...blockProps} />;
-          })}
+          {renderAssistantBlocks(content as Record<string, unknown>[], toolResultsById, showRaw)}
         </div>
       </div>
     );
@@ -892,6 +884,128 @@ function Message({
       <pre className="mt-2 overflow-auto whitespace-pre-wrap text-[10px] text-neutral-500">
         {JSON.stringify(message, null, 2)}
       </pre>
+    </details>
+  );
+}
+
+/**
+ * Render an assistant message's content array, collapsing runs of
+ * consecutive `todo` toolCall blocks into a single batched card.
+ *
+ * Motivation: a single planning turn often fires 5+ `todo create`
+ * calls back-to-back, and each one would otherwise render as its
+ * own bordered card — eating vertical space with redundant info
+ * (every todo result carries the full state, so only the last one
+ * is informative; the rest are intermediate steps).
+ *
+ * Non-todo blocks render unchanged via the normal AssistantBlock
+ * path. Mixed runs (text + todo + bash) stay in original order
+ * because grouping only happens for adjacent todo blocks.
+ */
+function renderAssistantBlocks(
+  content: Record<string, unknown>[],
+  toolResultsById: Map<string, AgentMessageLike> | undefined,
+  showRaw: boolean,
+): React.ReactNode {
+  const out: React.ReactNode[] = [];
+  let i = 0;
+  while (i < content.length) {
+    const block = content[i]!;
+    if (block.type === "toolCall" && block.name === "todo") {
+      // Greedy: pull every adjacent todo toolCall into the same batch.
+      const start = i;
+      const batch: { block: Record<string, unknown>; result: AgentMessageLike | undefined }[] = [];
+      while (i < content.length) {
+        const b = content[i];
+        if (b?.type !== "toolCall" || b.name !== "todo") break;
+        const id = typeof b.id === "string" ? b.id : undefined;
+        const r = id !== undefined ? toolResultsById?.get(id) : undefined;
+        batch.push({ block: b, result: r });
+        i += 1;
+      }
+      if (batch.length === 1) {
+        // Single call — render via the standard ToolCallEntry path.
+        const only = batch[0]!;
+        out.push(<ToolCallEntry key={start} block={only.block} result={only.result} />);
+      } else {
+        out.push(<TodoBatchCard key={`todo-batch-${start}`} entries={batch} />);
+      }
+      continue;
+    }
+    const blockProps: {
+      block: Record<string, unknown>;
+      toolResultsById?: Map<string, AgentMessageLike>;
+      showRaw?: boolean;
+    } = { block, showRaw };
+    if (toolResultsById !== undefined) blockProps.toolResultsById = toolResultsById;
+    out.push(<AssistantBlock key={i} {...blockProps} />);
+    i += 1;
+  }
+  return out;
+}
+
+/**
+ * Compact single-card rendering for a run of N consecutive `todo`
+ * tool calls in one assistant message. Each call's one-line result
+ * text becomes a row; the latest result's task count is the
+ * headline. Expanded view shows the full output of each call.
+ */
+function TodoBatchCard({
+  entries,
+}: {
+  entries: { block: Record<string, unknown>; result: AgentMessageLike | undefined }[];
+}) {
+  const lastWithResult = [...entries].reverse().find((e) => e.result !== undefined);
+  const lastDetails =
+    (lastWithResult?.result?.details as { tasks?: unknown; nextId?: unknown } | undefined) ??
+    undefined;
+  const taskCount = Array.isArray(lastDetails?.tasks) ? lastDetails.tasks.length : 0;
+  const inFlight = entries.filter((e) => e.result === undefined).length;
+  const errored = entries.some((e) => e.result?.isError === true);
+  const lines = entries.map((e) => {
+    const content = Array.isArray(e.result?.content) ? e.result.content : [];
+    const first = content.find((c): c is { type: "text"; text: string } => {
+      const o = c as { type?: unknown; text?: unknown };
+      return o.type === "text" && typeof o.text === "string";
+    });
+    return first?.text ?? "(no output)";
+  });
+  return (
+    <details className="group rounded border border-neutral-800 bg-neutral-950 text-xs">
+      <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-neutral-300">
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="text-neutral-500">→</span>
+          <span className="font-mono">todo</span>
+          <span className="text-neutral-500">
+            ×{entries.length} {entries.length === 1 ? "call" : "calls"}
+          </span>
+          <span className="ml-2 truncate text-neutral-400">
+            {taskCount === 0
+              ? "no tasks"
+              : `${taskCount} ${taskCount === 1 ? "task" : "tasks"} after batch`}
+          </span>
+        </span>
+        <div className="flex shrink-0 items-center gap-1">
+          {inFlight > 0 && (
+            <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-400">
+              {inFlight} running…
+            </span>
+          )}
+          {errored && (
+            <span className="rounded bg-red-900/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-red-300 light:bg-red-100 light:text-red-800">
+              error
+            </span>
+          )}
+        </div>
+      </summary>
+      <div className="space-y-1 border-t border-neutral-800/60 px-3 py-2 font-mono text-[11px] text-neutral-400">
+        {lines.map((line, j) => (
+          <div key={j} className="flex items-baseline gap-2">
+            <span className="shrink-0 text-neutral-600">#{j + 1}</span>
+            <span className="whitespace-pre-wrap break-words text-neutral-300">{line}</span>
+          </div>
+        ))}
+      </div>
     </details>
   );
 }
