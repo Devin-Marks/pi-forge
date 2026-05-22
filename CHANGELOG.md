@@ -15,6 +15,95 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Added
+
+- **Quick-action chips.** New left-aligned "Actions" dropdown in
+  the chat-view toolbar. Two kinds, presence-discriminated:
+  `command` chips run a shell snippet in the active project's
+  folder via `/bin/sh -c` with scrubbed env (same posture as the
+  integrated terminal — no pi-forge or provider secrets leak);
+  `prompt` chips dispatch a templated prompt either auto-sent to
+  the agent (`mode: "send"`) or prefilled into the composer
+  (`mode: "insert"`). Command-chip output lands in an inline
+  run card in the chat scroll with amber/green/red left border
+  for running/success/fail, expandable stdout/stderr, and a
+  "Use as context" button that pushes the captured output back
+  into the composer. Stored globally in
+  `${FORGE_DATA_DIR}/quick-actions.json`; CRUD via a new
+  Settings → Quick Actions tab. Defense-in-depth MINIMAL_UI
+  gate: server returns 403 on `/run` for command kind; menu hides
+  command chips; settings disables the command radio with
+  explanatory tooltip. Defaults: 30 s timeout per command (5 min
+  cap), 1 MB per-stream output cap. (#144)
+- **`ask_user_question` tool — browser-native implementation of
+  the [`@juicesharp/rpiv-ask-user-question`](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-ask-user-question)
+  contract (MIT).** The agent can put up to 4 structured
+  multi-choice questions to the user when its instructions are
+  underspecified; instead of guessing, it gets back a structured
+  envelope with the picks. Renders as an inline panel above the
+  chat composer (not a modal — the chat scroll stays interactive
+  while answering). Three layouts picked per-question: vertical
+  list (single-select) with a "Type something" free-text fallback,
+  checkbox list (multi-select), or side-by-side options + markdown
+  preview (single-select with any `option.preview`). Multi-question
+  forms are tabbed; "Chat about this" is the explicit escape
+  hatch. Contract-identical to the plugin: same tool name, input
+  schema (questions[1..4] with options[2..4], header ≤16 chars,
+  label ≤60 chars, reserved sentinel labels), and response
+  envelope (`{content:[{type:"text",text}], details:{answers,
+  cancelled, error?}}` with answer kinds
+  `option | custom | chat | multi`). Pending requests re-emit on
+  SSE snapshot so a browser refresh resurfaces the panel without
+  losing the agent's blocked state. Implementation is independent
+  except for the prompt snippet + guidelines, which are ported
+  verbatim with attribution. (#145)
+- **`todo` tool — browser-native implementation of the
+  [`@juicesharp/rpiv-todo`](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo)
+  contract (MIT).** The agent uses `todo` to plan and track
+  multi-step work; the browser shows a checklist that updates
+  live as tasks move through the 4-state machine
+  (`pending → in_progress → completed`, plus `deleted` as a
+  terminal tombstone). Contract-identical to the plugin: same
+  action enum (`create | update | list | get | delete | clear`),
+  same `blockedBy` model with cycle detection, same response
+  envelope (`{content:[{type:"text",text}], details:{action,
+  params, tasks, nextId, error?}}`). Persistence is by branch
+  replay — every successful tool call writes the full state in
+  `details.tasks/details.nextId`, which lands in the session
+  JSONL; on resume/fork/compaction the server walks the branch
+  and reads the latest todo result to rebuild state. No separate
+  todo database; the message history is the source of truth.
+  In-memory cache is just a fast path for read-heavy consumers
+  (cache miss replays from the branch). UI: a `ListChecks`
+  toggle icon in the chat-input top-right (visible only when the
+  session has at least one task, with a `completed/total`
+  progress badge) opens a bottom-strip panel inside the right
+  pane that splits whatever tab is currently visible. Auto-opens
+  the right pane on toggle. Implementation is independent except
+  for the prompt snippet + tool description + guidelines, which
+  are ported verbatim with attribution (the plugin author's
+  wording is tuned against real model behavior). (#146)
+
+### Changed
+
+- **Widened the Settings modal.** Bumped from `max-w-4xl` (896px)
+  / `max-h-[640px]` to `max-w-6xl` (1152px) / `max-h-[720px]`.
+  The Quick Actions / MCP tabs render dense multi-column forms
+  that wrapped awkwardly at the old size; settings is a modal so
+  the extra width doesn't compete with the chat for screen real
+  estate. (#146)
+- **Collapsed consecutive `todo` tool cards in the chat.** A
+  single planning turn often fires 5+ `todo create` calls
+  back-to-back, each previously rendering as its own bordered
+  card with redundant info (every todo result carries the full
+  state — only the last one in a run is genuinely informative).
+  Runs of adjacent todo toolCalls inside one assistant message
+  now collapse into a single `TodoBatchCard`
+  (`→ todo ×5 calls · 4 tasks after batch`, expand for
+  per-call summaries). Single calls render unchanged. Cross-turn
+  calls stay separate (each assistant message is its own
+  bubble). (#146)
+
 ## [1.2.3] — 2026-05-20
 
 ### Added
