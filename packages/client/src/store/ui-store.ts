@@ -87,6 +87,15 @@ interface UiState {
    */
   _settingsSeq: number;
   _chatInsertSeq: number;
+
+  /**
+   * Whether the todo panel (bottom strip of the right pane) is
+   * open. Global, not per-session — the panel just renders
+   * whichever session is active. Persisted to localStorage so a
+   * user who likes it open gets it open on next load.
+   */
+  todoPanelOpen: boolean;
+  setTodoPanelOpen: (open: boolean) => void;
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
@@ -113,5 +122,20 @@ export const useUiStore = create<UiState>((set, get) => ({
   promptsRefreshTrigger: 0,
   bumpPromptsRefresh: () => {
     set((s) => ({ promptsRefreshTrigger: s.promptsRefreshTrigger + 1 }));
+  },
+  todoPanelOpen: (() => {
+    try {
+      return localStorage.getItem("pi-forge/todo-panel-open") === "true";
+    } catch {
+      return false;
+    }
+  })(),
+  setTodoPanelOpen: (open) => {
+    try {
+      localStorage.setItem("pi-forge/todo-panel-open", open ? "true" : "false");
+    } catch {
+      // ignore — private-mode storage; choice still applies for this session
+    }
+    set({ todoPanelOpen: open });
   },
 }));

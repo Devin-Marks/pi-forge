@@ -104,6 +104,32 @@ export interface McpSettingsResponse {
   total: number;
 }
 
+// ---------------- todo ----------------
+
+export type TodoTaskStatus = "pending" | "in_progress" | "completed" | "deleted";
+
+/**
+ * Wire shape returned by `GET /sessions/:id/todos` and emitted as
+ * the SSE `todo_update` event payload (without the envelope keys).
+ * Contract-compatible with @juicesharp/rpiv-todo's
+ * `details.{tasks, nextId}`.
+ */
+export interface TodoTask {
+  id: number;
+  subject: string;
+  description?: string;
+  activeForm?: string;
+  status: TodoTaskStatus;
+  blockedBy?: number[];
+  owner?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TodoListResponse {
+  tasks: TodoTask[];
+  nextId: number;
+}
+
 // ---------------- ask_user_question ----------------
 
 /**

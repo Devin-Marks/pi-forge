@@ -6,7 +6,7 @@ import {
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { AtSign, Image as ImageIcon, Paperclip, RotateCcw, X } from "lucide-react";
+import { AtSign, Image as ImageIcon, ListChecks, Paperclip, RotateCcw, X } from "lucide-react";
 import { api, ApiError, type ProvidersListing } from "../lib/api-client";
 import { useIsMobile } from "../lib/use-is-mobile";
 import { EMPTY_MESSAGES, useSessionStore, type AgentMessageLike } from "../store/session-store";
@@ -14,6 +14,7 @@ import { useActiveProject } from "../store/project-store";
 import { useUiConfigStore } from "../store/ui-config-store";
 import { useUiStore } from "../store/ui-store";
 import { useComposerStore } from "../store/composer-store";
+import { deriveCounts, selectTodoState, useTodoStore } from "../store/todo-store";
 
 /**
  * Pull the user's prior prompts out of the session message history,
@@ -238,6 +239,16 @@ export function ChatInput({ sessionId }: Props) {
 
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  // Todo toggle — appears in the top-right of the chat-input
+  // header when the active session has at least one non-deleted
+  // task. Clicking flips the global `todoPanelOpen` state in
+  // ui-store; App.tsx auto-opens the right pane if collapsed and
+  // renders the panel as a bottom strip of whatever tab is showing.
+  const todoState = useTodoStore((s) => selectTodoState(s, sessionId));
+  const todoCounts = deriveCounts(todoState);
+  const todoPanelOpen = useUiStore((s) => s.todoPanelOpen);
+  const setTodoPanelOpen = useUiStore((s) => s.setTodoPanelOpen);
 
   // ----- @-completion (file references in the chat input) -----
   // The popover is "open" when `acToken` is set; that happens whenever
@@ -1493,7 +1504,7 @@ export function ChatInput({ sessionId }: Props) {
               ))}
             </div>
           )}
-          {(modelError !== undefined || textareaHeight !== undefined) && (
+          {(modelError !== undefined || textareaHeight !== undefined || todoCounts.total > 0) && (
             <div className="ml-auto flex items-center gap-2">
               {modelError !== undefined && (
                 <span className="text-[11px] text-red-400">{modelError}</span>
@@ -1510,6 +1521,34 @@ export function ChatInput({ sessionId }: Props) {
                   aria-label="Reset chat input height to default"
                 >
                   <RotateCcw size={12} />
+                </button>
+              )}
+              {/* Todo toggle — only renders when the session has
+                  todos. Clicking opens the bottom-strip panel in
+                  the right pane (App auto-opens the pane if
+                  collapsed). */}
+              {todoCounts.total > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setTodoPanelOpen(!todoPanelOpen)}
+                  className={`flex items-center gap-1 rounded px-1.5 py-1 text-[11px] ${
+                    todoPanelOpen
+                      ? "bg-amber-900/40 text-amber-200 light:bg-amber-100 light:text-amber-900"
+                      : "text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 light:text-neutral-600 light:hover:bg-neutral-200 light:hover:text-neutral-900"
+                  }`}
+                  title={
+                    todoPanelOpen
+                      ? "Hide todo panel"
+                      : `Show todo panel (${todoCounts.completed}/${todoCounts.total} done${
+                          todoCounts.inProgress > 0 ? `, ${todoCounts.inProgress} in progress` : ""
+                        })`
+                  }
+                  aria-pressed={todoPanelOpen}
+                >
+                  <ListChecks size={12} />
+                  <span>
+                    {todoCounts.completed}/{todoCounts.total}
+                  </span>
                 </button>
               )}
             </div>
