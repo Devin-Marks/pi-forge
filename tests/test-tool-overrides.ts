@@ -116,13 +116,26 @@ async function main(): Promise<void> {
         builtin: { name: string; enabled: boolean }[];
         mcp: unknown[];
       };
+      // 7 SDK builtins + ask_user_question (implemented in pi-forge but
+      // surfaced under "Built-in tools" so users can disable it from
+      // Settings → Tools). See packages/server/src/session-registry.ts
+      // BUILTIN_TOOL_NAMES.
       assert(
-        "  seven builtins listed",
-        body.builtin.length === 7,
+        "  eight builtins listed",
+        body.builtin.length === 8,
         `got ${body.builtin.length}: ${body.builtin.map((b) => b.name).join(",")}`,
       );
       const names = new Set(body.builtin.map((b) => b.name));
-      for (const expected of ["read", "bash", "edit", "write", "grep", "find", "ls"]) {
+      for (const expected of [
+        "read",
+        "bash",
+        "edit",
+        "write",
+        "grep",
+        "find",
+        "ls",
+        "ask_user_question",
+      ]) {
         assert(
           `  builtin "${expected}" present and enabled`,
           names.has(expected) && body.builtin.find((b) => b.name === expected)?.enabled === true,

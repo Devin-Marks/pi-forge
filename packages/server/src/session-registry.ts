@@ -21,6 +21,7 @@ import {
   ensureProjectLoaded as mcpEnsureProjectLoaded,
   isGloballyEnabled as mcpIsGloballyEnabled,
 } from "./mcp/manager.js";
+import { createAskUserQuestionTool } from "./ask-user-question/tool.js";
 
 /**
  * Minimal SSE client contract used by the registry to fan out events.
@@ -169,6 +170,11 @@ export const BUILTIN_TOOL_NAMES: readonly string[] = [
   "grep",
   "find",
   "ls",
+  // ask_user_question is implemented in pi-forge (see ask-user-question/),
+  // not in the pi SDK. Listed here so the Tools settings tab surfaces it
+  // under "Built-in tools" — disabling it filters it out of the allowlist
+  // passed to createAgentSession, so the agent never sees the tool.
+  "ask_user_question",
 ];
 
 /**
@@ -402,7 +408,13 @@ export async function createSession(
   // agentDir IS passed: without it, the SDK falls back to ~/.pi/agent and
   // ignores PI_CONFIG_DIR entirely, breaking auth.json/models.json wiring
   // for Phase 6's prompt route.
-  const customTools = await resolveMcpCustomTools(projectId, workspacePath);
+  const mcpTools = await resolveMcpCustomTools(projectId, workspacePath);
+  // SessionManager.getSessionId() is synchronous and stable from
+  // create() onward — read it BEFORE createAgentSession so the
+  // forge-native ask_user_question tool can bind to the right
+  // session in its execute() closure.
+  const askTool = createAskUserQuestionTool(sessionManager.getSessionId());
+  const customTools: ToolDefinition[] = [...mcpTools, askTool];
   const settingsManager = await buildSessionSettingsManager(workspacePath, projectId);
   const resourceLoader = await buildForgeResourceLoader(
     workspacePath,
@@ -618,7 +630,9 @@ export async function resumeSession(
     // collapses to the project session dir.
     const childSessionDir = match.parentSessionId !== undefined ? join(match.path, "..") : dir;
     const sessionManager = SessionManager.open(match.path, childSessionDir, workspacePath);
-    const customTools = await resolveMcpCustomTools(projectId, workspacePath);
+    const mcpTools = await resolveMcpCustomTools(projectId, workspacePath);
+    const askTool = createAskUserQuestionTool(sessionManager.getSessionId());
+    const customTools: ToolDefinition[] = [...mcpTools, askTool];
     const settingsManager = await buildSessionSettingsManager(workspacePath, projectId);
     const resourceLoader = await buildForgeResourceLoader(
       workspacePath,
@@ -1218,7 +1232,9 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
 
   const dir = sessionDirFor(source.projectId);
   const sessionManager = SessionManager.open(newPath, dir, source.workspacePath);
-  const customTools = await resolveMcpCustomTools(source.projectId, source.workspacePath);
+  const mcpTools = await resolveMcpCustomTools(source.projectId, source.workspacePath);
+  const askTool = createAskUserQuestionTool(sessionManager.getSessionId());
+  const customTools: ToolDefinition[] = [...mcpTools, askTool];
   const settingsManager = await buildSessionSettingsManager(source.workspacePath, source.projectId);
   const resourceLoader = await buildForgeResourceLoader(
     source.workspacePath,
@@ -1292,10 +1308,9 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
     try {
       source.unsubscribe();
       const restoredManager = SessionManager.open(originalSourceFile, dir, source.workspacePath);
-      const restoredCustomTools = await resolveMcpCustomTools(
-        source.projectId,
-        source.workspacePath,
-      );
+      const restoredMcpTools = await resolveMcpCustomTools(source.projectId, source.workspacePath);
+      const restoredAskTool = createAskUserQuestionTool(restoredManager.getSessionId());
+      const restoredCustomTools: ToolDefinition[] = [...restoredMcpTools, restoredAskTool];
       const restoredSettingsManager = await buildSessionSettingsManager(
         source.workspacePath,
         source.projectId,

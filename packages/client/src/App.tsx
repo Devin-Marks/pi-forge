@@ -16,6 +16,7 @@ import { ChatView } from "./components/ChatView";
 import { ChatInput } from "./components/ChatInput";
 import { ChangedFilesBadge } from "./components/ChangedFilesBadge";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { AskUserQuestionPanel } from "./components/AskUserQuestionPanel";
 import { FileBrowserPanel } from "./components/FileBrowserPanel";
 import { EditorPanel } from "./components/EditorPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
@@ -600,6 +601,13 @@ export function App() {
                         }}
                       />
                     )}
+                    {/* Inline panel for `ask_user_question` tool
+                        calls. Renders directly above the composer
+                        when the agent has asked something; null
+                        otherwise. Lives in the chat-pane flex
+                        column so the chat scroll stays usable
+                        while answering. */}
+                    <AskUserQuestionPanel sessionId={activeSessionId} />
                     <ChatInput sessionId={activeSessionId} />
                   </>
                 ) : active ? (
