@@ -104,6 +104,50 @@ export interface McpSettingsResponse {
   total: number;
 }
 
+// ---------------- processes ----------------
+
+export type ProcessStatus = "running" | "terminating" | "terminate_timeout" | "exited" | "killed";
+
+/**
+ * Per-process snapshot. Returned by `GET /sessions/:id/processes`
+ * and carried in the SSE `process_update` event's `processes`
+ * array. Contract-compatible with `@aliou/pi-processes`'s
+ * `ProcessInfo` shape.
+ */
+export interface ProcessSummary {
+  id: string;
+  name: string;
+  pid: number;
+  command: string;
+  cwd: string;
+  startTime: number;
+  endTime: number | null;
+  status: ProcessStatus;
+  exitCode: number | null;
+  success: boolean | null;
+  stdoutFile: string;
+  stderrFile: string;
+  alertOnSuccess: boolean;
+  alertOnFailure: boolean;
+  alertOnKill: boolean;
+}
+
+export interface ProcessesListResponse {
+  processes: ProcessSummary[];
+}
+
+export interface ProcessOutputResponse {
+  stdout: string[];
+  stderr: string[];
+  status: string;
+}
+
+export interface ProcessActionResult {
+  ok: boolean;
+  /** Present when `ok: false`. */
+  reason?: string;
+}
+
 // ---------------- todo ----------------
 
 export type TodoTaskStatus = "pending" | "in_progress" | "completed" | "deleted";

@@ -759,9 +759,15 @@ function Message({
       }
     }
     return (
-      <div className="message-bubble rounded-lg bg-neutral-800 px-4 py-3" data-message-role="user">
+      <div
+        className="message-bubble group rounded-lg bg-neutral-800 px-4 py-3"
+        data-message-role="user"
+      >
         <div className="mb-1 flex items-center justify-between">
-          <span className="text-[10px] uppercase tracking-wider text-neutral-400">you</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-neutral-400">you</span>
+            <MessageTimestamp ts={(message as { timestamp?: unknown }).timestamp} />
+          </div>
           {text.length > 0 && (
             <div className="flex items-center gap-1">
               <CopyButton getText={() => text} title="Copy message text" />
@@ -836,11 +842,14 @@ function Message({
     const hasTextBlock = content.some((b) => (b as Record<string, unknown>).type === "text");
     return (
       <div
-        className="message-bubble rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3"
+        className="message-bubble group rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3"
         data-message-role="assistant"
       >
         <div className="mb-1 flex items-center justify-between">
-          <span className="text-[10px] uppercase tracking-wider text-neutral-500">assistant</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-neutral-500">assistant</span>
+            <MessageTimestamp ts={(message as { timestamp?: unknown }).timestamp} />
+          </div>
           {hasTextBlock && (
             <div className="flex items-center gap-1">
               <CopyButton
@@ -1747,6 +1756,30 @@ function RawText({ text }: { text: string }) {
 
 function isObjectShape(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/**
+ * Render a message's wall-clock timestamp as a hover-revealed badge.
+ * SDK messages carry `timestamp` as a Unix ms number (see pi-ai's
+ * UserMessage / AssistantMessage / ToolResultMessage). The badge stays
+ * invisible until the user hovers the bubble (the bubble itself owns
+ * the `group` class) so the chrome doesn't compete with the message
+ * content. Native `title` carries the absolute date+time for a
+ * second-level disclosure on top of the visible short time.
+ */
+function MessageTimestamp({ ts }: { ts: unknown }) {
+  if (typeof ts !== "number" || !Number.isFinite(ts) || ts <= 0) return null;
+  const d = new Date(ts);
+  const display = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const full = d.toLocaleString([], { dateStyle: "medium", timeStyle: "medium" });
+  return (
+    <span
+      className="text-[10px] tabular-nums text-neutral-500 opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+      title={full}
+    >
+      {display}
+    </span>
+  );
 }
 
 function extractText(message: AgentMessageLike): string {

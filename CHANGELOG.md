@@ -15,6 +15,49 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Added
+
+- **`process` tool — browser-native implementation of the
+  [`@aliou/pi-processes`](https://github.com/aliou/pi-processes)
+  contract (MIT).** Lets the agent spawn and manage background
+  processes (dev servers, watchers, builds, long-running scripts)
+  as a separate lifecycle surface from `bash`. Contract-identical
+  to the plugin: same tool name (`process`), action enum
+  (`start | list | output | logs | kill | clear | write`), same
+  `ProcessInfo` shape, same status state machine
+  (`running → terminating → terminate_timeout → exited | killed`),
+  same `logWatches` regex shape, same envelope
+  (`{content:[{type:"text",text}], details:{action, success,
+  message, process?, processes?, output?, logFiles?, cleared?}}`).
+  Server spawns via `/bin/sh -c` with scrubbed env (no pi-forge
+  or provider secrets leak — same posture as the integrated
+  terminal); stdout/stderr each tee to a per-process disk log
+  with a ring buffer + 10MB rotation. Termination is
+  SIGTERM → 5s grace → SIGKILL. Log watches compile to regex and
+  fan out as `process_watch` SSE events for agent-alerting UI.
+  State is in-memory per session (no on-disk process registry);
+  every live process is killed on session dispose and the log dir
+  is cleaned up. Client surfaces a new right-pane "Processes" tab
+  with grouped running/finished lists, expandable per-process
+  details, kill button, and a "Full log" link that fetches the
+  on-disk file through an authed-fetch blob URL (so the bare
+  `<a href>` auth attachment problem doesn't bite). Activity icon
+  badge on the chat input shows the running count and opens the
+  pane on click. Defense-in-depth `MINIMAL_UI` gate refuses
+  `start` at both the route and tool boundaries. Implementation
+  is independent except for the prompt snippet + tool description
+  + guidelines, which are ported verbatim with attribution. See
+  `docs/processes.md` for the cross-reference.
+- **Hover-revealed message timestamps.** Each user and assistant
+  message bubble now shows its wall-clock timestamp next to the
+  role label on hover (fades in via `group-hover`). Reads the
+  SDK's `message.timestamp` (Unix ms) and renders short local
+  time (e.g. `3:45 PM`); hovering the timestamp itself surfaces
+  the full localized date+time in a native tooltip. Streaming
+  messages without a stored timestamp render nothing. Chrome
+  stays out of the way until the user actually wants the
+  information.
+
 ### Changed
 
 - **Tighter MCP tool-result cap.** `MCP_TEXT_CAP_CHARS` lowered
@@ -45,6 +88,22 @@ section. See the "Versions" section of the README for the support window policy.
 
 ### Fixed
 
+- **Spurious "Reconnecting — server closed stream" banner after
+  large tool results.** The SSE bridge's per-client outbound-
+  buffer cap was set at 256KB to protect against truly wedged
+  consumers, but that ceiling was tripping mid-session on
+  legitimate slow consumers: a `tool_result` for an 11k-token
+  tool output serializes to ~80–150KB on the wire, and the
+  following stream of `message_update` token deltas pile more on
+  top before the client drains. On a slow connection (mobile,
+  ws-proxy that buffers, background tab), the threshold was
+  reached and the bridge silently called `close()` — producing
+  the misleading banner. Bumped the cap to 8MB (still bounds the
+  wedged-tab case — a sustained 1MB/s of events fires within ~8s
+  of zero consumption) and added a structured stderr log line
+  (`sse-client-dropped-backpressure` with `sessionId` +
+  `bufferedBytes`) so future occurrences are visible in
+  `docker logs` instead of silent.
 - **Context Inspector breakdown bar misattributing tool-call args
   and thinking content to "System + tools".** The categorizer's
   message walk was using stale Anthropic-wire block names

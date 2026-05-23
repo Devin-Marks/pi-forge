@@ -96,6 +96,19 @@ interface UiState {
    */
   todoPanelOpen: boolean;
   setTodoPanelOpen: (open: boolean) => void;
+
+  /**
+   * Bumped by the chat-input Processes badge when the user wants
+   * to view the processes tab. App.tsx watches this and:
+   *   1. opens the right pane if collapsed
+   *   2. switches the right-pane tab to "processes"
+   * Counter pattern matches `_settingsSeq` etc — a re-request to
+   * the same destination still fires (otherwise clicking the
+   * badge while already on the tab would be a no-op when the
+   * user actually wanted to confirm they're looking at it).
+   */
+  openProcessesTabSeq: number;
+  openProcessesTab: () => void;
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
@@ -138,4 +151,6 @@ export const useUiStore = create<UiState>((set, get) => ({
     }
     set({ todoPanelOpen: open });
   },
+  openProcessesTabSeq: 0,
+  openProcessesTab: () => set((s) => ({ openProcessesTabSeq: s.openProcessesTabSeq + 1 })),
 }));

@@ -14,6 +14,10 @@ import {
   type AskUserQuestionAnswer,
   type TodoListResponse,
   type TodoTask,
+  type ProcessActionResult,
+  type ProcessesListResponse,
+  type ProcessOutputResponse,
+  type ProcessSummary,
   type QuickAction,
   type QuickActionsResponse,
   type QuickActionRunResult,
@@ -578,6 +582,38 @@ function vQuickActionRunResult(value: unknown, status: number): QuickActionRunRe
     timedOut: value.timedOut,
     truncated: value.truncated,
   };
+}
+
+function vProcessesList(value: unknown, status: number): ProcessesListResponse {
+  if (!isObject(value) || !Array.isArray(value.processes)) {
+    fail(status, "expected { processes: [...] }");
+  }
+  return { processes: value.processes as ProcessSummary[] };
+}
+
+function vProcessOutput(value: unknown, status: number): ProcessOutputResponse {
+  if (
+    !isObject(value) ||
+    !Array.isArray(value.stdout) ||
+    !Array.isArray(value.stderr) ||
+    typeof value.status !== "string"
+  ) {
+    fail(status, "expected { stdout, stderr, status }");
+  }
+  return {
+    stdout: value.stdout as string[],
+    stderr: value.stderr as string[],
+    status: value.status,
+  };
+}
+
+function vProcessAction(value: unknown, status: number): ProcessActionResult {
+  if (!isObject(value) || typeof value.ok !== "boolean") {
+    fail(status, "expected { ok: boolean }");
+  }
+  const out: ProcessActionResult = { ok: value.ok };
+  if (typeof value.reason === "string") out.reason = value.reason;
+  return out;
 }
 
 function vTodoList(value: unknown, status: number): TodoListResponse {
@@ -1504,6 +1540,48 @@ export const api = {
   // ---------------- todo ----------------
   listTodos: (sessionId: string) =>
     request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/todos`, vTodoList),
+
+  // ---------------- processes ----------------
+  listProcesses: (sessionId: string) =>
+    request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/processes`, vProcessesList),
+  getProcessOutput: (sessionId: string, processId: string, tail?: number) => {
+    const qs = tail !== undefined ? `?tail=${tail}` : "";
+    return request(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/processes/${encodeURIComponent(processId)}/output${qs}`,
+      vProcessOutput,
+    );
+  },
+  /** Returns the absolute URL of the streaming log endpoint —
+   *  callers use it with EventSource or fetch+ReadableStream. */
+  processLogFileUrl: (sessionId: string, processId: string, stream: "stdout" | "stderr") =>
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/processes/${encodeURIComponent(processId)}/logs/file?stream=${stream}`,
+  killProcess: (sessionId: string, processId: string) =>
+    request(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/processes/${encodeURIComponent(processId)}/kill`,
+      vProcessAction,
+      { method: "POST", body: {} },
+    ),
+  clearProcesses: (sessionId: string) =>
+    request(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/processes`,
+      (v, s) => {
+        if (!isObject(v) || typeof v.cleared !== "number") {
+          fail(s, "expected { cleared: number }");
+        }
+        return { cleared: v.cleared };
+      },
+      { method: "DELETE" },
+    ),
+  writeProcessStdin: (
+    sessionId: string,
+    processId: string,
+    body: { input: string; end?: boolean },
+  ) =>
+    request(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/processes/${encodeURIComponent(processId)}/stdin`,
+      vProcessAction,
+      { method: "POST", body },
+    ),
 
   listSkills: (projectId: string) =>
     request(

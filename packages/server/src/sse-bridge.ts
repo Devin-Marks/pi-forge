@@ -9,6 +9,7 @@ import {
   subscribe as subscribeAskQuestions,
 } from "./ask-user-question/registry.js";
 import { peekCached as peekCachedTodo, subscribe as subscribeTodo } from "./todo/store.js";
+import { processManager } from "./processes/manager.js";
 
 /**
  * Per-client outbound-buffer cap. When Node's internal socket buffer
@@ -18,11 +19,16 @@ import { peekCached as peekCachedTodo, subscribe as subscribeTodo } from "./todo
  * can otherwise balloon resident memory by hundreds of MB during a
  * verbose tool execution before the kernel forces socket close.
  *
- * 256 KB matches roughly 50-100 typical events worth of unflushed
- * data — well above any legitimate transient buffering and below
- * the threshold where memory pressure starts mattering.
+ * 8 MB is well above any realistic transient burst: a `tool_result`
+ * for an 11k-token tool output serializes to ~80-150 KB, and the
+ * subsequent stream of `message_update` token deltas can pile more
+ * on top before the client drains. The earlier 256 KB cap was
+ * tripping mid-session on legitimate slow consumers (mobile, slow
+ * Wi-Fi) and producing a misleading "Reconnecting — server closed
+ * stream" banner. The cap still bounds the wedged-tab case — at a
+ * sustained 1 MB/s of events it fires within ~8s of zero consumption.
  */
-const BACKPRESSURE_LIMIT_BYTES = 256 * 1024;
+const BACKPRESSURE_LIMIT_BYTES = 8 * 1024 * 1024;
 
 /**
  * Cadence at which we send an SSE comment line (`: heartbeat\n\n`) on
@@ -83,6 +89,15 @@ const ALLOWED_EVENT_TYPES = new Set<string>([
   // store after every successful tool call so the UI panel updates
   // live. Also re-emitted on SSE snapshot with the cached state.
   "todo_update",
+  // Forge-native events for the `process` tool. process_update
+  // fans out the full snapshot on any lifecycle change (start /
+  // exit / kill / clear) and re-emits on snapshot connect.
+  // process_output is throttled per process to avoid flooding
+  // SSE on chatty processes. process_watch is the agent-alerting
+  // channel for log-watch matches.
+  "process_update",
+  "process_output",
+  "process_watch",
 ]);
 
 export function isAllowedEvent(event: { type: string }): boolean {
@@ -103,6 +118,68 @@ export function initAskUserQuestionFanout(): () => void {
         c.send(event);
       } catch {
         // Best-effort fanout — client drop is handled by sse-bridge close.
+      }
+    }
+  });
+}
+
+/**
+ * Wire the processes manager's per-session events into the SSE
+ * bridge. Called once at server boot. `process_update` carries
+ * the full per-session snapshot — clients don't have to
+ * reconcile partial updates. `process_output` is a thin pointer
+ * (just the changed process's id) so the client can decide
+ * whether to refetch a tail; flooding the full output on every
+ * write would saturate SSE for chatty processes. `process_watch`
+ * forwards the watch-match event verbatim for the agent-alerting
+ * UI to render.
+ */
+export function initProcessesFanout(): () => void {
+  return processManager.subscribe((event) => {
+    const live = getSession(event.sessionId);
+    if (live === undefined) return;
+    if (event.type === "process_watch_matched") {
+      const frame = {
+        type: "process_watch" as const,
+        sessionId: event.sessionId,
+        match: event.match,
+      };
+      for (const c of live.clients) {
+        try {
+          c.send(frame);
+        } catch {
+          // best-effort fanout
+        }
+      }
+      return;
+    }
+    if (event.type === "process_output_changed") {
+      const frame = {
+        type: "process_output" as const,
+        sessionId: event.sessionId,
+        id: event.id,
+      };
+      for (const c of live.clients) {
+        try {
+          c.send(frame);
+        } catch {
+          // best-effort fanout
+        }
+      }
+      return;
+    }
+    // Lifecycle events all carry a full-snapshot update on the
+    // wire — clients only need this one type to render the panel.
+    const snapshot = {
+      type: "process_update" as const,
+      sessionId: event.sessionId,
+      processes: processManager.list(event.sessionId),
+    };
+    for (const c of live.clients) {
+      try {
+        c.send(snapshot);
+      } catch {
+        // best-effort fanout
       }
     }
   });
@@ -232,6 +309,20 @@ export function createSSEClient(reply: FastifyReply, live: LiveSession): SSEClie
       // verbose tool execution can balloon resident memory by hundreds
       // of MB before the kernel forces the close.
       if (raw.writableLength > BACKPRESSURE_LIMIT_BYTES) {
+        // Operator-visible: this is the only reason the client sees a
+        // "server closed stream" mid-session despite no socket-level
+        // error. Bypass pino (same rationale as session-registry's
+        // logAgentEvent) so a LOG_LEVEL=warn deploy still surfaces it.
+        process.stderr.write(
+          JSON.stringify({
+            level: "warn",
+            time: new Date().toISOString(),
+            msg: "sse-client-dropped-backpressure",
+            sessionId: live.sessionId,
+            bufferedBytes: raw.writableLength,
+            limitBytes: BACKPRESSURE_LIMIT_BYTES,
+          }) + "\n",
+        );
         close();
         return;
       }
@@ -299,6 +390,18 @@ export function createSSEClient(reply: FastifyReply, live: LiveSession): SSEClie
         sessionId: live.sessionId,
         tasks: cachedTodo.tasks,
         nextId: cachedTodo.nextId,
+      }),
+    );
+
+    // Same re-deliver for processes — empty list is still sent so
+    // the client knows to hide the chat-input badge if a prior
+    // tab left it visible. Manager.list() is cheap (in-memory
+    // map walk + clone).
+    writeRaw(
+      serializeSSE({
+        type: "process_update",
+        sessionId: live.sessionId,
+        processes: processManager.list(live.sessionId),
       }),
     );
 
