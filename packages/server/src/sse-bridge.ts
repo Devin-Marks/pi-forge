@@ -44,6 +44,34 @@ const BACKPRESSURE_LIMIT_BYTES = 8 * 1024 * 1024;
 const HEARTBEAT_INTERVAL_MS = 20_000;
 
 /**
+ * One-shot padding flush we send right after the `compaction_start`
+ * event. Defeats response buffering at L7 proxies (OpenShift's
+ * HAProxy router most painfully) that hold small writes until either
+ * an internal buffer threshold is hit or the connection closes.
+ *
+ * The `compaction_start` event itself is ~150 bytes, well below any
+ * proxy's flush threshold. Without padding, that event sits in the
+ * router's response buffer for the entire duration of the compaction
+ * LLM call (several seconds) — by which point `compaction_end`
+ * arrives and the client sees both events fire back-to-back with no
+ * banner in between. With padding, the cumulative write pushes past
+ * HAProxy's default ~2KB threshold and the router flushes everything
+ * (including the compaction_start frame) immediately.
+ *
+ * Comment-line format (`: <bytes>\n\n`) — EventSource ignores
+ * comment lines silently, so the browser sees nothing visible. The
+ * `pad-flush` marker is included so an operator inspecting raw SSE
+ * frames in `tcpdump` / `curl -N` can tell what they're looking at.
+ *
+ * 2KB is the smallest size that reliably crosses the HAProxy default;
+ * tuning higher costs more bytes per compaction but doesn't change
+ * correctness. Only emitted on compaction_start (a per-turn event,
+ * not per-token), so the bandwidth impact is negligible.
+ */
+const COMPACTION_START_PADDING_BYTES = 2048;
+const COMPACTION_START_PADDING_LINE = `: pad-flush ${"_".repeat(COMPACTION_START_PADDING_BYTES - 14)}\n\n`;
+
+/**
  * One-shot snapshot event sent immediately on SSE connect so the browser can
  * hydrate full session state without a separate HTTP round-trip.
  */
@@ -339,6 +367,15 @@ export function createSSEClient(reply: FastifyReply, live: LiveSession): SSEClie
       if (closed) return;
       if (!isAllowedEvent(event)) return;
       writeRaw(serializeSSE(event));
+      // After compaction_start, follow with a padding flush so L7
+      // proxies (notably the OpenShift HAProxy router) release the
+      // event immediately rather than holding it through the
+      // multi-second compaction LLM call. See
+      // COMPACTION_START_PADDING_LINE doc-comment for the rationale.
+      // Cheap — fires at most once per compaction, ~2KB on the wire.
+      if (event.type === "compaction_start") {
+        writeRaw(COMPACTION_START_PADDING_LINE);
+      }
     };
 
     const client: SSEClient = { id, send, close };

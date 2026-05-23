@@ -60,6 +60,25 @@ section. See the "Versions" section of the README for the support window policy.
 
 ### Changed
 
+- **Chat hides the latest compaction's kept window inside the
+  CompactionCard's expand drawer.** Pi's compaction summarizes the
+  oldest messages and keeps `keepRecentTokens` worth (default 20k
+  tokens, easily 30-50 messages) of recent context verbatim so the
+  agent has working memory. The chat used to render those kept-
+  window messages as inline bubbles below the CompactionCard,
+  which made it look like compaction hadn't accomplished anything
+  — the summary card appeared, but the same conversation was
+  still visible below it. The kept-window messages are unchanged
+  in `session.messages` (the agent still sees them); only the
+  inline rendering is suppressed. The latest card's
+  `archivedMessages` already includes everything between the
+  previous compaction and this one — so expanding the card
+  surfaces the full picture for anyone who wants to scroll back.
+  Earlier compactions (`insertBeforeIndex=0`) had their kept
+  windows re-archived by later compactions; their messages
+  already lived in their own `archivedMessages` and were never in
+  the post-compaction `messages` array, so no rendering change
+  was needed for them.
 - **Tighter MCP tool-result cap.** `MCP_TEXT_CAP_CHARS` lowered
   from 100,000 chars (≈ 33k real tokens) to 30,000 chars (≈ 10k
   tokens). The old ceiling let one chatty `list_everything` call
@@ -88,6 +107,59 @@ section. See the "Versions" section of the README for the support window policy.
 
 ### Fixed
 
+- **"Compacting context…" banner doesn't appear when deployed
+  behind an L7 proxy that buffers responses (OpenShift's HAProxy
+  router most painfully).** The `compaction_start` SSE event is
+  ~150 bytes — small enough that HAProxy holds it in its response
+  buffer waiting for either a flush threshold or connection
+  close. Compaction itself takes several seconds, during which
+  nothing pushes the event through; by the time `compaction_end`
+  arrives the buffer flushes both at once and the banner never
+  has a chance to render. The 20-second heartbeat that prevents
+  idle-timeout drops doesn't help — its 13-byte payload is too
+  small to cross HAProxy's flush threshold on its own. Fix: emit
+  a one-shot ~2KB SSE comment-line ("padding flush") immediately
+  after every `compaction_start` write. The cumulative bytes
+  exceed HAProxy's buffer-size threshold, forcing the router to
+  release everything it's holding — including the
+  compaction_start frame itself. EventSource ignores comment
+  lines silently so the browser sees nothing visible; the line is
+  tagged `: pad-flush ...` so an operator inspecting raw frames
+  (`curl -N`, `tcpdump`) can identify it. Fires at most once per
+  compaction, so the bandwidth cost is negligible. Local
+  deployments without a buffering proxy in front of the server
+  see no behavioral change either way.
+- **Agent halts after overflow-driven auto-compaction (weaker
+  models).** When the LLM rejects a request with a context-overflow
+  error, the pi SDK auto-compacts and calls `agent.continue()` to
+  resume the loop. The model then sees the structured compaction
+  summary (`## Goal / ## Progress / ## Next Steps / ## Critical
+  Context`) as the LAST message in context. Strong frontier models
+  infer "I'm mid-task — pick up where I left off." Weaker / smaller
+  local models (Gemma-class on vLLM in particular) read the
+  structured summary as a status report addressed to them and
+  respond with prose paraphrasing the "Next Steps" section instead
+  of actually continuing the work — the agent stops making
+  progress right when the user needs it to keep going. Fix: new
+  in-process pi extension (`compactionContinuationExtension`)
+  registered via `DefaultResourceLoader.extensionFactories`. It
+  hooks the `context` event (fires before every LLM request) and,
+  when the last message is a `compactionSummary`, appends a
+  one-line imperative user message to the OUTBOUND copy only —
+  "[continuation] Continue the task in progress — pick up from
+  where you left off based on the summary above. Do not write a
+  status update or summary of what you were doing; just proceed
+  with the next action the task requires." Open-ended about what
+  the next action is (tool call, final answer, follow-up question
+  — whatever the task needs), focused on naming the observed
+  failure mode (paraphrasing the summary). The nudge is sent to
+  the LLM but NOT persisted to the session JSONL, so it doesn't
+  leak into subsequent compactions, tree views, or session
+  exports. Only fires when the last message is the summary
+  (overflow-recovery path); threshold compactions don't auto-
+  continue, so the user's next prompt naturally provides the
+  imperative. No effect on strong models — the extra ~50 tokens of
+  input is negligible and reinforces correct behavior.
 - **Spurious "Reconnecting — server closed stream" banner after
   large tool results.** The SSE bridge's per-client outbound-
   buffer cap was set at 256KB to protect against truly wedged
