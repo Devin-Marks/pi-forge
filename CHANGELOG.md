@@ -15,6 +15,54 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Changed
+
+- **Tighter MCP tool-result cap.** `MCP_TEXT_CAP_CHARS` lowered
+  from 100,000 chars (≈ 33k real tokens) to 30,000 chars (≈ 10k
+  tokens). The old ceiling let one chatty `list_everything` call
+  dump 30k+ real tokens into a single round trip — most of a
+  session's usable context budget — and triggered compaction far
+  earlier than the operator expects. 10k tokens is the practical
+  upper bound for a single tool response; anything bigger should
+  be paginated, filtered, or written to disk for the agent to
+  `read` incrementally. The 60/40 head/tail split and the
+  truncation marker the agent reads stay the same; only the cap
+  moved. Test suite reads the constant dynamically, so it
+  auto-adapted.
+- **Context Inspector token heuristic moved from chars/4 → chars/3.**
+  All three local estimators (`categorizeContext` for the breakdown
+  bar, `estimateTokens` for the per-row badge, the per-turn `New`
+  delta) now share a single `CHARS_PER_TOKEN` constant. The textbook
+  4:1 ratio comes from English prose; pi-forge sessions are
+  predominantly tool-call JSON, code, diffs, and search results,
+  where real tokenizers run closer to 3:1. Empirically the 4:1
+  estimate was under-counting tool-result-heavy turns by 20–40%,
+  making the inspector's breakdown bar disagree with the
+  authoritative `usage.input` total in the top context-window bar.
+  The authoritative count is unchanged (still pulled from the
+  SDK's `getContextUsage().tokens`); only the local estimates that
+  *bucket* it across categories shift.
+
+### Fixed
+
+- **Context Inspector breakdown bar misattributing tool-call args
+  and thinking content to "System + tools".** The categorizer's
+  message walk was using stale Anthropic-wire block names
+  (`type:"toolUse"`, `input` field; `type:"thinking"` reading `text`
+  field) instead of the SDK's actual shape (`type:"toolCall"`,
+  `arguments`; `type:"thinking"`, `thinking`). Result: the
+  `toolCalls` and `thinking` buckets were always 0, and because
+  `systemAndTools` is computed as a residual (`actualTotalTokens −
+  messageTotal`), every byte those buckets should have held leaked
+  into "System + tools" instead. End-effect: a tool-call turn made
+  "System + tools" and "Tool results" appear to bump together,
+  which looked like the SDK was double-counting the tool result —
+  it wasn't. Fixed the categorizer plus two render-time sites
+  (`extractPreview` and `renderExpanded`) that had the same
+  wrong-name pattern, so tool calls now also show up in the
+  inspector's one-line previews and the click-to-expand detail
+  view rather than being silently invisible.
+
 ## [1.2.4] — 2026-05-22
 
 ### Added
