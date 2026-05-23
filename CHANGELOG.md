@@ -107,6 +107,28 @@ section. See the "Versions" section of the README for the support window policy.
 
 ### Fixed
 
+- **"Compacting context…" banner doesn't appear when deployed
+  behind an L7 proxy that buffers responses (OpenShift's HAProxy
+  router most painfully).** The `compaction_start` SSE event is
+  ~150 bytes — small enough that HAProxy holds it in its response
+  buffer waiting for either a flush threshold or connection
+  close. Compaction itself takes several seconds, during which
+  nothing pushes the event through; by the time `compaction_end`
+  arrives the buffer flushes both at once and the banner never
+  has a chance to render. The 20-second heartbeat that prevents
+  idle-timeout drops doesn't help — its 13-byte payload is too
+  small to cross HAProxy's flush threshold on its own. Fix: emit
+  a one-shot ~2KB SSE comment-line ("padding flush") immediately
+  after every `compaction_start` write. The cumulative bytes
+  exceed HAProxy's buffer-size threshold, forcing the router to
+  release everything it's holding — including the
+  compaction_start frame itself. EventSource ignores comment
+  lines silently so the browser sees nothing visible; the line is
+  tagged `: pad-flush ...` so an operator inspecting raw frames
+  (`curl -N`, `tcpdump`) can identify it. Fires at most once per
+  compaction, so the bandwidth cost is negligible. Local
+  deployments without a buffering proxy in front of the server
+  see no behavioral change either way.
 - **Agent halts after overflow-driven auto-compaction (weaker
   models).** When the LLM rejects a request with a context-overflow
   error, the pi SDK auto-compacts and calls `agent.continue()` to
