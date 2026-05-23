@@ -49,6 +49,7 @@ import { config } from "./config.js";
 import { getProjectDisabledSkillNames } from "./skill-overrides.js";
 import { getProjectDisabledPromptNames } from "./prompt-overrides.js";
 import { getProjectSystemPromptAddendum } from "./system-prompt-overrides.js";
+import { compactionContinuationExtension } from "./agent-extensions/compaction-continuation.js";
 
 /**
  * Plain string (not a backtick template) so what's stored is exactly
@@ -118,6 +119,15 @@ export async function buildForgeResourceLoader(
     agentDir,
     settingsManager,
     appendSystemPrompt,
+    // In-process pi extensions pi-forge always registers. The
+    // `compactionContinuationExtension` hooks the `context` event and
+    // appends a one-line imperative nudge to LLM input when the last
+    // message is a `compactionSummary` — fixes the bug where weaker
+    // models (Gemma-class on local vLLM) read the post-compaction
+    // summary as a status report and respond with prose instead of
+    // executing the next tool call. See the file's doc-comment for
+    // the full rationale.
+    extensionFactories: [compactionContinuationExtension],
   };
   // Both override hooks are installed conditionally on whether the
   // active project has any explicit disables. Pi's pattern system

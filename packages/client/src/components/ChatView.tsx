@@ -386,6 +386,41 @@ export function ChatView({ sessionId }: Props) {
                   );
                 }
               };
+              // Hide the LATEST compaction's kept window from inline
+              // bubbles — those messages render inside that card's
+              // expand drawer instead. Without this, after a compaction
+              // the chat shows the summary card PLUS all the
+              // recent-conversation messages that compaction kept
+              // verbatim, making it look like compaction didn't
+              // accomplish anything. Pi's design is to keep
+              // `keepRecentTokens` (default 20k tokens, easily 30-50
+              // messages) of recent context unchanged so the agent
+              // has working memory; the messages are still in
+              // session.messages and in the latest card's
+              // archivedMessages, so collapsing the inline render is
+              // a pure UI change — no data is lost, the drawer holds
+              // the full picture for anyone who wants to scroll back.
+              //
+              // Indices [1, latestCard.insertBeforeIndex) are the
+              // kept-window range:
+              //   - idx 0 is the synthesised compactionSummary
+              //     (already skipped via the role check below)
+              //   - idx [1, insertBeforeIndex) is the kept window
+              //     between firstKeptEntryId and the compaction entry
+              //   - latestCard renders at insertBeforeIndex
+              //   - idx [insertBeforeIndex, end) is post-compaction
+              //     content (the agent's continuation + any later
+              //     turns) — those render as normal bubbles
+              //
+              // Earlier compactions (insertBeforeIndex=0) had their
+              // own kept windows re-archived by later compactions, so
+              // their content lives in their own `archivedMessages`
+              // and never appeared in the post-compaction messages
+              // array to begin with — no rendering change needed for
+              // them.
+              const latestCard =
+                compactions.length > 0 ? compactions[compactions.length - 1] : undefined;
+              const keptWindowEnd = latestCard?.insertBeforeIndex ?? 0;
               messages.forEach((m, i) => {
                 renderCardsAt(i);
                 if (
@@ -402,6 +437,9 @@ export function ChatView({ sessionId }: Props) {
                 // bubble would just duplicate the content under an
                 // "unknown message" fallback.
                 if (m.role === "compactionSummary") return;
+                // Kept-window suppression — see the comment block
+                // above for rationale and index ranges.
+                if (latestCard !== undefined && i >= 1 && i < keptWindowEnd) return;
                 out.push(
                   <div key={i} data-message-index={i}>
                     <Message message={m} toolResultsById={toolResultsById} />
