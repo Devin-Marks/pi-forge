@@ -17,7 +17,7 @@
     "@fastify/swagger-ui": "^5.2.3",
     "@fastify/websocket": "^11.0.2",
     "@earendil-works/pi-agent-core": "0.74.0",
-    "@earendil-works/pi-ai": "0.74.0",
+    "@earendil-works/pi-ai": "0.75.5",
     "@earendil-works/pi-coding-agent": "0.74.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "exceljs": "^4.4.0",
