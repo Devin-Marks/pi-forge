@@ -18,6 +18,8 @@ import { ChangedFilesBadge } from "./components/ChangedFilesBadge";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { AskUserQuestionPanel } from "./components/AskUserQuestionPanel";
 import { TodoPanel } from "./components/TodoPanel";
+import { ProcessesPanel } from "./components/ProcessesPanel";
+import { countRunning, selectProcesses, useProcessesStore } from "./store/processes-store";
 import { FileBrowserPanel } from "./components/FileBrowserPanel";
 import { EditorPanel } from "./components/EditorPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
@@ -32,7 +34,7 @@ import { ContextInspectorPanel } from "./components/ContextInspectorPanel";
 import { ResizableDivider } from "./components/ResizableDivider";
 import { useGitStatus } from "./hooks/useGitStatus";
 
-type RightPaneTab = "files" | "search" | "changes" | "git" | "context";
+type RightPaneTab = "files" | "search" | "changes" | "git" | "context" | "processes";
 
 /* Persisted pane widths. Stored in localStorage so the user-tuned
    layout survives reloads. Defaults err on the side of "the chat is the
@@ -98,7 +100,8 @@ export function App() {
       raw === "search" ||
       raw === "changes" ||
       raw === "git" ||
-      raw === "context"
+      raw === "context" ||
+      raw === "processes"
       ? raw
       : "files";
   });
@@ -183,6 +186,17 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [todoPanelOpen]);
 
+  // Same auto-open behavior for the processes badge in the chat
+  // input: bumping `openProcessesTabSeq` means "show me processes
+  // now" — open the right pane if collapsed, switch to the tab.
+  const openProcessesTabSeq = useUiStore((s) => s.openProcessesTabSeq);
+  useEffect(() => {
+    if (openProcessesTabSeq === 0) return; // initial value, no request
+    if (!filesOpen && !isMobile) setFilesOpenPersisted(true);
+    setRightTabPersisted("processes");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openProcessesTabSeq]);
+
   // Pane widths (px). Persisted on every drag-end via the ref; we keep
   // the live value in state so drags re-render the layout, and mirror
   // it through the ref so the divider can read the start width without
@@ -212,6 +226,11 @@ export function App() {
   // we want the badge to update even when the user is on Files.
   const gitStatus = useGitStatus(active?.id);
   const gitChangedCount = gitStatus.status?.files.length ?? 0;
+  // Running-process count drives the Processes tab badge and the
+  // chat-input top-right Activity icon. Reads the SSE-hydrated
+  // processes-store; empty for sessions with no managed processes.
+  const sessionProcesses = useProcessesStore((s) => selectProcesses(s, activeSessionId));
+  const runningProcessCount = countRunning(sessionProcesses);
 
   // Refresh the file tree on every agent_end the active project hears,
   // since the agent commonly writes/edits files mid-turn. The session
@@ -737,9 +756,12 @@ export function App() {
                           // useful even in locked-down deploys — it's
                           // read-only and helps users debug their own
                           // sessions without needing the full diff/git
-                          // toolchain.
-                          (["files", "search", "context"] as const)
-                        : (["files", "search", "changes", "git", "context"] as const)
+                          // toolchain. Processes is also surfaced — listing /
+                          // killing existing processes is operator-useful even
+                          // when MINIMAL_UI blocks starting new ones at the
+                          // tool boundary.
+                          (["files", "search", "processes", "context"] as const)
+                        : (["files", "search", "changes", "git", "processes", "context"] as const)
                       ).map((t) => (
                         <button
                           key={t}
@@ -761,10 +783,17 @@ export function App() {
                                 ? "Last turn"
                                 : t === "git"
                                   ? "Git"
-                                  : "Context"}
+                                  : t === "processes"
+                                    ? "Processes"
+                                    : "Context"}
                           {t === "git" && gitChangedCount > 0 && (
                             <span className="rounded bg-amber-900/40 px-1 py-0.5 text-[9px] text-amber-300 light:bg-amber-100 light:text-amber-800">
                               {gitChangedCount}
+                            </span>
+                          )}
+                          {t === "processes" && runningProcessCount > 0 && (
+                            <span className="rounded bg-emerald-900/40 px-1 py-0.5 text-[9px] text-emerald-300 light:bg-emerald-100 light:text-emerald-800">
+                              {runningProcessCount}
                             </span>
                           )}
                         </button>
@@ -782,6 +811,8 @@ export function App() {
                           <GitPanel />
                         ) : rightTab === "context" ? (
                           <ContextInspectorPanel />
+                        ) : rightTab === "processes" && activeSessionId !== undefined ? (
+                          <ProcessesPanel sessionId={activeSessionId} />
                         ) : (
                           // minimal mode: stale persisted "changes"/"git"/"context"
                           // falls back to the file browser rather than rendering

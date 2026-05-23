@@ -4,6 +4,7 @@ import { streamSSE } from "../lib/sse-client";
 import { postCrossTab, subscribeCrossTab } from "../lib/cross-tab";
 import { useAskUserQuestionStore, type PendingAskQuestion } from "./ask-user-question-store";
 import { useTodoStore, type Task as TodoTaskShape } from "./todo-store";
+import { useProcessesStore, type ProcessInfo as ProcessShape } from "./processes-store";
 
 const ACTIVE_SESSION_KEY = "pi-forge/active-session-id";
 
@@ -918,6 +919,53 @@ function applyEvent(
     const tasks = Array.isArray(event.tasks) ? (event.tasks as TodoTaskShape[]) : [];
     const nextId = typeof event.nextId === "number" ? event.nextId : 1;
     useTodoStore.getState().set(sessionId, { tasks, nextId });
+    return;
+  }
+
+  if (event.type === "process_update") {
+    const processes = Array.isArray(event.processes) ? (event.processes as ProcessShape[]) : [];
+    useProcessesStore.getState().setProcesses(sessionId, processes);
+    return;
+  }
+
+  if (event.type === "process_watch") {
+    // The match envelope carries enough metadata to render an
+    // alert without a separate refetch. We push into the in-memory
+    // ring (capped); the panel reads it for the alert badge.
+    const match = event.match as
+      | {
+          processId?: unknown;
+          processName?: unknown;
+          source?: unknown;
+          line?: unknown;
+          watch?: { pattern?: unknown };
+        }
+      | undefined;
+    if (
+      match !== undefined &&
+      typeof match.processId === "string" &&
+      typeof match.processName === "string" &&
+      (match.source === "stdout" || match.source === "stderr") &&
+      typeof match.line === "string" &&
+      typeof match.watch?.pattern === "string"
+    ) {
+      useProcessesStore.getState().pushWatch(sessionId, {
+        processId: match.processId,
+        processName: match.processName,
+        source: match.source,
+        line: match.line,
+        pattern: match.watch.pattern,
+        at: Date.now(),
+      });
+    }
+    return;
+  }
+
+  if (event.type === "process_output") {
+    // Throttle-debounce-friendly hook for the panel's focused
+    // process: store consumers refetch on their own schedule.
+    // We don't push the output payload (would saturate SSE for
+    // chatty processes). No store mutation here.
     return;
   }
 

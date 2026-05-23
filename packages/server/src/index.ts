@@ -28,10 +28,11 @@ import { mcpRoutes } from "./routes/mcp.js";
 import { quickActionRoutes } from "./routes/quick-actions.js";
 import { askUserQuestionRoutes } from "./routes/ask-user-question.js";
 import { todoRoutes } from "./routes/todos.js";
+import { processesRoutes } from "./routes/processes.js";
 import { searchRoutes } from "./routes/search.js";
 import { terminalRoutes } from "./routes/terminal.js";
 import { disposeAll as disposeAllMcp, loadGlobal as loadGlobalMcp } from "./mcp/manager.js";
-import { initAskUserQuestionFanout, initTodoFanout } from "./sse-bridge.js";
+import { initAskUserQuestionFanout, initProcessesFanout, initTodoFanout } from "./sse-bridge.js";
 import { disposeAllSessions } from "./session-registry.js";
 import { disposeAllPtys, installPtyExitHandler } from "./pty-manager.js";
 import { logSecretHygieneState } from "./agent-resource-loader.js";
@@ -390,6 +391,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       await api.register(quickActionRoutes);
       await api.register(askUserQuestionRoutes);
       await api.register(todoRoutes);
+      await api.register(processesRoutes);
       await api.register(searchRoutes);
       await api.register(terminalRoutes);
     },
@@ -480,6 +482,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   // session. One subscription for the lifetime of the process.
   initAskUserQuestionFanout();
   initTodoFanout();
+  initProcessesFanout();
 
   return fastify;
 }

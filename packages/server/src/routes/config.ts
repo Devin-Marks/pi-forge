@@ -1642,4 +1642,10 @@ const BUILTIN_TOOL_DESCRIPTIONS: Record<string, string> = {
     "/ deleted), descriptions, and blockedBy dependencies. State survives reload and " +
     "compaction via branch replay. Implemented in pi-forge (contract-compatible with " +
     "@juicesharp/rpiv-todo).",
+  process:
+    "Manage background processes the agent spawns (dev servers, watchers, builds). " +
+    "Separate from bash: lifecycle tracked, stdout/stderr captured to log files, " +
+    "regex log-watches and exit-alert flags trigger agent notifications. State is " +
+    "in-memory per session; killed on session dispose. Implemented in pi-forge " +
+    "(contract-compatible with @aliou/pi-processes).",
 };

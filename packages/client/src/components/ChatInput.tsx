@@ -6,7 +6,15 @@ import {
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { AtSign, Image as ImageIcon, ListChecks, Paperclip, RotateCcw, X } from "lucide-react";
+import {
+  Activity,
+  AtSign,
+  Image as ImageIcon,
+  ListChecks,
+  Paperclip,
+  RotateCcw,
+  X,
+} from "lucide-react";
 import { api, ApiError, type ProvidersListing } from "../lib/api-client";
 import { useIsMobile } from "../lib/use-is-mobile";
 import { EMPTY_MESSAGES, useSessionStore, type AgentMessageLike } from "../store/session-store";
@@ -15,6 +23,7 @@ import { useUiConfigStore } from "../store/ui-config-store";
 import { useUiStore } from "../store/ui-store";
 import { useComposerStore } from "../store/composer-store";
 import { deriveCounts, selectTodoState, useTodoStore } from "../store/todo-store";
+import { countRunning, selectProcesses, useProcessesStore } from "../store/processes-store";
 
 /**
  * Pull the user's prior prompts out of the session message history,
@@ -249,6 +258,16 @@ export function ChatInput({ sessionId }: Props) {
   const todoCounts = deriveCounts(todoState);
   const todoPanelOpen = useUiStore((s) => s.todoPanelOpen);
   const setTodoPanelOpen = useUiStore((s) => s.setTodoPanelOpen);
+
+  // Processes badge — visible only when the session has ≥1 live
+  // process. Click dispatches via ui-store; App.tsx auto-opens
+  // the right pane (if collapsed) and switches the tab to
+  // "processes". Distinct from the todo toggle (which owns its
+  // own panel-open state) because processes already has a
+  // dedicated right-pane tab — the badge is a shortcut to it.
+  const sessionProcesses = useProcessesStore((s) => selectProcesses(s, sessionId));
+  const runningProcesses = countRunning(sessionProcesses);
+  const openProcessesTab = useUiStore((s) => s.openProcessesTab);
 
   // ----- @-completion (file references in the chat input) -----
   // The popover is "open" when `acToken` is set; that happens whenever
@@ -1504,7 +1523,10 @@ export function ChatInput({ sessionId }: Props) {
               ))}
             </div>
           )}
-          {(modelError !== undefined || textareaHeight !== undefined || todoCounts.total > 0) && (
+          {(modelError !== undefined ||
+            textareaHeight !== undefined ||
+            todoCounts.total > 0 ||
+            runningProcesses > 0) && (
             <div className="ml-auto flex items-center gap-2">
               {modelError !== undefined && (
                 <span className="text-[11px] text-red-400">{modelError}</span>
@@ -1521,6 +1543,23 @@ export function ChatInput({ sessionId }: Props) {
                   aria-label="Reset chat input height to default"
                 >
                   <RotateCcw size={12} />
+                </button>
+              )}
+              {/* Processes shortcut — only renders when the
+                  session has ≥1 running process. Clicking
+                  switches the right-pane tab to "processes" and
+                  auto-opens the right pane if collapsed (via
+                  ui-store → App.tsx effect). */}
+              {runningProcesses > 0 && (
+                <button
+                  type="button"
+                  onClick={() => openProcessesTab()}
+                  className="flex items-center gap-1 rounded px-1.5 py-1 text-[11px] text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 light:text-neutral-600 light:hover:bg-neutral-200 light:hover:text-neutral-900"
+                  title={`${runningProcesses} background process(es) running — view processes panel`}
+                  aria-label="View processes panel"
+                >
+                  <Activity size={12} className="text-emerald-400 light:text-emerald-700" />
+                  <span>{runningProcesses}</span>
                 </button>
               )}
               {/* Todo toggle — only renders when the session has
