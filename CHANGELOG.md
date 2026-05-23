@@ -15,6 +15,8 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.2.5] — 2026-05-23
+
 ### Added
 
 - **`process` tool — browser-native implementation of the
