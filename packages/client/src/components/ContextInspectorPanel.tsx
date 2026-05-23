@@ -5,6 +5,22 @@ import { api, ApiError, type ContextTurn, type SessionContextResponse } from "..
 import { useSessionStore } from "../store/session-store";
 
 /**
+ * Chars-per-token estimate used by every local approximation in this
+ * panel (the breakdown bar, the per-row badge, the per-turn "New"
+ * delta). The textbook "4 chars per token" comes from English prose;
+ * the inspector's job is to bucket *what's actually in the context*,
+ * and that's predominantly tool-call JSON, code, diffs, and search
+ * results — content where real tokenizers are denser. Empirically 3.0
+ * lands much closer for pi-forge sessions than 4.0 did (4.0 made
+ * tool-result-heavy turns visibly under-count by 20–40%). All three
+ * callsites read this constant so the breakdown bar, the row badge,
+ * and the "New" column stay consistent with each other; the
+ * authoritative count still comes from the SDK's `usage.input` and
+ * shows on the top context-window bar separately.
+ */
+const CHARS_PER_TOKEN = 3;
+
+/**
  * Phase 16 — Context & Token Inspector.
  *
  * Right-pane tab showing the messages the agent will send to the
@@ -243,7 +259,7 @@ function TokenSummary({
 
       {/* Per-category breakdown — what's *actually* taking up the
           window, derived client-side from the current message array.
-          Estimates are ~chars/4 (same heuristic as estimateTokens).
+          Estimates are ~chars/3 (same heuristic as estimateTokens).
           The SDK doesn't ship a categorized breakdown, so this is
           best-effort and may differ from the provider's true count. */}
       <ContextBreakdown breakdown={breakdown} contextWindow={cu.contextWindow} />
@@ -397,7 +413,7 @@ function ContextBreakdown({
     <div>
       <div className="mb-1 flex items-center justify-between text-[10px] text-neutral-400">
         <span>What&rsquo;s in the context</span>
-        <span className="text-neutral-600" title="Sum of category estimates (~chars/4)">
+        <span className="text-neutral-600" title="Sum of category estimates (~chars/3)">
           ~{formatTokens(total)} tok
           {contextWindow > 0 && (
             <span className="ml-1">({((total / contextWindow) * 100).toFixed(1)}%)</span>
@@ -447,9 +463,10 @@ function ContextBreakdown({
 
 /**
  * Walk the messages array and bucket text into context categories.
- * Token estimate is the same ~chars/4 heuristic estimateTokens
- * uses — provider-specific tokenizers would be more accurate, but
- * the per-turn `usage` data above carries the authoritative numbers.
+ * Token estimate is the same ~chars/CHARS_PER_TOKEN heuristic that
+ * `estimateTokens` uses — provider-specific tokenizers would be
+ * more accurate, but the per-turn `usage` data above carries the
+ * authoritative numbers.
  * This breakdown answers "where did the tokens go?", which is a
  * relative question that survives the heuristic.
  *
@@ -491,20 +508,35 @@ function categorizeContext(
       }
     } else if (role === "assistant" && Array.isArray(content)) {
       for (const c of content) {
-        const o = c as { type?: unknown; text?: unknown; input?: unknown };
+        // Block types per @earendil-works/pi-ai's types.d.ts:
+        // TextContent     {type:"text",     text:string}
+        // ThinkingContent {type:"thinking", thinking:string}   ← NOT `text`
+        // ToolCall        {type:"toolCall", arguments:object}  ← NOT `toolUse`/`input`
+        // Earlier revisions of this categorizer used the wire-level
+        // Anthropic shape (`toolUse`/`input`), which silently zeroed
+        // out the toolCalls + thinking buckets and made every byte
+        // they should have held leak into `systemAndTools` (the
+        // residual). End-effect: a tool-call turn made it look like
+        // the SDK was double-counting the tool result.
+        const o = c as {
+          type?: unknown;
+          text?: unknown;
+          thinking?: unknown;
+          arguments?: unknown;
+        };
         if (o.type === "text" && typeof o.text === "string") {
           asstTextChars += o.text.length;
-        } else if (o.type === "thinking" && typeof o.text === "string") {
-          thinkingChars += o.text.length;
-        } else if (o.type === "toolUse") {
+        } else if (o.type === "thinking" && typeof o.thinking === "string") {
+          thinkingChars += o.thinking.length;
+        } else if (o.type === "toolCall") {
           // Tool args go through the LLM as a JSON-encoded string;
           // measuring the JSON length is closer to the truth than
           // measuring raw character counts of object values.
           try {
-            toolCallChars += JSON.stringify(o.input ?? {}).length;
+            toolCallChars += JSON.stringify(o.arguments ?? {}).length;
           } catch {
             // circular ref → estimate via toString
-            toolCallChars += String(o.input ?? "").length;
+            toolCallChars += String(o.arguments ?? "").length;
           }
         }
       }
@@ -523,11 +555,13 @@ function categorizeContext(
       }
     }
   }
-  // 4 chars / token is the conventional rule of thumb. Image rough
-  // estimate at 1500 tok/image — between Anthropic's ~1200 (1024px
-  // square) and OpenAI's ~1700 (high-detail). Same number used in
-  // estimateTokens for consistency; both undercount large images.
-  const tokens = (chars: number): number => Math.ceil(chars / 4);
+  // CHARS_PER_TOKEN is tuned for code/JSON-heavy pi-forge sessions;
+  // see the constant's docstring at the top of the file. Image
+  // rough estimate at 1500 tok/image — between Anthropic's ~1200
+  // (1024px square) and OpenAI's ~1700 (high-detail). Same numbers
+  // used in `estimateTokens` for consistency; both undercount large
+  // images.
+  const tokens = (chars: number): number => Math.ceil(chars / CHARS_PER_TOKEN);
   const userPrompts = tokens(userChars);
   const assistantText = tokens(asstTextChars);
   const thinking = tokens(thinkingChars);
@@ -585,7 +619,7 @@ function TurnsTable({
             <th className="pr-2 text-left font-normal">Model</th>
             <th
               className="pr-2 text-right font-normal"
-              title="Estimated new tokens this turn — user message + tool results since the prior assistant turn (~chars/4 estimate). Distinct from Prompt."
+              title="Estimated new tokens this turn — user message + tool results since the prior assistant turn (~chars/3 estimate). Distinct from Prompt."
             >
               New
             </th>
@@ -931,20 +965,21 @@ function extractPreview(message: Record<string, unknown>, showThinking: boolean)
   if (!Array.isArray(content)) return "";
   const parts: string[] = [];
   for (const c of content) {
-    const o = c as { type?: unknown; text?: unknown; name?: unknown };
+    const o = c as { type?: unknown; text?: unknown; thinking?: unknown; name?: unknown };
     if (o.type === "thinking" && !showThinking) continue;
     if (o.type === "text" && typeof o.text === "string") parts.push(o.text);
-    else if (o.type === "thinking" && typeof o.text === "string")
-      parts.push(`[thinking] ${o.text}`);
-    else if (o.type === "toolUse" && typeof o.name === "string") parts.push(`[tool: ${o.name}]`);
+    else if (o.type === "thinking" && typeof o.thinking === "string")
+      parts.push(`[thinking] ${o.thinking}`);
+    else if (o.type === "toolCall" && typeof o.name === "string") parts.push(`[tool: ${o.name}]`);
   }
   return parts.join(" ").slice(0, 200);
 }
 
 /**
- * Rough token estimate: ~4 chars per token. Used in the row badge
- * as an at-a-glance signal; the real per-turn counts come from
- * the SDK's usage field rendered in TurnsTable. Image constant
+ * Rough token estimate using CHARS_PER_TOKEN (see top-of-file
+ * docstring for why 3 and not 4). Used in the row badge as an
+ * at-a-glance signal; the real per-turn counts come from the
+ * SDK's usage field rendered in TurnsTable. Image constant
  * matches `categorizeContext` for consistency (1500 tok/image:
  * between Anthropic's ~1200 and OpenAI's ~1700 high-detail).
  */
@@ -953,7 +988,7 @@ function estimateTokens(message: Record<string, unknown>): number {
   const u = message.usage as { totalTokens?: unknown } | undefined;
   if (u !== undefined && typeof u.totalTokens === "number") return u.totalTokens;
   const content = message.content;
-  if (typeof content === "string") return Math.ceil(content.length / 4);
+  if (typeof content === "string") return Math.ceil(content.length / CHARS_PER_TOKEN);
   if (!Array.isArray(content)) return 0;
   let chars = 0;
   let images = 0;
@@ -962,7 +997,7 @@ function estimateTokens(message: Record<string, unknown>): number {
     if (typeof o.text === "string") chars += o.text.length;
     if (o.type === "image") images += 1;
   }
-  return Math.ceil(chars / 4) + images * 1500;
+  return Math.ceil(chars / CHARS_PER_TOKEN) + images * 1500;
 }
 
 /**
@@ -978,8 +1013,9 @@ function estimateTokens(message: Record<string, unknown>): number {
  * turns' "new" only includes content between consecutive assistant
  * messages.
  *
- * Uses the same ~chars/4 heuristic as `estimateTokens` and
- * `categorizeContext` so the three numbers tell a consistent story.
+ * Uses the same ~chars/CHARS_PER_TOKEN heuristic as
+ * `estimateTokens` and `categorizeContext` so the three numbers
+ * tell a consistent story.
  * This is a UX-grade estimate; the per-turn `Prompt` column shows
  * the provider's authoritative input number alongside.
  */
@@ -1033,9 +1069,16 @@ function renderExpanded(
     return (
       <>
         {content.map((c, i) => {
-          const o = c as { type?: unknown; text?: unknown; name?: unknown; input?: unknown };
+          const o = c as {
+            type?: unknown;
+            text?: unknown;
+            thinking?: unknown;
+            name?: unknown;
+            arguments?: unknown;
+          };
           if (o.type === "thinking" && !showThinking) return null;
           if (o.type === "text" || o.type === "thinking") {
+            const body = o.type === "thinking" ? o.thinking : o.text;
             return (
               <pre
                 key={`${index}-${i}`}
@@ -1043,18 +1086,18 @@ function renderExpanded(
                   o.type === "thinking" ? "italic text-neutral-500" : "text-neutral-200"
                 }`}
               >
-                {String(o.text ?? "")}
+                {String(body ?? "")}
               </pre>
             );
           }
-          if (o.type === "toolUse") {
+          if (o.type === "toolCall") {
             return (
               <div key={`${index}-${i}`} className="rounded border border-neutral-800 p-2">
                 <p className="mb-1 text-[10px] text-neutral-500">
                   tool call: <span className="font-mono">{String(o.name ?? "unknown")}</span>
                 </p>
                 <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] text-neutral-300">
-                  {jsonish(o.input)}
+                  {jsonish(o.arguments)}
                 </pre>
               </div>
             );

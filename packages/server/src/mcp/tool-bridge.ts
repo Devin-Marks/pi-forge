@@ -145,13 +145,19 @@ export function mcpResultToAgentResult(res: unknown): AgentToolResult<unknown> {
 
 /**
  * Default cap on the total *text* size (across all text blocks) of an
- * MCP tool result, in characters. ~100k chars ≈ ~25k tokens via the
- * standard chars/4 heuristic the SDK uses elsewhere — large enough
- * that almost no legitimate single tool call hits it, small enough
- * that one accidental "list everything" doesn't blow a 200k context
- * window. Image blocks are passed through untouched (truncating
- * base64 mid-byte breaks the image; image tokens are
- * provider-specific anyway and not measured here).
+ * MCP tool result, in characters. 30k chars ≈ 10k tokens at the
+ * code/JSON chars/3 ratio (the older 4:1 estimate was tuned for
+ * prose and systematically under-counted real tool output by
+ * 20–40%). The earlier 100k-char (≈ 33k-token) cap let one chatty
+ * `list_everything` call dump 30k+ real tokens into context, eating
+ * most of a session's usable budget in a single round trip and
+ * triggering compaction far earlier than the operator expects. 10k
+ * tokens is the practical upper bound for a *single* tool round
+ * trip — anything bigger should be paginated, filtered, or written
+ * to disk for the agent to `read` incrementally. Image blocks are
+ * passed through untouched (truncating base64 mid-byte breaks the
+ * image; image tokens are provider-specific anyway and not measured
+ * here).
  *
  * Split: 60% head + 40% tail. Head usually carries summary / total /
  * schema context that the agent needs to interpret the rest; tail
@@ -166,7 +172,7 @@ export function mcpResultToAgentResult(res: unknown): AgentToolResult<unknown> {
  * No per-tool override yet — add when a real workload needs a higher
  * or lower cap. Hardcoded constant is the deliberate first cut.
  */
-export const MCP_TEXT_CAP_CHARS = 100_000;
+export const MCP_TEXT_CAP_CHARS = 30_000;
 export const MCP_TEXT_HEAD_RATIO = 0.6;
 
 export type ContentBlock =
