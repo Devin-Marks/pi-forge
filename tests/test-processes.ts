@@ -360,7 +360,14 @@ async function main(): Promise<void> {
       const r = await call({
         action: "start",
         name: "sleeper",
-        command: "sleep 30",
+        // `exec sleep 30` — without `exec`, /bin/sh forks then waits
+        // on `sleep`, and on some shells (Ubuntu's `dash`) SIGTERM
+        // sent to the shell parent does NOT propagate to the child
+        // `sleep`. The sleeper then survives SIGTERM and only the
+        // 5 s-grace SIGKILL ends it. With `exec`, the shell replaces
+        // itself with `sleep`, so SIGTERM lands directly on the
+        // process we're trying to kill and `close` fires within ms.
+        command: "exec sleep 30",
       });
       const info = r.details.process as { id: string; status: string } | undefined;
       p2Id = info?.id ?? "";
@@ -372,7 +379,33 @@ async function main(): Promise<void> {
       const r = await call({ action: "kill", id: p2Id });
       assert("kill sleeper → success", r.details.success === true);
     }
-    await sleep(400);
+    // Wait (poll the live SSE events array) for status=killed to
+    // arrive on the wire. Replaces the previous fixed 400 ms sleep
+    // which was tight enough to race on a slow CI runner: SIGTERM →
+    // child exit → close handler → notify can take longer than 400 ms
+    // even when everything works correctly. 8 s ceiling covers the
+    // worst case (5 s grace + 2 s SIGKILL timeout in manager.ts +
+    // epsilon for SSE delivery).
+    {
+      const deadline = Date.now() + 8_000;
+      while (Date.now() < deadline) {
+        const updates = sseHandle.events.filter(
+          (e) =>
+            e.type === "process_update" &&
+            Array.isArray((e as { processes?: { id: string; status: string }[] }).processes),
+        );
+        const last = updates
+          .map((e) => {
+            const procs = (e as unknown as { processes: { id: string; status: string }[] })
+              .processes;
+            return procs.find((p) => p.id === p2Id)?.status;
+          })
+          .filter((s): s is string => typeof s === "string")
+          .pop();
+        if (last === "killed") break;
+        await sleep(100);
+      }
+    }
     {
       const r = await call({ action: "list" });
       const procs = r.details.processes as { id: string; status: string }[] | undefined;
