@@ -304,55 +304,33 @@ async function main(): Promise<void> {
       );
     }
 
-    // 9. DELETE removes the record but leaves the project folder intact
-    //    (cascade defaults to false; that path is exercised below).
+    // 9. DELETE removes the project record AND the session dir (since
+    //    v1.3.0 the cascade is unconditional). The workspace folder
+    //    on disk is left intact — that's user-owned work.
+    //    Plant a fake JSONL under the session dir first so we can
+    //    assert it's actually removed.
     {
+      const sessionDir = join(workspacePath, ".pi", "sessions", created.id);
+      await mkdir(sessionDir, { recursive: true });
+      await writeFile(join(sessionDir, "abc.jsonl"), `{"type":"session"}\n`);
       const { status, body } = await jsend("DELETE", `${base}/api/v1/projects/${created.id}`);
       assert("DELETE /projects/:id → 200", status === 200);
       assert(
-        "  default delete returns { cascaded: false }",
-        (body as { cascaded?: boolean }).cascaded === false,
+        "  delete returns { cascaded: true }",
+        (body as { cascaded?: boolean }).cascaded === true,
       );
       const list = (await jget(`${base}/api/v1/projects`)).body as { projects: Project[] };
       assert("  list is empty after delete", list.projects.length === 0);
-      const folderStat = await stat(repoFolder).catch(() => undefined);
-      assert(
-        "  on-disk folder still exists after delete",
-        folderStat !== undefined && folderStat.isDirectory(),
-      );
-    }
-
-    // 9b. DELETE with ?cascade=1 also removes the project's session dir.
-    //     Re-create the project, plant a fake JSONL under the session
-    //     dir, then delete with cascade and verify both are gone.
-    {
-      const { body: cb } = await jsend("POST", `${base}/api/v1/projects`, {
-        name: "to-cascade",
-        path: repoFolder,
-      });
-      const cascadeId = (cb as Project).id;
-      const sessionDir = join(workspacePath, ".pi", "sessions", cascadeId);
-      await mkdir(sessionDir, { recursive: true });
-      await writeFile(join(sessionDir, "abc.jsonl"), `{"type":"session"}\n`);
-      const { status, body } = await jsend(
-        "DELETE",
-        `${base}/api/v1/projects/${cascadeId}?cascade=1`,
-      );
-      assert("DELETE /projects/:id?cascade=1 → 200", status === 200);
-      assert(
-        "  cascade delete returns { cascaded: true }",
-        (body as { cascaded?: boolean }).cascaded === true,
-      );
       const dirStat = await stat(sessionDir).catch(() => undefined);
-      assert("  session dir removed by cascade", dirStat === undefined);
+      assert("  session dir removed", dirStat === undefined);
       const folderStat = await stat(repoFolder).catch(() => undefined);
       assert(
-        "  project folder still on disk after cascade",
+        "  on-disk project folder still exists after delete",
         folderStat !== undefined && folderStat.isDirectory(),
       );
     }
 
-    // 9c. DELETE ?cascade=1 on a project that never had any sessions.
+    // 9b. DELETE on a project that never had any sessions.
     //     The most common real-world case — `rm({ force: true })` on a
     //     missing dir should still report `cascaded: true`.
     {
@@ -363,11 +341,8 @@ async function main(): Promise<void> {
         path: emptyFolder,
       });
       const emptyId = (cb as Project).id;
-      const { status, body } = await jsend(
-        "DELETE",
-        `${base}/api/v1/projects/${emptyId}?cascade=1`,
-      );
-      assert("cascade on project with no sessions → 200", status === 200);
+      const { status, body } = await jsend("DELETE", `${base}/api/v1/projects/${emptyId}`);
+      assert("delete on project with no sessions → 200", status === 200);
       assert(
         "  cascaded: true even when no session dir existed",
         (body as { cascaded?: boolean }).cascaded === true,

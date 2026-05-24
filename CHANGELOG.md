@@ -15,7 +15,117 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
-## [1.2.5] — 2026-05-23
+### Added
+
+- **Background processes notify the agent on completion.** The
+  `process` tool's `alertOnSuccess` / `alertOnFailure` /
+  `alertOnKill` flags were previously stored on `ProcessInfo` but
+  never consumed — nothing fired when a process exited. Now: when
+  a process exits and the matching alert flag is set, the manager
+  emits a `process_alert` event that the SSE bridge translates
+  into `session.sendUserMessage()` with `deliverAs: "followUp"`,
+  giving the agent a turn to react. Message format:
+  `[process alert] "<name>" (id=<id>) finished successfully (exit
+  0).` (or `failed with exit code N`, or `was killed externally`)
+  + a nudge to call `process output` to inspect what it produced.
+  Defaults: alertOnFailure is on (the common case the agent
+  usually wants to know about), alertOnSuccess + alertOnKill are
+  off (would be noisy for the common cases). Tool-initiated kills
+  (the agent calling `process kill` itself) never trigger an
+  alert — would be redundant. The alert lands in the chat as a
+  normal user-shaped bubble with the `[process alert]` prefix so
+  it's obvious it's automated rather than typed by the user.
+
+### Fixed
+
+- **Spurious "Reconnecting" banner during long idle gaps on
+  deployments behind HAProxy.** Same root cause as the
+  compaction-banner fix: the 20-second heartbeat was only ~13
+  bytes (`: heartbeat\n\n`), below HAProxy's small-write buffer
+  threshold. During a long-running agent turn with no token output
+  (slow LLM call, long-running tool, multi-second prefill),
+  heartbeats sat in the router's response buffer and never reached
+  the client. The connection eventually timed out somewhere on
+  the path, and the browser showed a misleading "Reconnecting —
+  server closed stream" banner even though the server side was
+  still alive. Fix: pad every heartbeat to 2KB so it crosses the
+  buffer-flush threshold and actually reaches the client. Same
+  mechanism as the per-turn compaction-start padding flush, but
+  applied to the every-20s heartbeat. Bandwidth cost is ~100
+  bytes/sec/client sustained — negligible.
+
+- **Clone a git repository as a new project.** New "Clone repository"
+  tab in the project picker. Streams `git clone --progress` over SSE
+  so the user sees a real-time progress bar + phase label
+  ("Receiving objects 45%", "Resolving deltas 100%", etc.) instead
+  of a blocked spinner during a multi-minute clone of a large repo.
+  Form takes:
+  - **Repository URL** — HTTPS or `file://`. SSH URLs are out of
+    scope for v1.3.0; use `gh repo clone` from the integrated
+    terminal for SSH-based clones.
+  - **Branch** (optional) — defaults to the remote's HEAD.
+  - **Folder name** (auto-filled from the URL's last path segment,
+    overrideable) — relative to the workspace root.
+  - **Project name** (auto-filled from the folder name).
+  - **Access token** (optional, masked) — for private repos. Embedded
+    as `x-access-token:<token>` in the clone URL (the GitHub
+    convention; works for GitHub.com, GitHub Enterprise, GitLab PATs,
+    Bitbucket app passwords, Gitea PATs). Stripped from
+    `.git/config` after success; if the clone fails partway, the
+    target directory is rm-rf'd so no leftover token bytes survive.
+  Defense-in-depth: target path is validated to be inside
+  `WORKSPACE_PATH` (403 otherwise); pre-existing non-empty target
+  returns 409 before any spawn; clone is cancellable via the
+  request `AbortSignal` (client disconnect kills the child with
+  SIGTERM → 5s grace → SIGKILL). Same heartbeat-and-padding-flush
+  pattern as the compaction SSE so the stream works behind
+  OpenShift's HAProxy router.
+- **`gh` (GitHub CLI) in the Docker image.** Installed from the
+  official GitHub apt repository so `gh auth login`, `gh pr`,
+  `gh issue`, `gh repo clone`, etc. work out of the box in the
+  integrated terminal and via the agent's `bash` tool. Available on
+  PATH for the running server and any process it spawns.
+
+### Changed
+
+- **Session DELETE always hard-deletes the JSONL.** Previously
+  required `?hard=1` on the route and a `{hard: true}` opt in the
+  client API — but the UI passed it unconditionally, so the
+  non-destructive path was vestigial and confusing for programmatic
+  clients. Now: `DELETE /api/v1/sessions/:id` always disposes the
+  live session AND removes the JSONL AND cascade-removes any
+  pi-subagents child JSONLs nested under it. Client API simplified
+  to drop the `hard` parameter. Removing the JSONL was already what
+  every UI delete did; this just makes the default match the user's
+  mental model of "delete means gone."
+- **Project DELETE always wipes the session directory + auto-disposes
+  live sessions.** Same "delete means gone" framing as the session
+  change above. Three things change:
+  - The session-directory cleanup was previously opt-in via
+    `?cascade=1` on the route + a checkbox in the delete-project
+    dialog. The default-off behavior left a `<projectId>/`
+    directory on disk that the UI had no way to reach ever again
+    (even when individual sessions had been deleted earlier —
+    `deleteColdSession` only unlinks the JSONL, not the parent
+    dir). Now: `DELETE /api/v1/projects/:id` always removes the
+    project record AND rm -rf's `${SESSION_DIR}/<projectId>/`,
+    JSONLs and all. Route drops the `?cascade=` query param;
+    client API drops the `{cascade}` opt.
+  - The UI no longer blocks delete when the project has live
+    sessions. The previous "dispose them first, then try again"
+    alert was busy-work — live sessions are now disposed
+    automatically as the first step of the delete (in parallel,
+    best-effort), then the server-side rm -rf cleans up their
+    JSONLs.
+  - The sidebar delete dialog gains a required confirmation
+    checkbox when the project has sessions: "Yes, I understand
+    this will delete N session(s). This can't be undone." Forces
+    a deliberate acknowledgment for the destructive case without
+    re-introducing the old opt-in cascade toggle. Empty projects
+    skip the checkbox.
+  - The project's workspace folder
+    (`${WORKSPACE_PATH}/<projectName>/`) is still never touched —
+    that's almost always real work the user wants to keep.
 
 ### Added
 

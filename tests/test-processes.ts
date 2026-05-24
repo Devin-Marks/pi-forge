@@ -458,6 +458,74 @@ async function main(): Promise<void> {
       );
     }
 
+    // -------- agent alerts on process completion --------
+    // alertOnSuccess, alertOnFailure, alertOnKill fire `process_alert`
+    // events on the manager; the SSE bridge translates those into
+    // session.sendUserMessage so the agent gets a turn to react.
+    // Here we just subscribe to the manager directly and assert the
+    // events come out in the expected shape — the
+    // sendUserMessage hand-off is exercised end-to-end by manual
+    // smoke + the live-prompt branch in CI when enabled.
+    {
+      const alerts: {
+        reason: string;
+        id: string;
+        exitCode: number | null;
+      }[] = [];
+      const unsub = managerMod.processManager.subscribe((e) => {
+        if (e.type === "process_alert") {
+          const ev = e as unknown as {
+            reason: string;
+            info: { id: string; exitCode: number | null };
+          };
+          alerts.push({ reason: ev.reason, id: ev.info.id, exitCode: ev.info.exitCode });
+        }
+      });
+      try {
+        // success path
+        const ok = await call({
+          action: "start",
+          name: "alert-ok",
+          command: "true",
+          alertOnSuccess: true,
+        });
+        const okId = (ok.details.process as { id: string }).id;
+        // failure path
+        const fail = await call({
+          action: "start",
+          name: "alert-fail",
+          command: "false",
+          // alertOnFailure defaults true; we just leave it.
+        });
+        const failId = (fail.details.process as { id: string }).id;
+        await sleep(600);
+        const okAlert = alerts.find((a) => a.id === okId);
+        const failAlert = alerts.find((a) => a.id === failId);
+        assert("alertOnSuccess fired for clean exit", okAlert?.reason === "success");
+        assert("  carries exitCode=0", okAlert?.exitCode === 0);
+        assert("alertOnFailure fired for non-zero exit", failAlert?.reason === "failure");
+        assert(
+          "  carries non-zero exitCode",
+          failAlert !== undefined && failAlert.exitCode !== null && failAlert.exitCode !== 0,
+        );
+        // killing via the tool should NOT alert (the agent did it on
+        // purpose; would be redundant noise)
+        const k = await call({
+          action: "start",
+          name: "alert-killed-by-tool",
+          command: "exec sleep 30",
+          alertOnKill: true,
+        });
+        const kId = (k.details.process as { id: string }).id;
+        await call({ action: "kill", id: kId });
+        await sleep(400);
+        const killAlert = alerts.find((a) => a.id === kId);
+        assert("tool-initiated kill does NOT alert", killAlert === undefined);
+      } finally {
+        unsub();
+      }
+    }
+
     // -------- clear finished --------
     {
       const before = ((await call({ action: "list" })).details.processes as unknown[]).length;

@@ -31,17 +31,45 @@ import { processManager } from "./processes/manager.js";
 const BACKPRESSURE_LIMIT_BYTES = 8 * 1024 * 1024;
 
 /**
- * Cadence at which we send an SSE comment line (`: heartbeat\n\n`) on
- * every open stream. EventSource ignores comment lines silently, so the
- * browser sees nothing — but the bytes reset any idle-connection timer
- * sitting between us and the client. OpenShift's HAProxy router defaults
+ * Cadence at which we send an SSE keepalive on every open stream.
+ * EventSource ignores comment lines silently, so the browser sees
+ * nothing — but the bytes reset any idle-connection timer sitting
+ * between us and the client. OpenShift's HAProxy router defaults
  * `timeout server` to 30s for HTTP routes, and any L7 proxy / load
- * balancer enforces a similar window; with no agent activity between
- * turns, an idle SSE stream gets killed by the middlebox and the
- * browser shows "reconnecting." 20s gives us comfortable margin under
- * the typical 30s default.
+ * balancer enforces a similar window; with no agent activity
+ * between turns, an idle SSE stream gets killed by the middlebox
+ * and the browser shows "reconnecting." 20s gives us comfortable
+ * margin under the typical 30s default.
  */
 const HEARTBEAT_INTERVAL_MS = 20_000;
+
+/**
+ * Heartbeat payload, padded to 2KB.
+ *
+ * The earlier ~13-byte `: heartbeat\n\n` payload kept the *connection*
+ * alive (any byte resets the idle timer) but didn't help with L7
+ * proxies (most painfully OpenShift's HAProxy router) that buffer
+ * small writes until either a threshold is reached or the connection
+ * closes. During a long-running agent turn with no token output (a
+ * slow LLM call, a long-running tool, a multi-second compaction
+ * prefill), the symptom was: heartbeats sit in HAProxy's response
+ * buffer, the browser sees nothing for 30+ seconds, the connection
+ * times out somewhere on the path, and the user gets a misleading
+ * "Reconnecting — server closed stream" banner.
+ *
+ * Padding the heartbeat to 2KB pushes past the buffer-flush
+ * threshold so every heartbeat actually reaches the client. Same
+ * mechanism as the compaction-start one-shot padding flush, but
+ * applied every 20s instead of per-turn.
+ *
+ * Bandwidth cost: ~100 bytes/sec/client sustained. Negligible.
+ *
+ * Marker text `heartbeat` is kept so an operator inspecting raw SSE
+ * frames in `tcpdump` / `curl -N` can identify what they're looking
+ * at; the underscore padding is just deliberate filler.
+ */
+const HEARTBEAT_PADDING_BYTES = 2048;
+const HEARTBEAT_LINE = `: heartbeat ${"_".repeat(HEARTBEAT_PADDING_BYTES - 14)}\n\n`;
 
 /**
  * One-shot padding flush we send right after the `compaction_start`
@@ -194,6 +222,50 @@ export function initProcessesFanout(): () => void {
           // best-effort fanout
         }
       }
+      return;
+    }
+    if (event.type === "process_alert") {
+      // Inject a user-shaped message into the live session so the
+      // agent gets a turn to react to the process finishing. The
+      // alertOn* flags were set at start() time and already filtered
+      // in the manager — by the time we get here, the alert is
+      // wanted. Best-effort: `sendUserMessage` returns a Promise but
+      // we don't await it (the SSE fanout shouldn't block on a
+      // round-trip; agent processing happens in the background and
+      // the result lands in the session JSONL like any other turn).
+      //
+      // deliverAs: "followUp" — if the agent is mid-turn, queue the
+      // alert until that turn completes. If idle, sendUserMessage
+      // kicks off a fresh turn immediately. Either way the user
+      // sees the alert message in the chat as a normal user bubble
+      // (with the `[process alert]` prefix making it obvious it's
+      // automated).
+      const reasonText =
+        event.reason === "success"
+          ? `finished successfully (exit ${event.info.exitCode ?? "?"})`
+          : event.reason === "failure"
+            ? `failed with exit code ${event.info.exitCode ?? "?"}`
+            : "was killed externally";
+      const message =
+        `[process alert] "${event.info.name}" (id=${event.info.id}) ${reasonText}. ` +
+        `Use \`process output\` to inspect what it produced if you need to react.`;
+      void live.session
+        .sendUserMessage(message, { deliverAs: "followUp" })
+        .catch((err: unknown) => {
+          // Swallow — most likely failure mode is "session was
+          // disposed between fanout and queue-write," which is benign.
+          process.stderr.write(
+            JSON.stringify({
+              level: "warn",
+              time: new Date().toISOString(),
+              msg: "process-alert sendUserMessage failed",
+              sessionId: event.sessionId,
+              processId: event.info.id,
+              reason: event.reason,
+              err: err instanceof Error ? err.message : String(err),
+            }) + "\n",
+          );
+        });
       return;
     }
     // Lifecycle events all carry a full-snapshot update on the
@@ -449,13 +521,17 @@ export function createSSEClient(reply: FastifyReply, live: LiveSession): SSEClie
     raw.on("close", close);
     raw.on("error", close);
 
-    // Idle-timer reset for L7 proxies (OpenShift HAProxy router, nginx,
-    // ALB, etc.). Comment line, no `data:` field — EventSource skips it.
-    // Uses writeRaw so the same backpressure guard applies; if the socket
-    // is wedged the heartbeat will trip the limit and call close(), which
-    // tears the timer down.
+    // Idle-timer reset + buffer-flush for L7 proxies (OpenShift
+    // HAProxy router, nginx, ALB, etc.). Comment line, no `data:`
+    // field — EventSource skips it. HEARTBEAT_LINE is padded to 2KB
+    // to defeat HAProxy's small-write buffering so heartbeats
+    // actually reach the client during long idle gaps; see the
+    // HEARTBEAT_LINE doc-comment for the full rationale. Uses
+    // writeRaw so the same backpressure guard applies; if the
+    // socket is wedged the heartbeat will trip the limit and call
+    // close(), which tears the timer down.
     heartbeatTimer = setInterval(() => {
-      writeRaw(": heartbeat\n\n");
+      writeRaw(HEARTBEAT_LINE);
     }, HEARTBEAT_INTERVAL_MS);
     // Don't keep the Node event loop alive just for heartbeats — when
     // the socket closes the close handler clears the timer anyway.

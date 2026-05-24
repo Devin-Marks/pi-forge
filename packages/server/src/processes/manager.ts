@@ -181,7 +181,16 @@ class ProcessManagerRegistry {
     child.on("close", (code, signal) => {
       info.endTime = Date.now();
       info.exitCode = typeof code === "number" ? code : null;
-      const wasKilled = managed.killSent !== null || signal !== null;
+      // `killSent` is set when WE called .kill() (via the `process
+      // kill` tool); `signal` is non-null when the child died from
+      // any signal (ours or external). Both contribute to "wasKilled"
+      // for the status display, but only the EXTERNAL case (signal
+      // present, killSent absent) triggers an `alertOnKill` —
+      // alerting the agent that it killed something is redundant
+      // and noisy.
+      const killedByUs = managed.killSent !== null;
+      const killedExternally = !killedByUs && signal !== null;
+      const wasKilled = killedByUs || killedExternally;
       info.status = wasKilled ? "killed" : "exited";
       info.success = info.exitCode === 0 && !wasKilled;
       if (managed.killTimer !== null) {
@@ -198,6 +207,17 @@ class ProcessManagerRegistry {
       // needs to see; log cleanup is bookkeeping.
       this.notify({ type: "process_ended", sessionId, info });
       this.notify({ type: "processes_changed", sessionId });
+      // Agent-alert events. The three alertOn* flags were captured
+      // at start() time; honor them now. Order chosen so a single
+      // outcome only fires one alert — a failure isn't ALSO a "non-
+      // success" alert, etc.
+      if (killedExternally && info.alertOnKill) {
+        this.notify({ type: "process_alert", sessionId, info, reason: "killed" });
+      } else if (!wasKilled && info.exitCode === 0 && info.alertOnSuccess) {
+        this.notify({ type: "process_alert", sessionId, info, reason: "success" });
+      } else if (!wasKilled && info.exitCode !== 0 && info.alertOnFailure) {
+        this.notify({ type: "process_alert", sessionId, info, reason: "failure" });
+      }
       void this.finalize(managed);
     });
 

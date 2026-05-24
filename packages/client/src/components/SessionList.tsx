@@ -108,11 +108,11 @@ export function SessionList({ projectId }: Props) {
 
   const onDeleteClick = (sessionId: string): void => {
     if (armedDeleteId === sessionId) {
-      // Second click on the armed button — fire and clear. hard:true
-      // unconditionally, same matrix as the bulk path: dispose live +
-      // remove JSONL atomically.
+      // Second click on the armed button — fire and clear.
+      // Server's DELETE always dispose+remove JSONL atomically since
+      // v1.3.0 (the legacy `?hard=` toggle is gone).
       setArmedDeleteId(undefined);
-      void disposeSession(sessionId, { hard: true });
+      void disposeSession(sessionId);
       return;
     }
     // First click (or click on a different row's ×) — arm this row.
@@ -198,13 +198,11 @@ export function SessionList({ projectId }: Props) {
     if (deleteDialog === undefined) return;
     const ids = deleteDialog.sessionIds;
     setDeleteDialog(undefined);
-    // hard:true unconditionally — server's DELETE route handles the
-    // live + hard case by disposing the in-memory entry AND
-    // removing the on-disk JSONL atomically. The route's docs spell
-    // out the full matrix; we always pick the "actually delete" leg.
+    // Server's DELETE always dispose+remove JSONL atomically since
+    // v1.3.0 (the legacy `?hard=` toggle is gone).
     for (const id of ids) {
       try {
-        await disposeSession(id, { hard: true });
+        await disposeSession(id);
       } catch {
         // store.error renders the first failure; keep going so a
         // single missing/blocked session doesn't strand the rest of

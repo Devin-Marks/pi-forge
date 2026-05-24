@@ -23,6 +23,7 @@ export function ProjectSidebar({ className = "" }: ProjectSidebarProps = {}) {
   const rename = useProjectStore((s) => s.rename);
   const sessionsByProject = useSessionStore((s) => s.byProject);
   const createSession = useSessionStore((s) => s.createSession);
+  const disposeSession = useSessionStore((s) => s.disposeSession);
 
   /**
    * Create a new session under `projectId`. Mirrors the project-
@@ -43,41 +44,56 @@ export function ProjectSidebar({ className = "" }: ProjectSidebarProps = {}) {
   const [renameValue, setRenameValue] = useState("");
 
   /**
-   * Delete-project modal state. We track on-disk session count to
-   * surface the cascade option only when there's something to clean
-   * up — otherwise the checkbox would just be confusing.
+   * Delete-project modal state. `liveCount` and `onDiskCount` are
+   * captured at open time so the dialog copy stays stable while the
+   * user reads it (a session ending mid-read shouldn't change the
+   * number shown). `acknowledged` gates the Delete button when there
+   * are session files to remove — a required confirmation step
+   * rather than an opt-in toggle. Empty projects don't need the
+   * acknowledgement and the button is enabled immediately.
    */
   const [deleteDialog, setDeleteDialog] = useState<
-    { id: string; name: string; onDiskCount: number; cascade: boolean } | undefined
+    | {
+        id: string;
+        name: string;
+        liveCount: number;
+        onDiskCount: number;
+        acknowledged: boolean;
+        submitting: boolean;
+      }
+    | undefined
   >(undefined);
 
   /**
-   * Two-stage delete confirm: if the project has live sessions, demand the
-   * user dispose them first. Otherwise show the delete modal which offers
-   * to cascade-delete the on-disk session JSONLs (default: NO, the safer
-   * option — matches v1's "workspace dir is user-managed" framing).
+   * Open the delete confirmation modal. No live-sessions block: any
+   * live sessions for this project get disposed as part of the
+   * delete (in `submitDelete` below), which matches the user's
+   * mental model of "delete project = make it go away" without the
+   * extra "dispose all live sessions first" dance.
    */
   const handleDelete = (id: string, name: string): void => {
     const list = sessionsByProject[id] ?? [];
     const liveCount = list.filter((s) => s.isLive).length;
-    if (liveCount > 0) {
-      alert(
-        `Cannot delete "${name}" — it has ${liveCount} live session${liveCount === 1 ? "" : "s"}. ` +
-          `Dispose ${liveCount === 1 ? "it" : "them"} first (× next to each session in the sidebar), then try again.`,
-      );
-      return;
-    }
-    // Count cold (on-disk-only) sessions: anything in the unified
-    // list that isn't currently live. Live count is already 0 here.
     const onDiskCount = list.filter((s) => !s.isLive).length;
-    setDeleteDialog({ id, name, onDiskCount, cascade: false });
+    setDeleteDialog({ id, name, liveCount, onDiskCount, acknowledged: false, submitting: false });
   };
 
   const submitDelete = async (): Promise<void> => {
     if (deleteDialog === undefined) return;
-    const { id, cascade } = deleteDialog;
+    const { id } = deleteDialog;
+    // Dispose any live sessions FIRST so the registry doesn't try to
+    // hold onto them while the server rm -rf's their JSONLs out from
+    // under them. The server's session-dir wipe also cleans up the
+    // JSONL files, so dispose here is the "release the in-memory
+    // handle + close SSE connections" half — best-effort, runs in
+    // parallel, errors don't block the project delete.
+    setDeleteDialog({ ...deleteDialog, submitting: true });
+    const liveIds = (sessionsByProject[id] ?? []).filter((s) => s.isLive).map((s) => s.sessionId);
+    if (liveIds.length > 0) {
+      await Promise.all(liveIds.map((sid) => disposeSession(sid).catch(() => undefined)));
+    }
     setDeleteDialog(undefined);
-    void remove(id, { cascade });
+    void remove(id);
   };
 
   const submitRename = async (id: string): Promise<void> => {
@@ -207,58 +223,80 @@ export function ProjectSidebar({ className = "" }: ProjectSidebarProps = {}) {
           deleteDialog !== undefined ? `Delete project "${deleteDialog.name}"` : "Delete project"
         }
       >
-        {deleteDialog !== undefined && (
-          <div className="flex flex-col gap-3 px-4 py-3">
-            <p className="text-xs text-neutral-300">
-              Remove "{deleteDialog.name}" from the pi-forge. The project folder on disk is{" "}
-              <strong>not</strong> deleted; only the pi-forge's record of it goes away.
-            </p>
-            {deleteDialog.onDiskCount > 0 && (
-              <label className="flex items-start gap-2 rounded border border-neutral-800 bg-neutral-950 px-2 py-1.5 text-xs text-neutral-300">
-                <input
-                  type="checkbox"
-                  checked={deleteDialog.cascade}
-                  onChange={(e) =>
-                    setDeleteDialog((d) =>
-                      d === undefined ? d : { ...d, cascade: e.target.checked },
-                    )
-                  }
-                  className="mt-0.5 h-3 w-3"
-                />
-                <span>
-                  Also delete {deleteDialog.onDiskCount} on-disk session file
-                  {deleteDialog.onDiskCount === 1 ? "" : "s"} (under{" "}
-                  <code className="font-mono text-[10px] text-neutral-400">
-                    .pi/sessions/{deleteDialog.id}/
-                  </code>
-                  ). Without this, the JSONLs stay on disk and become orphaned — recoverable but not
-                  reachable through the pi-forge.
-                </span>
-              </label>
-            )}
-            {deleteDialog.onDiskCount === 0 && (
-              <p className="text-[11px] italic text-neutral-500">
-                No on-disk sessions for this project; nothing to clean up beyond the project record.
-              </p>
-            )}
-            <footer className="flex justify-end gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => setDeleteDialog(undefined)}
-                className="rounded-md border border-neutral-700 px-3 py-1 text-xs text-neutral-200 hover:bg-neutral-800"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void submitDelete()}
-                className="rounded-md bg-red-700 px-3 py-1 text-xs font-medium text-red-50 hover:bg-red-600"
-              >
-                Delete
-              </button>
-            </footer>
-          </div>
-        )}
+        {deleteDialog !== undefined &&
+          (() => {
+            const totalSessions = deleteDialog.liveCount + deleteDialog.onDiskCount;
+            const requiresAck = totalSessions > 0;
+            const canSubmit =
+              !deleteDialog.submitting && (!requiresAck || deleteDialog.acknowledged);
+            return (
+              <div className="flex flex-col gap-3 px-4 py-3">
+                <p className="text-xs text-neutral-300">
+                  Remove "{deleteDialog.name}" from pi-forge.
+                </p>
+                <ul className="ml-4 list-disc space-y-0.5 text-[11px] text-neutral-400">
+                  <li>
+                    Project record + the project's session directory (
+                    <code className="font-mono text-[10px] text-neutral-400">
+                      .pi/sessions/{deleteDialog.id}/
+                    </code>
+                    ) will be deleted.
+                  </li>
+                  {deleteDialog.liveCount > 0 && (
+                    <li>
+                      {deleteDialog.liveCount} live session
+                      {deleteDialog.liveCount === 1 ? "" : "s"} will be disposed first.
+                    </li>
+                  )}
+                  <li>
+                    The project's workspace folder on disk is <strong>not</strong> touched.
+                  </li>
+                </ul>
+                {requiresAck && (
+                  <label className="flex items-start gap-2 rounded border border-red-900/40 bg-red-950/30 px-2 py-1.5 text-xs text-red-200 light:border-red-300 light:bg-red-50 light:text-red-800">
+                    <input
+                      type="checkbox"
+                      checked={deleteDialog.acknowledged}
+                      onChange={(e) =>
+                        setDeleteDialog((d) =>
+                          d === undefined ? d : { ...d, acknowledged: e.target.checked },
+                        )
+                      }
+                      className="mt-0.5 h-3 w-3"
+                    />
+                    <span>
+                      Yes, I understand this will delete {totalSessions} session
+                      {totalSessions === 1 ? "" : "s"}
+                      {deleteDialog.liveCount > 0 && deleteDialog.onDiskCount > 0
+                        ? ` (${deleteDialog.liveCount} live, ${deleteDialog.onDiskCount} on disk)`
+                        : deleteDialog.liveCount > 0
+                          ? ` (${deleteDialog.liveCount} live)`
+                          : ""}
+                      . This can't be undone.
+                    </span>
+                  </label>
+                )}
+                <footer className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setDeleteDialog(undefined)}
+                    disabled={deleteDialog.submitting}
+                    className="rounded-md border border-neutral-700 px-3 py-1 text-xs text-neutral-200 hover:bg-neutral-800 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void submitDelete()}
+                    disabled={!canSubmit}
+                    className="rounded-md bg-red-700 px-3 py-1 text-xs font-medium text-red-50 hover:bg-red-600 disabled:opacity-50 disabled:hover:bg-red-700"
+                  >
+                    {deleteDialog.submitting ? "Deleting…" : "Delete"}
+                  </button>
+                </footer>
+              </div>
+            );
+          })()}
       </Modal>
     </aside>
   );

@@ -32,7 +32,7 @@ interface ProjectState {
   load: () => Promise<void>;
   create: (name: string, path: string) => Promise<Project>;
   rename: (id: string, name: string) => Promise<void>;
-  remove: (id: string, opts?: { cascade?: boolean }) => Promise<void>;
+  remove: (id: string) => Promise<void>;
   setActive: (id: string | undefined) => void;
   toggleCollapsed: (id: string) => void;
 }
@@ -83,9 +83,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       throw err;
     }
   },
-  remove: async (id, opts) => {
+  remove: async (id) => {
     try {
-      await api.deleteProject(id, opts);
+      await api.deleteProject(id);
       set((s) => {
         const projects = s.projects.filter((p) => p.id !== id);
         const activeProjectId = s.activeProjectId === id ? projects[0]?.id : s.activeProjectId;
