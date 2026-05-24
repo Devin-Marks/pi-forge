@@ -245,7 +245,7 @@ const noopWarn: WarnFn = () => undefined;
 
 export async function deleteProject(
   id: string,
-  opts: { cascadeSessionDir?: boolean; logWarn?: WarnFn } = {},
+  opts: { logWarn?: WarnFn } = {},
 ): Promise<{ cascaded: boolean }> {
   const warn = opts.logWarn ?? noopWarn;
   let cascaded = false;
@@ -271,37 +271,52 @@ export async function deleteProject(
   await clearProjectStdioTrust(id).catch((err: unknown) => {
     warn({ err, id }, "mcp-stdio-trust cleanup failed");
   });
-  if (opts.cascadeSessionDir === true) {
-    // Wipe the project's session directory. Best-effort — a missing
-    // dir (no sessions ever recorded) is not an error.
-    //
-    // SAFETY: validate the id is UUID-shaped (the only shape
-    // `createProject()` ever produces) BEFORE building the path.
-    // `rm({ recursive: true, force: true })` is destructive enough
-    // that any path-traversal in `id` would be catastrophic — a
-    // hypothetical `id === ".."` would resolve to the parent of
-    // `${SESSION_DIR}` and wipe it. Today the only id source is
-    // `randomUUID()`, but the validator codifies that invariant
-    // against any future code path that imports/restores ids from
-    // the wire or a manually-edited projects.json.
-    if (!UUID_RE.test(id)) {
-      // Should be unreachable — the project record we just deleted
-      // had this id, so it passed creation-time validation. Log and
-      // skip the cascade rather than rm something dangerous.
-      warn({ id }, "refusing cascade rm for non-UUID id");
-      return { cascaded };
-    }
-    const dir = join(config.sessionDir, id);
-    try {
-      await rm(dir, { recursive: true, force: true });
-      cascaded = true;
-    } catch (err) {
-      // Don't fail the delete itself if cascade cleanup fails — the
-      // project record is gone, the session files are just orphaned
-      // (the same state that exists when cascade isn't requested).
-      // But DO log so a permissions issue isn't silently invisible.
-      warn({ err, dir }, "cascade rm failed");
-    }
+
+  // Always wipe the project's session directory in full — JSONLs
+  // and the dir itself. Earlier versions made this opt-in via
+  // `cascadeSessionDir: true` and a UI checkbox, but the default-off
+  // behavior left a `<projectId>/` directory on disk that the UI had
+  // no way to reach ever again. Even when individual sessions were
+  // deleted before the project, the empty parent dir survived
+  // (deleteColdSession only unlinks the JSONL, not the parent).
+  //
+  // v1.3.0 makes "project delete means gone" the contract: project
+  // record + all session metadata + the parent dir are removed in
+  // one shot. The user-facing confirmation about deleting N session
+  // files happens at the UI layer (a required checkbox in the
+  // delete dialog when sessions are present) — but the server-side
+  // behavior is unconditional. Programmatic clients calling DELETE
+  // /api/v1/projects/:id get the same atomic delete.
+  //
+  // The project's workspace folder (`${WORKSPACE_PATH}/<projectName>/`)
+  // is still left alone — that's almost always real work the user
+  // wants to keep.
+  //
+  // SAFETY: validate the id is UUID-shaped (the only shape
+  // `createProject()` ever produces) BEFORE building the path.
+  // `rm({ recursive: true, force: true })` is destructive enough
+  // that any path-traversal in `id` would be catastrophic — a
+  // hypothetical `id === ".."` would resolve to the parent of
+  // `${SESSION_DIR}` and wipe it. Today the only id source is
+  // `randomUUID()`, but the validator codifies that invariant
+  // against any future code path that imports/restores ids from
+  // the wire or a manually-edited projects.json.
+  if (!UUID_RE.test(id)) {
+    // Should be unreachable — the project record we just deleted
+    // had this id, so it passed creation-time validation. Log and
+    // skip the cleanup rather than rm something dangerous.
+    warn({ id }, "refusing cascade rm for non-UUID id");
+    return { cascaded };
+  }
+  const dir = join(config.sessionDir, id);
+  try {
+    await rm(dir, { recursive: true, force: true });
+    cascaded = true;
+  } catch (err) {
+    // Don't fail the delete itself if cleanup fails — the project
+    // record is gone, the session files are just orphaned. But DO
+    // log so a permissions issue isn't silently invisible.
+    warn({ err, dir }, "session-dir rm failed");
   }
   return { cascaded };
 }

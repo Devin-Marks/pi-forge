@@ -1198,17 +1198,15 @@ export const api = {
       method: "PATCH",
       body: { name },
     }),
-  deleteProject: (id: string, opts?: { cascade?: boolean }) => {
-    const qs = opts?.cascade === true ? "?cascade=1" : "";
-    return request(
-      `/api/v1/projects/${encodeURIComponent(id)}${qs}`,
+  deleteProject: (id: string) =>
+    request(
+      `/api/v1/projects/${encodeURIComponent(id)}`,
       (v, s) => {
         if (!isObject(v) || typeof v.cascaded !== "boolean") fail(s, "expected { cascaded }");
         return { cascaded: v.cascaded };
       },
       { method: "DELETE" },
-    );
-  },
+    ),
   browse: (path?: string) => {
     const qs = path !== undefined ? `?path=${encodeURIComponent(path)}` : "";
     return request(`/api/v1/projects/browse${qs}`, vBrowse);

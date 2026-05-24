@@ -61,6 +61,34 @@ section. See the "Versions" section of the README for the support window policy.
   to drop the `hard` parameter. Removing the JSONL was already what
   every UI delete did; this just makes the default match the user's
   mental model of "delete means gone."
+- **Project DELETE always wipes the session directory + auto-disposes
+  live sessions.** Same "delete means gone" framing as the session
+  change above. Three things change:
+  - The session-directory cleanup was previously opt-in via
+    `?cascade=1` on the route + a checkbox in the delete-project
+    dialog. The default-off behavior left a `<projectId>/`
+    directory on disk that the UI had no way to reach ever again
+    (even when individual sessions had been deleted earlier —
+    `deleteColdSession` only unlinks the JSONL, not the parent
+    dir). Now: `DELETE /api/v1/projects/:id` always removes the
+    project record AND rm -rf's `${SESSION_DIR}/<projectId>/`,
+    JSONLs and all. Route drops the `?cascade=` query param;
+    client API drops the `{cascade}` opt.
+  - The UI no longer blocks delete when the project has live
+    sessions. The previous "dispose them first, then try again"
+    alert was busy-work — live sessions are now disposed
+    automatically as the first step of the delete (in parallel,
+    best-effort), then the server-side rm -rf cleans up their
+    JSONLs.
+  - The sidebar delete dialog gains a required confirmation
+    checkbox when the project has sessions: "Yes, I understand
+    this will delete N session(s). This can't be undone." Forces
+    a deliberate acknowledgment for the destructive case without
+    re-introducing the old opt-in cascade toggle. Empty projects
+    skip the checkbox.
+  - The project's workspace folder
+    (`${WORKSPACE_PATH}/<projectName>/`) is still never touched —
+    that's almost always real work the user wants to keep.
 
 ### Added
 

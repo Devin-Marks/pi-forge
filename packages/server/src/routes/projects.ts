@@ -174,28 +174,32 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  fastify.delete<{ Params: { id: string }; Querystring: { cascade?: string } }>(
+  fastify.delete<{ Params: { id: string } }>(
     "/projects/:id",
     {
       schema: {
         description:
-          "Delete the project record. With `?cascade=1` ALSO removes the " +
-          "project's on-disk session directory (under `${SESSION_DIR}/<id>/`); " +
-          "without it, those files are left in place and become orphaned. " +
-          "Cascade cleanup is best-effort — a missing dir is not an error, " +
-          "and an rm failure does NOT fail the delete (the project record " +
-          "is already gone at that point).",
+          "Delete the project record AND rm -rf the project's session " +
+          "directory (`${SESSION_DIR}/<id>/`) including every session " +
+          "JSONL inside. The project's workspace folder " +
+          "(`${WORKSPACE_PATH}/<projectName>/`) is left alone — that's " +
+          "almost always real work the user wants to keep.\n\n" +
+          "Earlier versions accepted a `?cascade=0|1` query param to opt " +
+          "into the session-dir cleanup. v1.3.0 dropped the param and " +
+          "made cleanup unconditional — the default-off behavior left a " +
+          "`<projectId>/` directory on disk that the UI had no way to " +
+          "reach. User-facing confirmation about deleting N session " +
+          "files happens at the UI layer (a required checkbox in the " +
+          "delete dialog when sessions are present); programmatic " +
+          "clients get the same atomic delete with no opt.\n\n" +
+          "Session-dir cleanup is best-effort: a missing dir is not an " +
+          "error, and an rm failure does NOT fail the delete (the project " +
+          "record is already gone at that point).",
         tags: ["projects"],
         params: {
           type: "object",
           required: ["id"],
           properties: { id: { type: "string" } },
-        },
-        querystring: {
-          type: "object",
-          properties: {
-            cascade: { type: "string", enum: ["0", "1", "true", "false"] },
-          },
         },
         response: {
           200: {
@@ -209,9 +213,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       try {
-        const cascade = req.query.cascade === "1" || req.query.cascade === "true";
         const result = await deleteProject(req.params.id, {
-          cascadeSessionDir: cascade,
           logWarn: (obj, msg) => req.log.warn(obj, msg),
         });
         return reply.code(200).send(result);
