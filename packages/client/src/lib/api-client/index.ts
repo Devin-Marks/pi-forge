@@ -1239,6 +1239,68 @@ export const api = {
       method: "POST",
       body: { parentPath, name },
     }),
+  /**
+   * Start a git clone + project creation in one streaming operation.
+   * Returns the raw fetch Response so callers can consume the SSE
+   * stream incrementally. Server emits these event types (one JSON
+   * per `data:` line):
+   *   - `started`         {cloneUrlForDisplay}
+   *   - `progress`        {phase, percent, raw}
+   *   - `stderr`          {line}
+   *   - `done`            {target} (clone finished; project not yet created)
+   *   - `project_created` {project}
+   *   - `error`           {code?, message}
+   *
+   * Not routed through `request()` because the response is a stream,
+   * not a single JSON body. Caller handles parsing via
+   * `parseCloneEventStream` (below) or its own line reader.
+   */
+  cloneProject: async (
+    body: {
+      url: string;
+      parentPath: string;
+      folderName: string;
+      projectName: string;
+      branch?: string;
+      token?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Response> => {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    };
+    const stored = getStoredToken();
+    if (stored) headers.Authorization = `Bearer ${stored.token}`;
+    const init: RequestInit = {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    };
+    if (signal !== undefined) init.signal = signal;
+    const res = await fetch("/api/v1/projects/clone", init);
+    if (res.status === 401) {
+      clearStoredToken();
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+      throw new ApiError(401, "invalid_token");
+    }
+    // Pre-stream validation failure surfaces as a normal JSON body
+    // (4xx). Pass through to the caller as an ApiError so the UI can
+    // show a clean error before any progress events would have
+    // started.
+    if (!res.ok) {
+      let parsed: { error?: unknown; message?: unknown } | undefined;
+      try {
+        parsed = (await res.json()) as typeof parsed;
+      } catch {
+        /* non-JSON body */
+      }
+      const code = typeof parsed?.error === "string" ? parsed.error : "clone_failed";
+      const msg = typeof parsed?.message === "string" ? parsed.message : undefined;
+      throw new ApiError(res.status, code, msg);
+    }
+    return res;
+  },
 
   // ---------------- sessions ----------------
   listSessions: (projectId?: string) => {
@@ -1275,10 +1337,8 @@ export const api = {
         }[],
       };
     }),
-  disposeSession: (id: string, opts?: { hard?: boolean }) => {
-    const qs = opts?.hard === true ? "?hard=1" : "";
-    return request(`/api/v1/sessions/${encodeURIComponent(id)}${qs}`, vVoid, { method: "DELETE" });
-  },
+  disposeSession: (id: string) =>
+    request(`/api/v1/sessions/${encodeURIComponent(id)}`, vVoid, { method: "DELETE" }),
   renameSession: (id: string, name: string) =>
     request(`/api/v1/sessions/${encodeURIComponent(id)}/name`, vSessionSummary, {
       method: "POST",
@@ -2347,3 +2407,64 @@ export const api = {
 
 // Export string validator for routes that return a bare string in future phases.
 export { vString };
+
+/**
+ * Wire-shape event union for the `/api/v1/projects/clone` stream.
+ * Documented separately from the api.cloneProject() function so the
+ * UI can switch on `event.type` with full type narrowing.
+ */
+export type CloneStreamEvent =
+  | { type: "started"; cloneUrlForDisplay: string }
+  | { type: "progress"; phase: string; percent: number | null; raw: string }
+  | { type: "stderr"; line: string }
+  | { type: "done"; target: string }
+  | { type: "project_created"; project: Project }
+  | { type: "error"; code?: string; message: string };
+
+/**
+ * Async-iterate the clone SSE response one event at a time. Same
+ * frame format as the rest of the SSE surface (`data: <json>\n\n`,
+ * comment lines stripped). Returns when the server closes the stream
+ * or the caller aborts the underlying response.
+ *
+ * Errors during parsing of a single frame are swallowed (an opaque
+ * `error` event with a generic message would be more confusing than
+ * silently dropping a malformed frame) — but a malformed JSON in a
+ * `data:` line is the only "parsing" we do; the server controls the
+ * format, so this should never fire in practice.
+ */
+export async function* parseCloneEventStream(
+  res: Response,
+): AsyncGenerator<CloneStreamEvent, void, void> {
+  if (res.body === null) return;
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buf += value.replace(/\r\n/g, "\n");
+      let sep = buf.indexOf("\n\n");
+      while (sep !== -1) {
+        const message = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        for (const line of message.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          const payload = line.slice(5).trimStart();
+          try {
+            yield JSON.parse(payload) as CloneStreamEvent;
+          } catch {
+            /* malformed frame — drop it */
+          }
+        }
+        sep = buf.indexOf("\n\n");
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* already released */
+    }
+  }
+}

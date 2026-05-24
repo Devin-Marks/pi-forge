@@ -327,7 +327,7 @@ interface SessionState {
   sendPrompt: (sessionId: string, text: string, attachments?: File[]) => Promise<void>;
   sendSteer: (sessionId: string, text: string, mode?: "steer" | "followUp") => Promise<void>;
   abortSession: (sessionId: string) => Promise<void>;
-  disposeSession: (sessionId: string, opts?: { hard?: boolean }) => Promise<void>;
+  disposeSession: (sessionId: string) => Promise<void>;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -669,7 +669,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  disposeSession: async (sessionId, opts) => {
+  disposeSession: async (sessionId) => {
     set({ error: undefined });
     try {
       get().closeStream(sessionId);
@@ -677,7 +677,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // listeners only need the id, but we may want to filter by
       // project later.
       const priorProjectId = findProjectIdForSession(get(), sessionId);
-      await api.disposeSession(sessionId, opts);
+      await api.disposeSession(sessionId);
       set((s) => removeSessionFromState(s, sessionId));
       if (get().activeSessionId === undefined) {
         localStorage.removeItem(ACTIVE_SESSION_KEY);

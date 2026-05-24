@@ -15,7 +15,52 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
-## [1.2.5] — 2026-05-23
+### Added
+
+- **Clone a git repository as a new project.** New "Clone repository"
+  tab in the project picker. Streams `git clone --progress` over SSE
+  so the user sees a real-time progress bar + phase label
+  ("Receiving objects 45%", "Resolving deltas 100%", etc.) instead
+  of a blocked spinner during a multi-minute clone of a large repo.
+  Form takes:
+  - **Repository URL** — HTTPS or `file://`. SSH URLs are out of
+    scope for v1.3.0; use `gh repo clone` from the integrated
+    terminal for SSH-based clones.
+  - **Branch** (optional) — defaults to the remote's HEAD.
+  - **Folder name** (auto-filled from the URL's last path segment,
+    overrideable) — relative to the workspace root.
+  - **Project name** (auto-filled from the folder name).
+  - **Access token** (optional, masked) — for private repos. Embedded
+    as `x-access-token:<token>` in the clone URL (the GitHub
+    convention; works for GitHub.com, GitHub Enterprise, GitLab PATs,
+    Bitbucket app passwords, Gitea PATs). Stripped from
+    `.git/config` after success; if the clone fails partway, the
+    target directory is rm-rf'd so no leftover token bytes survive.
+  Defense-in-depth: target path is validated to be inside
+  `WORKSPACE_PATH` (403 otherwise); pre-existing non-empty target
+  returns 409 before any spawn; clone is cancellable via the
+  request `AbortSignal` (client disconnect kills the child with
+  SIGTERM → 5s grace → SIGKILL). Same heartbeat-and-padding-flush
+  pattern as the compaction SSE so the stream works behind
+  OpenShift's HAProxy router.
+- **`gh` (GitHub CLI) in the Docker image.** Installed from the
+  official GitHub apt repository so `gh auth login`, `gh pr`,
+  `gh issue`, `gh repo clone`, etc. work out of the box in the
+  integrated terminal and via the agent's `bash` tool. Available on
+  PATH for the running server and any process it spawns.
+
+### Changed
+
+- **Session DELETE always hard-deletes the JSONL.** Previously
+  required `?hard=1` on the route and a `{hard: true}` opt in the
+  client API — but the UI passed it unconditionally, so the
+  non-destructive path was vestigial and confusing for programmatic
+  clients. Now: `DELETE /api/v1/sessions/:id` always disposes the
+  live session AND removes the JSONL AND cascade-removes any
+  pi-subagents child JSONLs nested under it. Client API simplified
+  to drop the `hard` parameter. Removing the JSONL was already what
+  every UI delete did; this just makes the default match the user's
+  mental model of "delete means gone."
 
 ### Added
 

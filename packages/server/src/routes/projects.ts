@@ -1,4 +1,13 @@
 import type { FastifyPluginAsync, FastifyReply } from "fastify";
+import { join, resolve } from "node:path";
+import { config } from "../config.js";
+import {
+  assertTargetClonable,
+  cloneRepository,
+  GitCloneError,
+  validateCloneUrl,
+  type CloneEvent,
+} from "../git-clone.js";
 import {
   browseDirectory,
   createDirectory,
@@ -20,6 +29,23 @@ import {
   setProjectSystemPromptAddendum,
 } from "../system-prompt-overrides.js";
 import { errorSchema } from "./_schemas.js";
+
+/**
+ * Heartbeat cadence for the clone SSE stream. Same value as
+ * `sse-bridge.ts:HEARTBEAT_INTERVAL_MS` — keeps comfortable margin
+ * under the OpenShift HAProxy `timeout server` default of 30s.
+ */
+const CLONE_HEARTBEAT_INTERVAL_MS = 20_000;
+
+/**
+ * One-shot padding flush after the `started` event so OpenShift's
+ * HAProxy router releases the small initial frames immediately
+ * instead of holding them through the multi-second clone. Same
+ * pattern as `sse-bridge.ts:COMPACTION_START_PADDING_LINE` — see
+ * that doc-comment for the rationale.
+ */
+const CLONE_PADDING_BYTES = 2048;
+const CLONE_PADDING_LINE = `: pad-flush ${"_".repeat(CLONE_PADDING_BYTES - 14)}\n\n`;
 
 const projectSchema = {
   type: "object",
@@ -358,6 +384,217 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
       await setProjectSystemPromptAddendum(req.params.id, req.body.addendum);
       const addendum = await getProjectSystemPromptAddendum(req.params.id);
       return { addendum, maxBytes: MAX_ADDENDUM_BYTES };
+    },
+  );
+
+  fastify.post<{
+    Body: {
+      url: string;
+      parentPath: string;
+      folderName: string;
+      projectName: string;
+      branch?: string;
+      token?: string;
+    };
+  }>(
+    "/projects/clone",
+    {
+      schema: {
+        description:
+          "Clone a git repository into a new folder under WORKSPACE_PATH, then " +
+          "create a project pointing at it. Streams progress as SSE events.\n\n" +
+          "Event types on the stream:\n" +
+          "  - `started`  — {cloneUrlForDisplay} (URL with credentials stripped)\n" +
+          "  - `progress` — {phase, percent, raw} (one per `git clone --progress` line)\n" +
+          "  - `stderr`   — {line} (other stderr text — non-progress, non-fatal)\n" +
+          "  - `done`     — {project} (the created Project record)\n" +
+          "  - `error`    — {message, code} (fatal — connection then closes)\n\n" +
+          "Auth: optional `token` is embedded as `x-access-token:<token>` in the " +
+          "clone URL (GitHub convention; works for most providers). The token is " +
+          "stripped from the stored `origin` URL after a successful clone so it " +
+          "doesn't persist in `.git/config`. On failure the target dir is " +
+          "rm -rf'd so no token bytes survive.",
+        tags: ["projects"],
+        body: {
+          type: "object",
+          required: ["url", "parentPath", "folderName", "projectName"],
+          additionalProperties: false,
+          properties: {
+            url: { type: "string", minLength: 1 },
+            parentPath: { type: "string", minLength: 1 },
+            folderName: { type: "string", minLength: 1, maxLength: 100 },
+            projectName: { type: "string", minLength: 1, maxLength: 200 },
+            branch: { type: "string", maxLength: 250 },
+            token: { type: "string", maxLength: 4096 },
+          },
+        },
+        response: {
+          // SSE responses don't fit Fastify's response-schema model;
+          // only the pre-stream error shapes are declared. The
+          // catalog of event types is in the description above.
+          400: errorSchema,
+          403: errorSchema,
+          409: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const { url, parentPath, folderName, projectName, branch, token } = req.body;
+
+      // ---- pre-stream validation: errors land as plain JSON 4xx ----
+      try {
+        validateCloneUrl(url);
+      } catch (err) {
+        if (err instanceof GitCloneError) {
+          return reply.code(400).send({ error: err.code, message: err.message });
+        }
+        throw err;
+      }
+      // Folder-name validation mirrors createDirectory's rules.
+      if (
+        folderName.includes("/") ||
+        folderName.includes("\\") ||
+        folderName === "." ||
+        folderName === ".."
+      ) {
+        return reply.code(400).send({ error: "invalid_directory_name" });
+      }
+      // Resolve target path and confirm it's inside WORKSPACE_PATH.
+      // Reuses the project-manager error so the route surface stays
+      // consistent.
+      const parentResolved = resolve(parentPath);
+      const targetPath = join(parentResolved, folderName);
+      const workspaceResolved = resolve(config.workspacePath);
+      if (
+        !parentResolved.startsWith(workspaceResolved + "/") &&
+        parentResolved !== workspaceResolved
+      ) {
+        return reply.code(403).send({ error: "path_not_allowed" });
+      }
+      if (!targetPath.startsWith(workspaceResolved + "/") && targetPath !== workspaceResolved) {
+        return reply.code(403).send({ error: "path_not_allowed" });
+      }
+      try {
+        await assertTargetClonable(targetPath);
+      } catch (err) {
+        if (err instanceof GitCloneError) {
+          const status = err.code === "target_not_empty" ? 409 : 400;
+          return reply.code(status).send({ error: err.code, message: err.message });
+        }
+        throw err;
+      }
+
+      // ---- start streaming ----
+      reply.hijack();
+      const raw = reply.raw;
+      let closed = false;
+      let heartbeat: NodeJS.Timeout | undefined;
+      const close = (): void => {
+        if (closed) return;
+        closed = true;
+        if (heartbeat !== undefined) {
+          clearInterval(heartbeat);
+          heartbeat = undefined;
+        }
+        try {
+          raw.end();
+        } catch {
+          /* socket already torn down */
+        }
+      };
+      const writeRaw = (chunk: string): void => {
+        if (closed) return;
+        try {
+          raw.write(chunk);
+        } catch {
+          close();
+        }
+      };
+      const writeEvent = (event: CloneEvent): void => {
+        writeRaw(`data: ${JSON.stringify(event)}\n\n`);
+      };
+
+      try {
+        raw.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        });
+      } catch (err) {
+        req.log.error({ err }, "clone prelude failed");
+        try {
+          raw.destroy();
+        } catch {
+          /* already destroyed */
+        }
+        return;
+      }
+      heartbeat = setInterval(() => writeRaw(": heartbeat\n\n"), CLONE_HEARTBEAT_INTERVAL_MS);
+      heartbeat.unref();
+
+      // Abort the clone if the client disconnects mid-stream.
+      const ac = new AbortController();
+      raw.on("close", () => {
+        ac.abort();
+        close();
+      });
+      raw.on("error", () => {
+        ac.abort();
+        close();
+      });
+
+      const cloneOpts: import("../git-clone.js").CloneOptions = {
+        url,
+        target: targetPath,
+        signal: ac.signal,
+      };
+      if (branch !== undefined && branch.length > 0) cloneOpts.branch = branch;
+      if (token !== undefined && token.length > 0) cloneOpts.token = token;
+      const { promise, events } = cloneRepository(cloneOpts);
+
+      // Stream every event to the client. After the `started` event,
+      // send a one-shot padding flush so HAProxy releases the small
+      // frames immediately rather than holding them through the
+      // multi-second clone (same pattern as the compaction-start
+      // padding flush in sse-bridge.ts).
+      let sentPadding = false;
+      let cloneSucceeded = false;
+      for await (const e of events) {
+        writeEvent(e);
+        if (!sentPadding && e.type === "started") {
+          writeRaw(CLONE_PADDING_LINE);
+          sentPadding = true;
+        }
+        if (e.type === "done") cloneSucceeded = true;
+        if (closed) break;
+      }
+      await promise;
+
+      // Create the project record on success, then emit a final
+      // event with the project shape so the client can navigate
+      // straight to it. The `done` event from the clone module
+      // already fired above with `target`; this is a separate
+      // `project_created` event so the contract is unambiguous.
+      if (cloneSucceeded && !closed) {
+        try {
+          const project = await createProject(projectName, targetPath);
+          writeRaw(`data: ${JSON.stringify({ type: "project_created", project })}\n\n`);
+        } catch (err) {
+          const code =
+            err instanceof DuplicatePathError
+              ? "duplicate_path"
+              : err instanceof PathOutsideWorkspaceError
+                ? "path_not_allowed"
+                : err instanceof InvalidNameError
+                  ? "invalid_name"
+                  : "project_create_failed";
+          const message = err instanceof Error ? err.message : String(err);
+          writeRaw(`data: ${JSON.stringify({ type: "error", code, message })}\n\n`);
+        }
+      }
+      close();
     },
   );
 

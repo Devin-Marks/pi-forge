@@ -755,34 +755,28 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  fastify.delete<{ Params: { id: string }; Querystring: { hard?: string } }>(
+  fastify.delete<{ Params: { id: string } }>(
     "/sessions/:id",
     {
       schema: {
         description:
-          "Dispose the live session AND/OR delete the on-disk JSONL. The " +
-          "`hard` query param is the destructive-intent toggle:\n" +
-          "  - live + no `hard` → dispose, file preserved → 204\n" +
-          "  - live + `hard=1` → dispose AND delete the JSONL → 204\n" +
-          "  - cold + `hard=1` → delete the JSONL → 204\n" +
-          "  - cold + no `hard` → 404 (nothing to dispose; pass `hard=1` " +
-          "if you mean to delete the file)\n" +
+          "Dispose the live session AND delete the on-disk JSONL (plus " +
+          "any pi-subagents child JSONLs nested under it). Always destructive " +
+          "— matches the UI's expectation that 'delete' means the session is " +
+          "gone from disk and the sidebar.\n" +
+          "  - live → dispose AND delete the JSONL → 204\n" +
+          "  - cold → delete the JSONL → 204\n" +
           "  - not found anywhere → 404\n" +
-          "The `hard=1`-required-for-cold rule keeps DELETE without `hard` " +
-          "non-destructive in every case: programmatic clients hammering " +
-          "DELETE in a cleanup loop won't accidentally remove on-disk " +
-          "session files.",
+          "Earlier versions of this route accepted a `?hard=0|1` query " +
+          "param to opt into JSONL deletion. The non-destructive default was " +
+          "vestigial (the UI always passed `hard=1`) and confusing for " +
+          "programmatic clients, so v1.3.0 dropped the param and made hard " +
+          "delete the only behavior.",
         tags: ["sessions"],
         params: {
           type: "object",
           required: ["id"],
           properties: { id: { type: "string" } },
-        },
-        querystring: {
-          type: "object",
-          properties: {
-            hard: { type: "string", enum: ["0", "1", "true", "false"] },
-          },
         },
         response: {
           204: { type: "null" },
@@ -792,19 +786,11 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
-      const hard = req.query.hard === "1" || req.query.hard === "true";
       const wasLive = await disposeSession(req.params.id);
-      if (wasLive && !hard) return reply.code(204).send();
-      if (!wasLive && !hard) {
-        // Cold session, no destructive intent — 404. The user/client
-        // has to opt in via `?hard=1` to delete a cold session's
-        // JSONL. Mirrors the live-with-no-hard "non-destructive"
-        // semantic in the cold case.
-        return notFound(reply);
-      }
-      // Hard delete (live OR cold). After dispose, the registry no
-      // longer has the entry; deleteColdSession's "live" guard
-      // doesn't trip on the ordinary case.
+      // Always hard-delete: dispose (above) + remove JSONL (below).
+      // After dispose, the registry no longer has the entry;
+      // deleteColdSession's "live" guard doesn't trip on the ordinary
+      // case.
       let r: "deleted" | "live" | "not_found";
       try {
         r = await deleteColdSession(req.params.id);

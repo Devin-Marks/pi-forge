@@ -69,7 +69,15 @@ ARG PGID=1000
 # Runtime tools the agent + interactive terminal need:
 #   - tini: PID-1 signal handling (see above)
 #   - git: status / diff / commit / push / etc. — the GitPanel routes
-#     and the agent's `bash` tool both expect git on PATH.
+#     and the agent's `bash` tool both expect git on PATH. Also used by
+#     pi-forge's "clone repository" project-setup flow.
+#   - gh: the GitHub CLI. Authenticates against github.com / GHE via
+#     `gh auth login` (more ergonomic than wrangling raw PATs / SSH
+#     keys), wraps git for HTTPS clones with stored credentials, and
+#     gives the agent + interactive terminal a first-class surface for
+#     `gh pr`, `gh issue`, `gh repo`, etc. Not in Debian's default
+#     repos — installed from GitHub's apt source (the keyring and
+#     sources.list lines below).
 #   - ripgrep: pi's `grep` tool delegates to ripgrep when present.
 #     Without it, code search inside the agent silently degrades.
 #   - bash: replaces dash as the integrated terminal's interactive
@@ -80,9 +88,20 @@ ARG PGID=1000
 #     hygiene. curl for fetching, ca-certificates so HTTPS works, less
 #     so `git log` and similar pagers don't bomb, procps so `ps`/`top`
 #     are present for users debugging long-running tool processes.
+#   - gnupg: needed only to verify the GitHub CLI apt-source signing
+#     key during install — kept in the same RUN so the keyring is
+#     present when `apt-get install gh` runs.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      tini git ripgrep bash curl ca-certificates less procps \
+      tini git ripgrep bash curl ca-certificates less procps gnupg \
+ && install -dm 0755 /etc/apt/keyrings \
+ && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+ && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends gh \
  && rm -rf /var/lib/apt/lists/* \
  && (userdel node 2>/dev/null || true) \
  && (groupdel node 2>/dev/null || true) \

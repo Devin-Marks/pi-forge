@@ -459,10 +459,10 @@ async function main(): Promise<void> {
       const del = await jsend("DELETE", `${base}/api/v1/sessions/${sessionId}`, undefined, auth);
       assert("DELETE /sessions/:id → 204", del.status === 204);
       const after = await jget(`${base}/api/v1/sessions/${sessionId}`, auth);
-      // The session is no longer live, but the JSONL exists on disk if any
-      // entries were appended. The fire-and-forget prompt() rejected without
-      // ever writing an assistant message → no JSONL → 404 from disk lookup.
-      assert("GET after delete returns 404 (no on-disk entries written)", after.status === 404);
+      // Since v1.3.0, DELETE always hard-deletes (dispose + remove JSONL
+      // + cascade subagent JSONLs). The legacy `?hard=` toggle is gone.
+      // GET after delete is always 404.
+      assert("GET after delete returns 404", after.status === 404);
 
       // Second DELETE on the same id: the live entry is gone and there's
       // no JSONL on disk, so the cold-delete fallback also returns
