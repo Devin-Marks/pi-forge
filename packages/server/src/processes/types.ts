@@ -117,6 +117,18 @@ export type WriteResult =
     };
 
 /**
+ * Reason a `process_alert` event was emitted. Mirrors the three
+ * `alertOn*` flags on StartOptions:
+ *   - `success`: clean exit, exitCode 0, alertOnSuccess set.
+ *   - `failure`: non-zero exit (and not killed externally),
+ *                alertOnFailure set.
+ *   - `killed`:  killed by external signal (NOT by the `process kill`
+ *                tool — that's intentional, would be redundant to
+ *                notify the agent of its own action), alertOnKill set.
+ */
+export type ProcessAlertReason = "success" | "failure" | "killed";
+
+/**
  * Public manager events fanned out to listeners (SSE bridge,
  * watches, etc.). All carry the sessionId so the SSE layer can
  * route correctly without needing to know which manager produced
@@ -127,4 +139,10 @@ export type ManagerEvent =
   | { type: "process_ended"; sessionId: string; info: ProcessInfo }
   | { type: "process_output_changed"; sessionId: string; id: string }
   | { type: "process_watch_matched"; sessionId: string; match: LogWatchMatchEvent }
-  | { type: "processes_changed"; sessionId: string };
+  | { type: "processes_changed"; sessionId: string }
+  | {
+      type: "process_alert";
+      sessionId: string;
+      info: ProcessInfo;
+      reason: ProcessAlertReason;
+    };

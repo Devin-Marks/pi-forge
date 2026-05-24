@@ -17,6 +17,43 @@ section. See the "Versions" section of the README for the support window policy.
 
 ### Added
 
+- **Background processes notify the agent on completion.** The
+  `process` tool's `alertOnSuccess` / `alertOnFailure` /
+  `alertOnKill` flags were previously stored on `ProcessInfo` but
+  never consumed — nothing fired when a process exited. Now: when
+  a process exits and the matching alert flag is set, the manager
+  emits a `process_alert` event that the SSE bridge translates
+  into `session.sendUserMessage()` with `deliverAs: "followUp"`,
+  giving the agent a turn to react. Message format:
+  `[process alert] "<name>" (id=<id>) finished successfully (exit
+  0).` (or `failed with exit code N`, or `was killed externally`)
+  + a nudge to call `process output` to inspect what it produced.
+  Defaults: alertOnFailure is on (the common case the agent
+  usually wants to know about), alertOnSuccess + alertOnKill are
+  off (would be noisy for the common cases). Tool-initiated kills
+  (the agent calling `process kill` itself) never trigger an
+  alert — would be redundant. The alert lands in the chat as a
+  normal user-shaped bubble with the `[process alert]` prefix so
+  it's obvious it's automated rather than typed by the user.
+
+### Fixed
+
+- **Spurious "Reconnecting" banner during long idle gaps on
+  deployments behind HAProxy.** Same root cause as the
+  compaction-banner fix: the 20-second heartbeat was only ~13
+  bytes (`: heartbeat\n\n`), below HAProxy's small-write buffer
+  threshold. During a long-running agent turn with no token output
+  (slow LLM call, long-running tool, multi-second prefill),
+  heartbeats sat in the router's response buffer and never reached
+  the client. The connection eventually timed out somewhere on
+  the path, and the browser showed a misleading "Reconnecting —
+  server closed stream" banner even though the server side was
+  still alive. Fix: pad every heartbeat to 2KB so it crosses the
+  buffer-flush threshold and actually reaches the client. Same
+  mechanism as the per-turn compaction-start padding flush, but
+  applied to the every-20s heartbeat. Bandwidth cost is ~100
+  bytes/sec/client sustained — negligible.
+
 - **Clone a git repository as a new project.** New "Clone repository"
   tab in the project picker. Streams `git clone --progress` over SSE
   so the user sees a real-time progress bar + phase label
