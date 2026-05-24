@@ -423,6 +423,22 @@ function formatRuntime(start: number, end: number | null): string {
  * loading the whole file into memory first. Acceptable for log
  * files capped at 10 MB by the server's rotation policy.
  */
+/**
+ * Minimal HTML entity escape for embedding raw log text inside a
+ * `<pre>` tag in the new-tab document. Handles the four characters
+ * that can break out of `<pre>` content (`&` first, then `<`, `>`,
+ * and quotes — quotes matter inside the `<title>`). Tab and
+ * newline pass through unchanged so the log layout is preserved.
+ */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function FullLogLink({
   sessionId,
   processId,
@@ -434,41 +450,100 @@ function FullLogLink({
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | undefined>(undefined);
-  const onClick = async (): Promise<void> => {
+  const onClick = (): void => {
+    // Open the new tab SYNCHRONOUSLY in the click handler so the
+    // browser counts it as user-initiated and doesn't trigger the
+    // popup blocker. We point it at about:blank first, fetch the
+    // log in the background, then navigate the already-open tab
+    // to the blob URL when the bytes are ready.
+    //
+    // The earlier implementation called window.open AFTER `await
+    // fetch(...)` — by then the user-gesture chain was broken, the
+    // popup got blocked, and the fallback (window.location.assign)
+    // navigated the CURRENT tab. The user then saw both:
+    // (a) the current tab go to the log file, (b) the popup
+    // blocker prompt let them open the new tab anyway. Hence
+    // "opens in a new tab, but also changes the current tab."
+    //
+    // `noopener` / `noreferrer` are intentionally omitted: both
+    // cause window.open to return null, breaking our ability to
+    // navigate the new tab afterward. The opened content is plain
+    // text from our own server (the log file blob), with no JS
+    // running in it, so `window.opener` accessibility from the
+    // new tab is a non-issue here.
+    const newTab = window.open("about:blank", "_blank");
+    if (newTab === null) {
+      // Even the synchronous open got blocked (some strict popup
+      // configurations). Surface the failure rather than the
+      // earlier behavior of stealing the current tab.
+      setErr("popup blocked — allow popups for this site");
+      return;
+    }
     setBusy(true);
     setErr(undefined);
-    try {
-      const url = api.processLogFileUrl(sessionId, processId, stream);
-      const stored = getStoredToken();
-      const headers: Record<string, string> = {};
-      if (stored !== undefined) headers.Authorization = `Bearer ${stored.token}`;
-      const res = await fetch(url, { headers });
-      if (!res.ok) {
-        setErr(`${res.status} ${res.statusText}`);
-        return;
+    void (async () => {
+      try {
+        const url = api.processLogFileUrl(sessionId, processId, stream);
+        const stored = getStoredToken();
+        const headers: Record<string, string> = {};
+        if (stored !== undefined) headers.Authorization = `Bearer ${stored.token}`;
+        const res = await fetch(url, { headers });
+        if (!res.ok) {
+          newTab.close();
+          setErr(`${res.status} ${res.statusText}`);
+          return;
+        }
+        const text = await res.text();
+        // Wrap the log in a minimal dark-themed HTML document
+        // instead of serving raw text/plain. Two reasons:
+        //
+        //   1. Plain text/plain rendering varies wildly by browser:
+        //      Chrome may apply auto-dark, Safari/Firefox usually
+        //      don't. The previous single-step window.open(blobUrl)
+        //      happened to land on whatever the browser's default
+        //      for the user's color scheme was, which was dark for
+        //      most users — but the about:blank-then-navigate
+        //      sequence breaks that heuristic and ends up showing
+        //      a white page. Wrapping in HTML with explicit CSS
+        //      makes the rendering deterministic and matches the
+        //      app's dark posture.
+        //   2. Bonus: better typography (monospace, soft wrap, line
+        //      numbers possible later), and the <title> shows the
+        //      stream + process id in the tab strip instead of an
+        //      opaque `blob:...` URL.
+        const title = `${stream} — ${processId}`;
+        const html =
+          `<!doctype html><html><head><meta charset="utf-8">` +
+          `<title>${escapeHtml(title)}</title>` +
+          `<meta name="color-scheme" content="dark light">` +
+          `<style>` +
+          `html,body{margin:0;padding:0;background:#0a0a0a;color:#e5e5e5;` +
+          `font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;` +
+          `font-size:13px;line-height:1.5;tab-size:4}` +
+          `@media (prefers-color-scheme: light){html,body{background:#fafafa;color:#171717}}` +
+          `pre{margin:0;padding:1rem;white-space:pre-wrap;word-break:break-word}` +
+          `</style></head><body><pre>${escapeHtml(text)}</pre></body></html>`;
+        const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+        const blobUrl = URL.createObjectURL(blob);
+        // Navigate the already-open tab to the blob. `location =`
+        // (rather than `location.replace`) leaves a single
+        // about:blank entry in that tab's history, which is the
+        // expected back-button behavior.
+        newTab.location.href = blobUrl;
+        // Revoke after the new tab has had time to load it.
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+      } catch (e) {
+        newTab.close();
+        setErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
       }
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      // Open in a new tab. The blob URL is short-lived: revoke
-      // after a generous delay so the new tab has time to load
-      // it but we don't leak the buffer forever.
-      const w = window.open(blobUrl, "_blank", "noopener,noreferrer");
-      if (w === null) {
-        // Popup blocked — fall back to navigating the current
-        // tab (the user can use back to return).
-        window.location.assign(blobUrl);
-      }
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+    })();
   };
   return (
     <button
       type="button"
-      onClick={() => void onClick()}
+      onClick={onClick}
       disabled={busy}
       className="text-sky-400 hover:underline disabled:opacity-50 light:text-sky-700"
       title={err}

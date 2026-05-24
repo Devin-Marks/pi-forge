@@ -134,43 +134,53 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
         // chat for screen real estate.
         className="flex h-full max-h-[720px] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950 shadow-2xl"
       >
-        <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
-          <div className="flex items-center gap-1">
-            {visibleTabs.map((t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`rounded px-3 py-1 text-xs ${
-                  tab === t
-                    ? "bg-neutral-800 text-neutral-100"
-                    : "text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
-                }`}
-              >
-                {t === "providers"
-                  ? "Providers"
-                  : t === "agent"
-                    ? "Agent"
-                    : t === "mcp"
-                      ? "MCP"
-                      : t === "tools"
-                        ? "Tools"
-                        : t === "skills"
-                          ? "Skills"
-                          : t === "prompts"
-                            ? "Prompts"
-                            : t === "systemPrompt"
-                              ? "System Prompt"
-                              : t === "quickActions"
-                                ? "Quick Actions"
-                                : t === "appearance"
-                                  ? "Appearance"
-                                  : t === "backup"
-                                    ? "Backup"
-                                    : "General"}
-              </button>
-            ))}
+        <header className="flex items-center gap-3 border-b border-neutral-800 px-4 py-3">
+          {/* Horizontally scrollable tab strip. With 10+ tabs the strip
+              overflows on narrow viewports (mobile, small windows) —
+              the modal itself is up to max-w-6xl but real-world phones
+              clamp it to the viewport width. `min-w-0` lets the
+              container actually shrink so `overflow-x-auto` activates;
+              `shrink-0` on each tab keeps labels intact when the user
+              scrolls. The trailing controls (API Docs / Close) stay
+              fixed to the right via `gap-3` on the header. */}
+          <div className="-mx-1 min-w-0 flex-1 overflow-x-auto px-1">
+            <div className="flex min-w-max items-center gap-1">
+              {visibleTabs.map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  className={`shrink-0 whitespace-nowrap rounded px-3 py-1 text-xs ${
+                    tab === t
+                      ? "bg-neutral-800 text-neutral-100"
+                      : "text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
+                  }`}
+                >
+                  {t === "providers"
+                    ? "Providers"
+                    : t === "agent"
+                      ? "Agent"
+                      : t === "mcp"
+                        ? "MCP"
+                        : t === "tools"
+                          ? "Tools"
+                          : t === "skills"
+                            ? "Skills"
+                            : t === "prompts"
+                              ? "Prompts"
+                              : t === "systemPrompt"
+                                ? "System Prompt"
+                                : t === "quickActions"
+                                  ? "Quick Actions"
+                                  : t === "appearance"
+                                    ? "Appearance"
+                                    : t === "backup"
+                                      ? "Backup"
+                                      : "General"}
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <button
               onClick={() => {
                 // Carry the user's current token over to the swagger
