@@ -17,6 +17,35 @@ section. See the "Versions" section of the README for the support window policy.
 
 ### Added
 
+- **Mobile-only quick-list popovers for processes and todos on
+  the chat-input footer badges.** The chat-input badges for
+  running processes and todos route to right-pane panels on
+  desktop (the existing behavior, unchanged). On mobile (narrow
+  viewport detected via `useIsMobile`) the right pane stays
+  collapsed and the same right-pane auto-expand logic in
+  App.tsx is `!isMobile`-gated, so routing to it from the badge
+  used to be a dead-end interaction. The mobile path now opens a
+  small floating popover anchored above the badge, showing the
+  list inline — the popover IS the panel for the mobile case.
+  Outside-click and Escape close it. The processes popover
+  surfaces live runtime (updates per second while open), pid,
+  status badge, and an inline Kill button; the todos popover
+  renders the checklist with status glyphs and strikethrough for
+  completed items, skipping soft-deleted tombstones. Width clamps
+  to the viewport via `max-w-[calc(100vw-1rem)]`.
+
+### Fixed
+
+- **Settings modal tab strip overflowed on narrow viewports.**
+  With 10+ tabs the strip ran off the right edge of the modal —
+  visible on mobile PWA, small desktop windows, and the iPad
+  split-view layout. The tabs are now wrapped in a horizontally
+  scrollable container with `overflow-x-auto`, `min-w-0` so the
+  flex item can actually shrink, and `shrink-0` /
+  `whitespace-nowrap` on each tab so labels stay intact under
+  scroll. The trailing controls (API Docs / Close) stay fixed to
+  the right.
+
 - **Background processes notify the agent on completion.** The
   `process` tool's `alertOnSuccess` / `alertOnFailure` /
   `alertOnKill` flags were previously stored on `ProcessInfo` but

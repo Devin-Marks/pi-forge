@@ -24,6 +24,7 @@ import { useUiStore } from "../store/ui-store";
 import { useComposerStore } from "../store/composer-store";
 import { deriveCounts, selectTodoState, useTodoStore } from "../store/todo-store";
 import { countRunning, selectProcesses, useProcessesStore } from "../store/processes-store";
+import { ProcessesPopover, TodosPopover } from "./InputPopovers";
 
 /**
  * Pull the user's prior prompts out of the session message history,
@@ -256,6 +257,10 @@ export function ChatInput({ sessionId }: Props) {
   // renders the panel as a bottom strip of whatever tab is showing.
   const todoState = useTodoStore((s) => selectTodoState(s, sessionId));
   const todoCounts = deriveCounts(todoState);
+  // todoPanelOpen drives the active-button highlight on desktop
+  // (where the badge toggles the bottom-strip right-pane panel).
+  // On mobile the popover replaces that interaction — the badge
+  // opens the popover instead.
   const todoPanelOpen = useUiStore((s) => s.todoPanelOpen);
   const setTodoPanelOpen = useUiStore((s) => s.setTodoPanelOpen);
 
@@ -268,6 +273,17 @@ export function ChatInput({ sessionId }: Props) {
   const sessionProcesses = useProcessesStore((s) => selectProcesses(s, sessionId));
   const runningProcesses = countRunning(sessionProcesses);
   const openProcessesTab = useUiStore((s) => s.openProcessesTab);
+
+  // Popovers anchored to the chat-input footer badges. Each is a
+  // small floating panel that shows the list directly, instead of
+  // navigating away to the right-pane tab (which is often
+  // collapsed on narrow viewports — mobile PWA in particular).
+  // The popover's footer link is the way to reach the full panel
+  // for deeper drill-down.
+  const [processesPopoverOpen, setProcessesPopoverOpen] = useState(false);
+  const [todosPopoverOpen, setTodosPopoverOpen] = useState(false);
+  const processesButtonRef = useRef<HTMLButtonElement>(null);
+  const todosButtonRef = useRef<HTMLButtonElement>(null);
 
   // ----- @-completion (file references in the chat input) -----
   // The popover is "open" when `acToken` is set; that happens whenever
@@ -1545,50 +1561,102 @@ export function ChatInput({ sessionId }: Props) {
                   <RotateCcw size={12} />
                 </button>
               )}
-              {/* Processes shortcut — only renders when the
-                  session has ≥1 running process. Clicking
-                  switches the right-pane tab to "processes" and
-                  auto-opens the right pane if collapsed (via
-                  ui-store → App.tsx effect). */}
+              {/* Processes shortcut. Desktop: clicking opens the
+                  right-pane Processes tab (auto-expands the pane
+                  if collapsed via App.tsx). Mobile: clicking
+                  opens a small floating popover anchored to the
+                  button — the right pane is usually collapsed
+                  there and routing to it would mean a full
+                  navigation away from the chat input. The
+                  popover's "Open full panel →" footer link
+                  preserves access to the deeper view. */}
               {runningProcesses > 0 && (
-                <button
-                  type="button"
-                  onClick={() => openProcessesTab()}
-                  className="flex items-center gap-1 rounded px-1.5 py-1 text-[11px] text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 light:text-neutral-600 light:hover:bg-neutral-200 light:hover:text-neutral-900"
-                  title={`${runningProcesses} background process(es) running — view processes panel`}
-                  aria-label="View processes panel"
-                >
-                  <Activity size={12} className="text-emerald-400 light:text-emerald-700" />
-                  <span>{runningProcesses}</span>
-                </button>
+                <div className="relative">
+                  <button
+                    ref={processesButtonRef}
+                    type="button"
+                    onClick={() => {
+                      if (isMobile) setProcessesPopoverOpen((v) => !v);
+                      else openProcessesTab();
+                    }}
+                    className={`flex items-center gap-1 rounded px-1.5 py-1 text-[11px] ${
+                      isMobile && processesPopoverOpen
+                        ? "bg-neutral-800 text-neutral-100 light:bg-neutral-200 light:text-neutral-900"
+                        : "text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 light:text-neutral-600 light:hover:bg-neutral-200 light:hover:text-neutral-900"
+                    }`}
+                    title={
+                      isMobile
+                        ? `${runningProcesses} background process(es) running — show list`
+                        : `${runningProcesses} background process(es) running — view processes panel`
+                    }
+                    aria-label={isMobile ? "Show processes list" : "View processes panel"}
+                    aria-expanded={isMobile ? processesPopoverOpen : undefined}
+                  >
+                    <Activity size={12} className="text-emerald-400 light:text-emerald-700" />
+                    <span>{runningProcesses}</span>
+                  </button>
+                  {isMobile && (
+                    <ProcessesPopover
+                      open={processesPopoverOpen}
+                      onClose={() => setProcessesPopoverOpen(false)}
+                      anchorRef={processesButtonRef}
+                      sessionId={sessionId}
+                    />
+                  )}
+                </div>
               )}
-              {/* Todo toggle — only renders when the session has
-                  todos. Clicking opens the bottom-strip panel in
-                  the right pane (App auto-opens the pane if
-                  collapsed). */}
+              {/* Todo toggle. Desktop: clicking toggles the
+                  bottom-strip todo panel in the right pane.
+                  Mobile: clicking opens the popover with the
+                  task list. Same rationale as processes — see
+                  the comment above. */}
               {todoCounts.total > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setTodoPanelOpen(!todoPanelOpen)}
-                  className={`flex items-center gap-1 rounded px-1.5 py-1 text-[11px] ${
-                    todoPanelOpen
-                      ? "bg-amber-900/40 text-amber-200 light:bg-amber-100 light:text-amber-900"
-                      : "text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 light:text-neutral-600 light:hover:bg-neutral-200 light:hover:text-neutral-900"
-                  }`}
-                  title={
-                    todoPanelOpen
-                      ? "Hide todo panel"
-                      : `Show todo panel (${todoCounts.completed}/${todoCounts.total} done${
-                          todoCounts.inProgress > 0 ? `, ${todoCounts.inProgress} in progress` : ""
-                        })`
-                  }
-                  aria-pressed={todoPanelOpen}
-                >
-                  <ListChecks size={12} />
-                  <span>
-                    {todoCounts.completed}/{todoCounts.total}
-                  </span>
-                </button>
+                <div className="relative">
+                  <button
+                    ref={todosButtonRef}
+                    type="button"
+                    onClick={() => {
+                      if (isMobile) setTodosPopoverOpen((v) => !v);
+                      else setTodoPanelOpen(!todoPanelOpen);
+                    }}
+                    className={`flex items-center gap-1 rounded px-1.5 py-1 text-[11px] ${
+                      (isMobile ? todosPopoverOpen : todoPanelOpen)
+                        ? "bg-amber-900/40 text-amber-200 light:bg-amber-100 light:text-amber-900"
+                        : "text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 light:text-neutral-600 light:hover:bg-neutral-200 light:hover:text-neutral-900"
+                    }`}
+                    title={
+                      isMobile
+                        ? `Tasks: ${todoCounts.completed}/${todoCounts.total} done${
+                            todoCounts.inProgress > 0
+                              ? `, ${todoCounts.inProgress} in progress`
+                              : ""
+                          }`
+                        : todoPanelOpen
+                          ? "Hide todo panel"
+                          : `Show todo panel (${todoCounts.completed}/${todoCounts.total} done${
+                              todoCounts.inProgress > 0
+                                ? `, ${todoCounts.inProgress} in progress`
+                                : ""
+                            })`
+                    }
+                    aria-label={isMobile ? "Show tasks list" : "Toggle todo panel"}
+                    aria-expanded={isMobile ? todosPopoverOpen : undefined}
+                    aria-pressed={isMobile ? undefined : todoPanelOpen}
+                  >
+                    <ListChecks size={12} />
+                    <span>
+                      {todoCounts.completed}/{todoCounts.total}
+                    </span>
+                  </button>
+                  {isMobile && (
+                    <TodosPopover
+                      open={todosPopoverOpen}
+                      onClose={() => setTodosPopoverOpen(false)}
+                      anchorRef={todosButtonRef}
+                      sessionId={sessionId}
+                    />
+                  )}
+                </div>
               )}
             </div>
           )}
