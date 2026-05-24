@@ -36,6 +36,29 @@ section. See the "Versions" section of the README for the support window policy.
 
 ### Fixed
 
+- **"Full stdout/stderr log" buttons on a process navigated the
+  current tab as a side-effect of opening the new one.** The
+  `window.open(blobUrl, "_blank", ...)` call ran AFTER `await
+  fetch(...)`, so by the time it fired the user-gesture chain was
+  broken and the popup blocker kicked in. The fallback path then
+  `window.location.assign(blobUrl)`'d, navigating the current tab.
+  When the user clicked "allow" on the popup-blocker prompt the
+  new tab opened too — hence "opens in a new tab AND changes the
+  current tab." Fix: open the new tab synchronously to about:blank
+  inside the click handler (counts as user-initiated, popup
+  blocker stays quiet), then navigate it once the fetch resolves.
+  If the synchronous open is still blocked (strictest popup
+  configs), surface a clear "popup blocked" error instead of
+  stealing the current tab. Additionally, the log content is now
+  wrapped in a minimal HTML document with explicit dark CSS and a
+  meaningful `<title>` — the prior single-step open landed on
+  whatever the browser's default plain-text rendering happened to
+  be (Chrome auto-dark, Safari/Firefox white), and the new
+  about:blank-then-navigate sequence broke that heuristic and
+  consistently showed white. The HTML wrapper makes the rendering
+  deterministic (dark by default, respects
+  `prefers-color-scheme: light`), gives the tab a useful label,
+  and softens line wrapping.
 - **Settings modal tab strip overflowed on narrow viewports.**
   With 10+ tabs the strip ran off the right edge of the modal —
   visible on mobile PWA, small desktop windows, and the iPad
