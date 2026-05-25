@@ -350,33 +350,28 @@ ${HEADER_NAV_LANDING}
     <div class="feature-grid">
       <div class="feature-card">
         <div class="feature-icon">&#128279;</div>
-        <h3>MCP server integration</h3>
-        <p>Connect remote Model Context Protocol servers (StreamableHTTP / SSE) AND local stdio servers. Per-project <code>.mcp.json</code> with a per-project trust gate on stdio, header status badge, and a master kill-switch for restricted environments.</p>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">&#128736;</div>
-        <h3>Per-tool enable / disable</h3>
-        <p>Every tool the agent could call — pi's seven built-ins plus each MCP server's tools — toggleable individually with per-project overrides. Allow-by-default; changes apply on the next session.</p>
+        <h3>MCP + per-tool controls</h3>
+        <p>Remote (HTTP / SSE) and stdio MCP servers with per-project trust gates. Every tool — pi's built-ins plus each MCP server's — toggleable individually with per-project overrides.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#128104;&#8205;&#128104;&#8205;&#128103;</div>
         <h3>Session orchestration</h3>
-        <p>Opt-in supervisor mode for a session: spawn worker sessions, watch their inboxes, course-correct mid-execution, hand off context. Hub-and-spoke topology, same-project, depth=1; off unless <code>ORCHESTRATION_ENABLED=true</code>.</p>
+        <p>Opt-in supervisor mode lets one session spawn, observe, and coordinate worker sessions in the same project. Worker events stream into the supervisor's inbox.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#128268;</div>
         <h3>Webhooks</h3>
-        <p>HTTPS POST deliveries on agent and session events — turn-end, ask-user-question, process alerts, retry failures, compaction, lifecycle. Global or per-project scope, HMAC-SHA256 signing, retry with exponential backoff, delivery history.</p>
+        <p>HTTPS POST deliveries on agent and session events. Global or per-project scope, HMAC-SHA256 signing, retry with exponential backoff, delivery history.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#9881;&#65039;</div>
         <h3>Background-process tool</h3>
-        <p>The <code>process</code> tool lets the agent spawn long-running processes — dev servers, watchers, builds — that outlive a single turn. Per-session manager, log capture, regex watches, alerts on exit.</p>
+        <p>The <code>process</code> tool lets the agent spawn long-running processes — dev servers, watchers, builds — with log capture, regex watches, and exit alerts.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#9889;</div>
         <h3>Quick actions</h3>
-        <p>Operator-defined chips in the chat toolbar that either run a shell command in the active project or insert/send a templated prompt. Your personal toolbox for the things you run twenty times a day.</p>
+        <p>Operator-defined chips in the chat toolbar that either run a shell command in the active project or insert a templated prompt into the composer.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#128172;</div>
