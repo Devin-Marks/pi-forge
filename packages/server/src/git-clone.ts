@@ -52,6 +52,25 @@ export interface CloneOptions {
    * stored `origin` URL after success.
    */
   token?: string;
+  /**
+   * When true, sets `GIT_SSL_NO_VERIFY=true` for the clone (and
+   * for the post-clone `remote set-url` step that strips the token
+   * from the stored remote — that one doesn't make a network call,
+   * but we set it consistently in case a future change does).
+   *
+   * Same posture as the webhook `insecureTls` flag: necessary for
+   * internal Git hosts with self-signed certs (corporate GHE, on-
+   * prem GitLab with a private CA, etc.). Every clone with this
+   * flag set logs a `git-clone-insecure-tls` line to stderr so the
+   * relaxed security is visible in `docker logs`.
+   *
+   * Single-tenant assumption holds: a user who can configure a
+   * project's clone URL can already point it anywhere, and the
+   * agent's `bash` tool can already run arbitrary git commands.
+   * Bypassing cert validation per-clone doesn't widen the attack
+   * surface meaningfully beyond what's already there.
+   */
+  insecureTls?: boolean;
   /** Optional AbortSignal to cancel the clone mid-run. SIGTERM → SIGKILL after 5s grace. */
   signal?: AbortSignal;
 }
@@ -235,13 +254,33 @@ export function cloneRepository(opts: CloneOptions): SpawnedClone {
 
   push({ type: "started", cloneUrlForDisplay: displayUrl });
 
-  const env = {
+  const env: Record<string, string> = {
     ...scrubbedEnv(),
     // Prevent git from prompting on stdin when credentials are
     // wrong / missing — without this, git can hang indefinitely
     // waiting for a username/password.
     GIT_TERMINAL_PROMPT: "0",
   };
+
+  if (opts.insecureTls === true) {
+    // git's standard "skip cert validation" knob. Equivalent to
+    // `-c http.sslVerify=false` on the command line, but as an env
+    // var so the post-clone `remote set-url` step inherits it too.
+    env.GIT_SSL_NO_VERIFY = "true";
+    // Operator-visible log so the relaxed posture is recorded in
+    // docker logs. Bypasses pino (same rationale as the
+    // webhook-insecure-tls log) so a LOG_LEVEL=warn deploy still
+    // surfaces it.
+    process.stderr.write(
+      JSON.stringify({
+        level: "warn",
+        time: new Date().toISOString(),
+        msg: "git-clone-insecure-tls",
+        url: displayUrl,
+        target,
+      }) + "\n",
+    );
+  }
 
   const child = spawn("git", args, {
     cwd: dirname(target),

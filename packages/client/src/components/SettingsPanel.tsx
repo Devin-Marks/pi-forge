@@ -20,6 +20,7 @@ import { EMPTY_STATUS, useMcpStore } from "../store/mcp-store";
 import { useQuickActionsStore } from "../store/quick-actions-store";
 import { THEME_DEFS, useThemeStore, type ThemeId } from "../lib/theme";
 import { getStoredToken } from "../lib/auth-client";
+import { WebhooksTab } from "./WebhooksTab";
 import { useAuthStore } from "../store/auth-store";
 
 type Tab =
@@ -31,6 +32,7 @@ type Tab =
   | "prompts"
   | "systemPrompt"
   | "quickActions"
+  | "webhooks"
   | "appearance"
   | "backup"
   | "general";
@@ -77,6 +79,11 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           // deployments often want to disable bash/edit/write at the
           // tool level, regardless of what providers / agent settings
           // are exposed.
+          // Webhooks tab is intentionally OMITTED under MINIMAL_UI —
+          // matches the server-side gate (POST/PATCH/DELETE/test
+          // return 403). The view-only GET routes still exist but
+          // there's nothing the operator can do from the UI; hiding
+          // the tab avoids the dead surface.
           ([
             "skills",
             "prompts",
@@ -96,6 +103,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
             "prompts",
             "systemPrompt",
             "quickActions",
+            "webhooks",
             "appearance",
             "backup",
             "general",
@@ -171,11 +179,13 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
                                 ? "System Prompt"
                                 : t === "quickActions"
                                   ? "Quick Actions"
-                                  : t === "appearance"
-                                    ? "Appearance"
-                                    : t === "backup"
-                                      ? "Backup"
-                                      : "General"}
+                                  : t === "webhooks"
+                                    ? "Webhooks"
+                                    : t === "appearance"
+                                      ? "Appearance"
+                                      : t === "backup"
+                                        ? "Backup"
+                                        : "General"}
                 </button>
               ))}
             </div>
@@ -228,6 +238,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           {tab === "prompts" && <PromptsTab onError={setError} />}
           {tab === "systemPrompt" && <SystemPromptTab onError={setError} />}
           {tab === "quickActions" && <QuickActionsTab onError={setError} />}
+          {tab === "webhooks" && <WebhooksTab onError={setError} />}
           {tab === "appearance" && <AppearanceTab />}
           {tab === "backup" && <BackupTab onError={setError} />}
           {tab === "general" && <GeneralTab />}

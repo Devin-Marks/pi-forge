@@ -53,9 +53,15 @@ pi-forge/
 │   │   │   ├── attachment-converters.ts # Image/text attachment normalization for prompt route
 │   │   │   ├── skills-export.ts         # Skills archive export
 │   │   │   ├── mcp/                     # MCP client manager + customTools bridge — see docs/mcp.md
+│   │   │   ├── webhooks/                 # HTTPS webhook delivery for agent/session events
+│   │   │   │   ├── store.ts             # webhooks.json + webhook-deliveries.json CRUD
+│   │   │   │   ├── dispatcher.ts        # Match → POST → retry (1s/5s/30s) → record delivery
+│   │   │   │   ├── event-bridge.ts      # SDK/forge events → dispatcher
+│   │   │   │   ├── init.ts              # Boot-time wiring of ask-user-question + processes
+│   │   │   │   └── types.ts             # WebhookConfig, DeliveryRecord, event union
 │   │   │   └── routes/                  # auth, config, control, exec, files, git, health,
 │   │   │                                #   mcp, projects, prompt, sessions, stream, terminal,
-│   │   │                                #   _schemas (shared JSON schemas)
+│   │   │                                #   webhooks, _schemas (shared JSON schemas)
 │   │   └── package.json
 │   └── client/                          # React + Vite frontend (TypeScript)
 │       ├── index.html                   # Viewport meta + theme-color (dark default; updated by theme.ts)
@@ -443,6 +449,8 @@ route handlers).
 | `skills-overrides.json` | Per-project skill enable/disable patterns | `skill-overrides.ts` |
 | `tool-overrides.json` | Per-project tool enable/disable (built-ins + MCP) | `tool-overrides.ts` |
 | `prompts-overrides.json` | Per-project pi-prompt enable/disable patterns | `prompt-overrides.ts` |
+| `webhooks.json` | Webhook configs (HMAC secrets stored here — mode 0600) | `webhooks/store.ts` |
+| `webhook-deliveries.json` | Rolling delivery history (cap 100 / webhook) | `webhooks/store.ts` |
 | `jwt-secret` | Auto-generated HS256 signing key (mode 0600) | `config.ts` (`loadOrGenerateJwtSecret`) |
 | `password-hash` | scrypt hash of the user's persisted password (mode 0600) | `auth.ts` (`persistPassword`) |
 

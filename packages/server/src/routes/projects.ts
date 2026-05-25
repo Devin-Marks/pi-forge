@@ -397,6 +397,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
       projectName: string;
       branch?: string;
       token?: string;
+      insecureTls?: boolean;
     };
   }>(
     "/projects/clone",
@@ -415,7 +416,12 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
           "clone URL (GitHub convention; works for most providers). The token is " +
           "stripped from the stored `origin` URL after a successful clone so it " +
           "doesn't persist in `.git/config`. On failure the target dir is " +
-          "rm -rf'd so no token bytes survive.",
+          "rm -rf'd so no token bytes survive.\n\n" +
+          "TLS: optional `insecureTls: true` sets `GIT_SSL_NO_VERIFY=true` for " +
+          "the clone — necessary for internal Git hosts with self-signed " +
+          "certs (corporate GHE, on-prem GitLab with a private CA, etc.). " +
+          "Logs a `git-clone-insecure-tls` line to stderr on every use so " +
+          "the relaxed posture is visible in operator logs.",
         tags: ["projects"],
         body: {
           type: "object",
@@ -428,6 +434,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
             projectName: { type: "string", minLength: 1, maxLength: 200 },
             branch: { type: "string", maxLength: 250 },
             token: { type: "string", maxLength: 4096 },
+            insecureTls: { type: "boolean" },
           },
         },
         response: {
@@ -442,7 +449,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
-      const { url, parentPath, folderName, projectName, branch, token } = req.body;
+      const { url, parentPath, folderName, projectName, branch, token, insecureTls } = req.body;
 
       // ---- pre-stream validation: errors land as plain JSON 4xx ----
       try {
@@ -554,6 +561,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
       };
       if (branch !== undefined && branch.length > 0) cloneOpts.branch = branch;
       if (token !== undefined && token.length > 0) cloneOpts.token = token;
+      if (insecureTls === true) cloneOpts.insecureTls = true;
       const { promise, events } = cloneRepository(cloneOpts);
 
       // Stream every event to the client. After the `started` event,

@@ -4,12 +4,14 @@ import {
   createSession,
   deleteColdSession,
   disposeSession,
+  findProjectIdForSession,
   findSessionLocation,
   getSession,
   listSessionsForProject,
   resumeSessionById,
   type UnifiedSession,
 } from "../session-registry.js";
+import { bridgeSessionDeleted } from "../webhooks/event-bridge.js";
 import { errorSchema, liveSummaryBody, liveSummarySchema } from "./_schemas.js";
 import { buildTurnDiff } from "../turn-diff-builder.js";
 import { buildCompactionHistory } from "../compaction-history.js";
@@ -786,6 +788,10 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
+      // Capture projectId BEFORE the dispose/delete tears down the
+      // session — both `getSession` and the on-disk lookup go away
+      // mid-flow. Used for the session_deleted webhook payload.
+      const projectIdForWebhook = await findProjectIdForSession(req.params.id);
       const wasLive = await disposeSession(req.params.id);
       // Always hard-delete: dispose (above) + remove JSONL (below).
       // After dispose, the registry no longer has the entry;
@@ -800,7 +806,14 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
         req.log.error({ err }, "deleteColdSession failed");
         return reply.code(500).send({ error: "session_delete_failed" });
       }
-      if (r === "deleted") return reply.code(204).send();
+      if (r === "deleted") {
+        bridgeSessionDeleted({
+          sessionId: req.params.id,
+          ...(projectIdForWebhook !== undefined ? { projectId: projectIdForWebhook } : {}),
+          wasLive,
+        });
+        return reply.code(204).send();
+      }
       if (r === "live") {
         // Race: another client resumed the session between our
         // dispose and the cold-delete file lookup. The user asked
@@ -813,7 +826,14 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
         if (live2) {
           try {
             const r2 = await deleteColdSession(req.params.id);
-            if (r2 === "deleted" || r2 === "not_found") return reply.code(204).send();
+            if (r2 === "deleted" || r2 === "not_found") {
+              bridgeSessionDeleted({
+                sessionId: req.params.id,
+                ...(projectIdForWebhook !== undefined ? { projectId: projectIdForWebhook } : {}),
+                wasLive: true,
+              });
+              return reply.code(204).send();
+            }
           } catch (err) {
             req.log.error({ err }, "deleteColdSession failed on retry");
             return reply.code(500).send({ error: "session_delete_failed" });
@@ -828,7 +848,13 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
       if (wasLive) {
         // Dispose succeeded but no JSONL on disk — the live session
         // had no persisted entries (nothing was written). Treat as
-        // success; the live state IS gone.
+        // success; the live state IS gone. Still fire the webhook
+        // since "session went away" is the user-visible outcome.
+        bridgeSessionDeleted({
+          sessionId: req.params.id,
+          ...(projectIdForWebhook !== undefined ? { projectId: projectIdForWebhook } : {}),
+          wasLive: true,
+        });
         return reply.code(204).send();
       }
       return notFound(reply);
