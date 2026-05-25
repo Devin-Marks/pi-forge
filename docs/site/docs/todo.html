@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Todo Tool — pi-forge</title>
+  <meta name="description" content="Browser-native todo tool — session-scoped task list with live UI panel.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='1' y='1' width='30' height='30' rx='7' fill='%230d0d10'/><path d='M12 13 H20 M14 13 V21 M18 13 V21' stroke='%23e6e7eb' stroke-width='1.6' stroke-linecap='round' fill='none'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="../index.html" class="logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="#0d0d10"/>
+  <path d="M9 11 L6 16 L9 21" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M23 11 L26 16 L23 21" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M12 13 H20 M14 13 V21 M18 13 V21" stroke="#e6e7eb" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
+        pi-forge
+      </a>
+      <nav class="nav-links" id="navLinks">
+        <a href="../index.html#features">Features</a>
+        <a href="../index.html#quickstart">Quick Start</a>
+        <a href="architecture.html">Docs</a>
+        <a href="https://github.com/Devin-Marks/pi-forge" class="nav-cta">GitHub</a>
+      </nav>
+      <button class="mobile-toggle" id="mobileToggle" aria-label="Toggle menu">&#9776;</button>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+    <aside class="docs-sidebar" id="docsSidebar">
+      <div class="sidebar-section">
+        <h4>Documentation</h4>
+        <a href="architecture.html">Architecture</a>
+        <a href="configuration.html">Configuration</a>
+        <a href="containers.html">Containers</a>
+        <a href="deployment.html">Deployment</a>
+        <a href="mobile.html">Mobile</a>
+        <a href="api.html">API Examples</a>
+        <a href="mcp.html">MCP Servers</a>
+        <a href="webhooks.html">Webhooks</a>
+        <a href="orchestration.html">Session Orchestration</a>
+        <a href="processes.html">Background Processes</a>
+        <a href="todo.html" class="active">Todo Tool</a>
+        <a href="ask-user-question.html">Ask User Question</a>
+        <a href="quick-actions.html">Quick Actions</a>
+        <a href="sse-events.html">SSE Events</a>
+      </div>
+      <div class="sidebar-section">
+        <h4>Project</h4>
+        <a href="https://github.com/Devin-Marks/pi-forge">GitHub</a>
+        <a href="https://github.com/Devin-Marks/pi-forge/blob/main/CHANGELOG.md">Changelog</a>
+        <a href="https://github.com/Devin-Marks/pi-forge/blob/main/SECURITY.md">Security</a>
+      </div>
+    </aside>
+
+    <main class="docs-main">
+      <h1>Todo Tool</h1>
+      <p class="docs-subtitle">Browser-native todo tool — session-scoped task list with live UI panel.</p>
+<p>pi-forge ships a browser-native implementation of the <code>todo</code> tool: a
+session-scoped task list the agent uses to plan and track multi-step
+work. The agent calls <code>todo</code> with action <code>create / update / list / get / delete / clear</code>; the browser shows a checklist that updates
+live.</p>
+<h2>UI</h2>
+<p>A small <code>ListChecks</code> icon appears in the top-right of the chat input
+<strong>only when the active session has at least one task</strong> (so it&#39;s
+gone the moment the list is cleared). The badge shows
+<code>completed/total</code> so you have at-a-glance progress without clicking.</p>
+<p>Clicking the icon opens a <strong>bottom-strip panel</strong> in the right pane.
+The strip splits whatever right-pane tab is currently visible
+(Files, Search, Changes, Git, or Context) — bottom-third gets
+todos, top-two-thirds stays whatever you were looking at. A
+horizontal divider lets you resize the strip; the height persists in
+localStorage.</p>
+<p>When the right pane is collapsed and you click the icon, the right
+pane auto-opens so the panel has somewhere to land. Closing the
+strip (X in its header, or re-clicking the icon) hides only the
+strip; your right-pane tab is unaffected.</p>
+<h2>Persistence</h2>
+<p>State persists via <strong>branch replay</strong> — exactly the model
+<a href="https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo" target="_blank" rel="noopener noreferrer"><code>@juicesharp/rpiv-todo</code></a>
+uses. Every successful <code>todo</code> tool call returns the full state
+(<code>details.tasks</code>, <code>details.nextId</code>) in its result envelope, which
+gets recorded in the session JSONL. On session resume / fork /
+compaction, pi-forge walks the branch and reads the latest todo
+result to rebuild state. There is <strong>no separate todo database</strong> —
+the message history is the source of truth.</p>
+<p>The in-memory cache (<code>packages/server/src/todo/store.ts</code>) is a fast
+path for read-heavy consumers (the UI panel, SSE snapshots);
+cache-miss falls back to branch replay so a server restart can&#39;t
+lie about state.</p>
+<h2>Disabling the tool</h2>
+<p>The tool appears under <strong>Settings → Tools → Built-in tools</strong>.
+Toggle it off there to filter <code>todo</code> out of every new session&#39;s
+tool allowlist. Live sessions keep the tool list they were created
+with.</p>
+<h2>Relationship to <code>@juicesharp/rpiv-todo</code></h2>
+<p>The wire contract — tool name (<code>todo</code>), action enum (<code>create | update | list | get | delete | clear</code>), 4-state machine (<code>pending → in_progress → completed</code> plus <code>deleted</code> as a terminal
+tombstone), <code>blockedBy</code> dependency model with cycle detection, and
+response envelope (<code>{content:[{type:&quot;text&quot;,text}], details:{action, params, tasks, nextId, error?}}</code>) — is <strong>contract-compatible</strong>
+with the upstream Pi extension (MIT). An agent prompt authored
+against the plugin works against this implementation unchanged.</p>
+<p>Implementation is independent. The reducer, validators, envelope
+builder, replay logic, store, and React UI are pi-forge&#39;s own.
+Prompt snippet, tool description, and guidelines are
+<strong>ported verbatim with attribution</strong> in
+<code>packages/server/src/todo/prompt-strings.ts</code> — the plugin author&#39;s
+wording has been tuned against real model behavior (rules like
+&quot;exactly one task in_progress at a time&quot; and &quot;never mark completed
+if tests are failing&quot;), and matching it avoids regressions in
+tool-call quality.</p>
+
+    </main>
+  </div>
+
+  <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">&#9776;</button>
+
+  <script>
+    document.getElementById('mobileToggle').addEventListener('click', () => {
+      document.getElementById('navLinks').classList.toggle('open');
+    });
+    document.getElementById('sidebarToggle').addEventListener('click', () => {
+      document.getElementById('docsSidebar').classList.toggle('open');
+    });
+  </script>
+</body>
+</html>

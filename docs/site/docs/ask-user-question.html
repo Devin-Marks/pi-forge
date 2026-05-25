@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ask User Question — pi-forge</title>
+  <meta name="description" content="Browser-native ask_user_question tool — structured questionnaires from the agent.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='1' y='1' width='30' height='30' rx='7' fill='%230d0d10'/><path d='M12 13 H20 M14 13 V21 M18 13 V21' stroke='%23e6e7eb' stroke-width='1.6' stroke-linecap='round' fill='none'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="../index.html" class="logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="#0d0d10"/>
+  <path d="M9 11 L6 16 L9 21" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M23 11 L26 16 L23 21" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M12 13 H20 M14 13 V21 M18 13 V21" stroke="#e6e7eb" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
+        pi-forge
+      </a>
+      <nav class="nav-links" id="navLinks">
+        <a href="../index.html#features">Features</a>
+        <a href="../index.html#quickstart">Quick Start</a>
+        <a href="architecture.html">Docs</a>
+        <a href="https://github.com/Devin-Marks/pi-forge" class="nav-cta">GitHub</a>
+      </nav>
+      <button class="mobile-toggle" id="mobileToggle" aria-label="Toggle menu">&#9776;</button>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+    <aside class="docs-sidebar" id="docsSidebar">
+      <div class="sidebar-section">
+        <h4>Documentation</h4>
+        <a href="architecture.html">Architecture</a>
+        <a href="configuration.html">Configuration</a>
+        <a href="containers.html">Containers</a>
+        <a href="deployment.html">Deployment</a>
+        <a href="mobile.html">Mobile</a>
+        <a href="api.html">API Examples</a>
+        <a href="mcp.html">MCP Servers</a>
+        <a href="webhooks.html">Webhooks</a>
+        <a href="orchestration.html">Session Orchestration</a>
+        <a href="processes.html">Background Processes</a>
+        <a href="todo.html">Todo Tool</a>
+        <a href="ask-user-question.html" class="active">Ask User Question</a>
+        <a href="quick-actions.html">Quick Actions</a>
+        <a href="sse-events.html">SSE Events</a>
+      </div>
+      <div class="sidebar-section">
+        <h4>Project</h4>
+        <a href="https://github.com/Devin-Marks/pi-forge">GitHub</a>
+        <a href="https://github.com/Devin-Marks/pi-forge/blob/main/CHANGELOG.md">Changelog</a>
+        <a href="https://github.com/Devin-Marks/pi-forge/blob/main/SECURITY.md">Security</a>
+      </div>
+    </aside>
+
+    <main class="docs-main">
+      <h1>Ask User Question</h1>
+      <p class="docs-subtitle">Browser-native ask_user_question tool — structured questionnaires from the agent.</p>
+<p>pi-forge ships a browser-native implementation of the
+<code>ask_user_question</code> tool: a structured questionnaire the agent can put
+to the user when its instructions are underspecified. Picking
+&quot;PostgreSQL&quot; from a four-option list beats parsing an ambiguous
+free-form reply.</p>
+<h2>How it works</h2>
+<p>When the agent invokes <code>ask_user_question</code>, pi-forge:</p>
+<ol>
+<li>Validates the questionnaire (caps on question / option counts,
+reserved-label guard, byte limits).</li>
+<li>Pushes the questions over SSE to every browser tab watching the
+session.</li>
+<li>Displays an inline panel directly above the chat composer:
+vertical option list for single-select, checkbox list for
+<code>multiSelect: true</code>, side-by-side preview pane when any option
+carries a <code>preview</code> markdown string. The chat scroll stays
+interactive so the user can reread context while answering.</li>
+<li>Holds the agent open until the user submits — or until they click
+<strong>Chat about this</strong> to abandon the questionnaire and continue in
+free-form chat.</li>
+<li>Returns the structured envelope to the agent so it can branch on
+<code>details.answers[].kind</code> and <code>details.cancelled</code>.</li>
+</ol>
+<h2>Disabling the tool</h2>
+<p>The tool appears under <strong>Settings → Tools → Built-in tools</strong>. Toggle
+it off there to filter <code>ask_user_question</code> out of every new session&#39;s
+tool allowlist. Live sessions keep the tool list they were created
+with.</p>
+<h2>Relationship to <code>@juicesharp/rpiv-ask-user-question</code></h2>
+<p>The wire contract — tool name, parameter schema (question / option
+shape, header / label byte caps, reserved labels), and response
+envelope (<code>{ content: [{type:&quot;text&quot;,text}], details: { answers, cancelled, error? } }</code> with answer kinds <code>option | custom | chat | multi</code>) — is contract-compatible with the upstream Pi extension
+<a href="https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-ask-user-question" target="_blank" rel="noopener noreferrer"><code>@juicesharp/rpiv-ask-user-question</code></a>
+(MIT). An agent prompt authored against that plugin works against
+this implementation unchanged.</p>
+<p>Implementation is independent. The TUI plugin can&#39;t render into a
+browser session (<code>ctx.hasUI</code> is false), so installing the plugin
+alongside pi-forge has no effect — pi-forge&#39;s <code>customTools</code>
+registration takes the <code>ask_user_question</code> slot for browser sessions.</p>
+<p>Prompt snippet and guidelines (the strings the model sees) are
+adapted from the plugin with attribution preserved in
+<code>packages/server/src/ask-user-question/prompt-strings.ts</code>. The
+plugin&#39;s wording has been tuned against real model behavior; matching
+it avoids regressions in tool-call quality.</p>
+
+    </main>
+  </div>
+
+  <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">&#9776;</button>
+
+  <script>
+    document.getElementById('mobileToggle').addEventListener('click', () => {
+      document.getElementById('navLinks').classList.toggle('open');
+    });
+    document.getElementById('sidebarToggle').addEventListener('click', () => {
+      document.getElementById('docsSidebar').classList.toggle('open');
+    });
+  </script>
+</body>
+</html>

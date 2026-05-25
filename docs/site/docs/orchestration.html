@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Session Orchestration — pi-forge</title>
+  <meta name="description" content="Supervisor sessions that spawn, observe, and coordinate worker sessions in the same project.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='1' y='1' width='30' height='30' rx='7' fill='%230d0d10'/><path d='M12 13 H20 M14 13 V21 M18 13 V21' stroke='%23e6e7eb' stroke-width='1.6' stroke-linecap='round' fill='none'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="../index.html" class="logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="#0d0d10"/>
+  <path d="M9 11 L6 16 L9 21" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M23 11 L26 16 L23 21" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M12 13 H20 M14 13 V21 M18 13 V21" stroke="#e6e7eb" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
+        pi-forge
+      </a>
+      <nav class="nav-links" id="navLinks">
+        <a href="../index.html#features">Features</a>
+        <a href="../index.html#quickstart">Quick Start</a>
+        <a href="architecture.html">Docs</a>
+        <a href="https://github.com/Devin-Marks/pi-forge" class="nav-cta">GitHub</a>
+      </nav>
+      <button class="mobile-toggle" id="mobileToggle" aria-label="Toggle menu">&#9776;</button>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+    <aside class="docs-sidebar" id="docsSidebar">
+      <div class="sidebar-section">
+        <h4>Documentation</h4>
+        <a href="architecture.html">Architecture</a>
+        <a href="configuration.html">Configuration</a>
+        <a href="containers.html">Containers</a>
+        <a href="deployment.html">Deployment</a>
+        <a href="mobile.html">Mobile</a>
+        <a href="api.html">API Examples</a>
+        <a href="mcp.html">MCP Servers</a>
+        <a href="webhooks.html">Webhooks</a>
+        <a href="orchestration.html" class="active">Session Orchestration</a>
+        <a href="processes.html">Background Processes</a>
+        <a href="todo.html">Todo Tool</a>
+        <a href="ask-user-question.html">Ask User Question</a>
+        <a href="quick-actions.html">Quick Actions</a>
+        <a href="sse-events.html">SSE Events</a>
+      </div>
+      <div class="sidebar-section">
+        <h4>Project</h4>
+        <a href="https://github.com/Devin-Marks/pi-forge">GitHub</a>
+        <a href="https://github.com/Devin-Marks/pi-forge/blob/main/CHANGELOG.md">Changelog</a>
+        <a href="https://github.com/Devin-Marks/pi-forge/blob/main/SECURITY.md">Security</a>
+      </div>
+    </aside>
+
+    <main class="docs-main">
+      <h1>Session Orchestration</h1>
+      <p class="docs-subtitle">Supervisor sessions that spawn, observe, and coordinate worker sessions in the same project.</p>
+<p>A session can act as a <strong>supervisor</strong> that spawns, observes,
+messages, interrupts, and kills other sessions in the same project.
+Off by default; the operator opts in at the instance level with an
+env flag, and each session that should run as a supervisor opts in
+separately from the chat-view toolbar.</p>
+<blockquote>
+<p>Different from <strong>pi-subagents.</strong> Subagents are LLM-internal child
+agents scoped to one tool call within a single session. Orchestrated
+workers are full first-class sessions — they show up in the session
+picker, have their own transcripts, can be opened directly in the
+browser, and survive after the supervisor ends.</p>
+</blockquote>
+<h2>Why turn it on</h2>
+<p>Two concrete workflows the feature is built for:</p>
+<ul>
+<li><strong>Supervisor watching peers.</strong> A lead session breaks down a goal,
+spawns one worker per discrete task, watches the worker inbox for
+turn-ends and ask-user-question requests, and coordinates the
+overall progress. Useful when work decomposes cleanly into
+parallel chunks (audit N files, test N components, port N
+modules).</li>
+<li><strong>Handoff pipeline.</strong> Session A finishes its piece of work,
+spawns session B with a <code>contextSummary</code> of what it learned, and
+detaches. Useful when work is sequential but the context window
+pressure on a single session would force premature compaction.</li>
+</ul>
+<h2>Topology</h2>
+<p>Strict <strong>hub-and-spoke at depth=1.</strong></p>
+<ul>
+<li>The supervisor is the hub. Every worker reports to it via the
+inbox; workers do not see each other.</li>
+<li>A worker cannot become a supervisor (depth is capped at 1). This
+is enforced at <code>enableSupervisor()</code> and at <code>registerWorker()</code> —
+the store rejects with <code>depth_limit_exceeded</code> if you try.</li>
+<li>Hub-and-spoke is enforced <strong>by the tool surface</strong>, not by a
+permission check: workers literally don&#39;t get the
+<code>orchestrate_*</code> tools, so there&#39;s no API for them to express
+worker→worker comms. There&#39;s nothing to enforce because there&#39;s
+nothing to express.</li>
+<li><strong>Same-project only</strong> in v1. Cross-project orchestration is
+intentionally out of scope — it would complicate the data model
+for a use case the design hasn&#39;t seen yet.</li>
+</ul>
+<h2>Enabling — two-tier opt-in</h2>
+<h3>1. Instance flag (operator)</h3>
+<p>Set the env var:</p>
+<pre><code class="language-bash">ORCHESTRATION_ENABLED=true
+</code></pre>
+<p>Or in <code>docker/.env</code>:</p>
+<pre><code>ORCHESTRATION_ENABLED=true
+</code></pre>
+<p>This makes the chat-view <code>Orch</code> toggle button render. It does NOT
+enable supervisor mode for any session — that&#39;s the second gate.</p>
+<p><strong>Hard-disabled under <code>MINIMAL_UI=true</code></strong> regardless of this flag.
+MINIMAL_UI deployments are locked-down by design; orchestration
+opens a tool surface the operator probably doesn&#39;t want end users
+touching.</p>
+<h3>2. Per-session toggle (user)</h3>
+<p>Open a session, click the <code>Orch</code> button in the chat-view toolbar,
+click <strong>Enable supervisor mode</strong>. The server rebuilds the live
+AgentSession in-place (same SessionManager, fresh <code>customTools</code>,
+SSE clients stay attached) so the <code>orchestrate_*</code> tools become
+available immediately — no reload, no reconnect.</p>
+<p>Disable the same way to drop the tools. Disabling also detaches
+every linked worker (they survive as standalone sessions) and
+clears the supervisor&#39;s inbox.</p>
+<h2>Tool surface</h2>
+<p>The supervisor&#39;s agent gets eight new tools (all prefixed
+<code>orchestrate_</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>orchestrate_spawn_worker</code></td>
+<td>Create a new worker session with a task. <code>name</code> is required so the picker stays legible; optional <code>contextSummary</code> prepends handoff context to the initial prompt.</td>
+</tr>
+<tr>
+<td><code>orchestrate_list_workers</code></td>
+<td>Current state per worker (streaming / idle / cold) with message counts and last-activity timestamps.</td>
+</tr>
+<tr>
+<td><code>orchestrate_read_worker</code></td>
+<td>Fetch the worker&#39;s most recent messages, rendered as a readable transcript. Default <code>limit</code> is <strong>1</strong> (latest message only) — bump only when one-message context isn&#39;t enough.</td>
+</tr>
+<tr>
+<td><code>orchestrate_send_to_worker</code></td>
+<td>Inject a message into the worker&#39;s prompt stream. <code>mode</code> chooses between <code>prompt</code> (default, new turn or queue), <code>steer</code> (interrupt current turn — for course-correction), <code>followUp</code> (queue until idle — for next-task assignment).</td>
+</tr>
+<tr>
+<td><code>orchestrate_interrupt_worker</code></td>
+<td>Abort the worker&#39;s current turn. Session stays live.</td>
+</tr>
+<tr>
+<td><code>orchestrate_kill_worker</code></td>
+<td>Dispose the worker session. Optional <code>deleteOnDisk: true</code> also removes the <code>.jsonl</code>.</td>
+</tr>
+<tr>
+<td><code>orchestrate_detach_worker</code></td>
+<td>Drop the supervisor↔worker link; the worker continues as a standalone session.</td>
+</tr>
+<tr>
+<td><code>orchestrate_read_inbox</code></td>
+<td>Drain pending worker events (turn-ends, ask-user-question requests, retry failures, process alerts, deletions). Items return oldest-first and get marked delivered.</td>
+</tr>
+</tbody></table>
+<p>Workers do NOT get these tools — that&#39;s the topology enforcement.</p>
+<h3>Why prompts to workers should read as task briefs</h3>
+<p>The <code>initialPrompt</code> and <code>send_to_worker.message</code> parameters are
+described to the supervisor LLM as <strong>tasks, not conversation</strong>.
+Workers are autonomous agents with no shared transcript or memory
+— &quot;can you help me look at the auth stuff&quot; gives the worker
+nothing to act on. &quot;Audit <code>packages/server/src/auth.ts</code> for the
+JWT verification path; report yes/no on whether expired tokens are
+rejected&quot; is a usable brief.</p>
+<h2>Worker → supervisor wake-up</h2>
+<p>Worker events route into a per-supervisor inbox queue. Five event
+types:</p>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>worker.ended</code></td>
+<td>Worker&#39;s AgentSession emitted <code>agent_end</code></td>
+</tr>
+<tr>
+<td><code>worker.ask_user</code></td>
+<td>Worker called <code>ask_user_question</code></td>
+</tr>
+<tr>
+<td><code>worker.auto_retry_failed</code></td>
+<td>Worker&#39;s SDK auto-retry exhausted on a provider error</td>
+</tr>
+<tr>
+<td><code>worker.process_alert</code></td>
+<td>A background process the worker spawned exited (success / failure / external kill)</td>
+</tr>
+<tr>
+<td><code>worker.deleted</code></td>
+<td>Worker&#39;s session was deleted (cold or live)</td>
+</tr>
+</tbody></table>
+<p>When an event lands, the bridge enqueues it AND tries to wake the
+supervisor with a small <code>[orchestration] N pending events…</code> prompt.
+The wake-up only fires when:</p>
+<ol>
+<li>The supervisor session is live (in the in-memory registry), AND</li>
+<li>The supervisor is <strong>idle</strong> (not currently mid-turn), AND</li>
+<li>There isn&#39;t already an in-flight wake-up for the current idle
+window (per-supervisor dedupe flag).</li>
+</ol>
+<p>If the supervisor is mid-turn, the items wait on the queue.
+Recovery fires another wake-up when the supervisor&#39;s own
+<code>agent_end</code> lands — closing the &quot;supervisor finished a turn
+without calling <code>orchestrate_read_inbox</code>&quot; gap.</p>
+<p>The supervisor&#39;s LLM is expected to call <code>orchestrate_read_inbox</code>
+to drain the queue, then <code>orchestrate_read_worker</code> /
+<code>orchestrate_send_to_worker</code> to act on individual workers.</p>
+<h2>Safety</h2>
+<ul>
+<li><strong>Fanout cap.</strong> Each supervisor can have at most
+<code>ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR</code> (default 8) <strong>live</strong>
+workers at a time. Killed / cold workers don&#39;t count. Bounded
+to <code>[1, 100]</code> so a typo in env doesn&#39;t disable the limit.</li>
+<li><strong>Ownership guard.</strong> Every tool that names a <code>workerId</code> verifies
+the worker is linked to <em>this</em> supervisor before acting. A
+confused supervisor LLM can&#39;t reach into another supervisor&#39;s
+workers by id-guessing — the worker store is the source of truth.</li>
+<li><strong>Depth cap.</strong> Workers cannot themselves become supervisors. No
+fork-bombs from a buggy prompt loop.</li>
+<li><strong>Same-project guard.</strong> <code>spawn_worker</code> always spawns into the
+supervisor&#39;s project; the parameter for cross-project doesn&#39;t
+exist in the tool schema.</li>
+<li><strong>Audit trail.</strong> Every orchestration tool call and inbox event
+writes a JSON-line entry to <code>process.stderr</code>
+(<code>orchestration-inbox-enqueued</code>, <code>orchestration-wake-delivered</code>,
+<code>orchestration-wake-failed</code>, etc.). No separate audit UI by
+design — operators tail container logs.</li>
+</ul>
+<h2>Storage</h2>
+<p>Two files in <code>${FORGE_DATA_DIR}</code>:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+<th>Mode</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>session-orchestration.json</code></td>
+<td>Supervisor opt-in flags + supervisor↔worker links</td>
+<td><code>0600</code></td>
+</tr>
+<tr>
+<td><code>orchestrator-inbox.json</code></td>
+<td>Per-supervisor pending event queue (FIFO-capped at 200 / supervisor)</td>
+<td><code>0600</code></td>
+</tr>
+</tbody></table>
+<p>Same atomic-write + in-process-lock pattern as
+<a href="./webhooks.md"><code>webhooks.md</code></a>. The inbox file can carry assistant-
+message previews — anything the worker&#39;s agent has been talking
+about — so it gets the secret-grade <code>0600</code> even though it has no
+literal secrets.</p>
+<h2>REST surface</h2>
+<p>The agent-facing tools above are mirrored as REST endpoints the UI
+calls. All are gated by the <code>ORCHESTRATION_ENABLED</code> flag and the
+MINIMAL_UI hard gate — they return <code>403 orchestration_disabled</code> or
+<code>403 minimal_ui_disabled</code> when off.</p>
+<table>
+<thead>
+<tr>
+<th>Method + path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GET /api/v1/orchestration/config</code></td>
+<td>Instance flag + caps. Used by the UI to decide whether to render the toggle.</td>
+</tr>
+<tr>
+<td><code>GET /api/v1/orchestration/sessions/:id</code></td>
+<td>Role of a session (<code>supervisor</code> / <code>worker</code> / <code>standalone</code>) + linkage.</td>
+</tr>
+<tr>
+<td><code>POST /api/v1/orchestration/sessions/:id/enable</code></td>
+<td>Make the session a supervisor; rebuild the live AgentSession in place.</td>
+</tr>
+<tr>
+<td><code>POST /api/v1/orchestration/sessions/:id/disable</code></td>
+<td>Drop supervisor mode; detach workers; clear inbox; rebuild.</td>
+</tr>
+<tr>
+<td><code>GET /api/v1/orchestration/sessions/:id/workers</code></td>
+<td>Live worker list for a supervisor (drives the Workers panel).</td>
+</tr>
+<tr>
+<td><code>GET /api/v1/orchestration/sessions/:id/inbox</code></td>
+<td>Full inbox history (delivered + pending), newest first.</td>
+</tr>
+<tr>
+<td><code>POST /api/v1/orchestration/sessions/:id/inbox/clear</code></td>
+<td>Wipe inbox.</td>
+</tr>
+<tr>
+<td><code>POST /api/v1/orchestration/sessions/:id/workers/:wid/detach</code></td>
+<td>UI detach.</td>
+</tr>
+<tr>
+<td><code>POST /api/v1/orchestration/sessions/:id/workers/:wid/kill</code></td>
+<td>UI kill (transcript stays on disk; use <code>DELETE /sessions/:id</code> to remove it).</td>
+</tr>
+<tr>
+<td><code>POST /api/v1/orchestration/sessions/:id/workers/:wid/resume</code></td>
+<td>Force-resume a cold worker into the registry.</td>
+</tr>
+</tbody></table>
+<p>Full schemas: open <code>/api/docs</code> in your deploy.</p>
+<h2>UI surface</h2>
+<ul>
+<li><strong>Toolbar <code>Orch</code> button</strong> — only renders when the instance flag
+is on. Toggles the per-session Orchestration panel.</li>
+<li><strong>Orchestration panel</strong> (collapsible, mounted between the chat
+toolbar and the message list):<ul>
+<li><strong>Standalone</strong> session → &quot;Enable supervisor mode&quot; button.</li>
+<li><strong>Supervisor</strong> session → workers list with state pills
+(streaming / idle / cold), per-worker Resume / Detach / Kill
+buttons, pending-inbox badge, expandable inbox history with
+type-coded labels, &quot;Disable supervisor mode&quot; button, &quot;Clear
+inbox&quot; button.</li>
+<li><strong>Worker</strong> session → back-link to the supervisor (click to
+jump), handoff badge if spawned from a <code>contextSummary</code>.</li>
+</ul>
+</li>
+<li>The panel polls <code>/orchestration/sessions/:id/workers</code> and
+<code>/inbox</code> every 4s while open so the live state stays fresh.</li>
+</ul>
+<h2>Troubleshooting</h2>
+<p><strong><code>Orch</code> button isn&#39;t visible.</strong> Either <code>ORCHESTRATION_ENABLED</code>
+isn&#39;t set in the environment, or <code>MINIMAL_UI=true</code> is overriding
+it. Check <code>GET /api/v1/orchestration/config</code> — <code>disabledReason</code>
+tells you which gate is closed.</p>
+<p><strong>Enabling supervisor mode succeeded but <code>orchestrate_*</code> tools
+aren&#39;t visible to the agent.</strong> The route rebuilds the live
+AgentSession in place, but only for sessions that are currently
+live in the registry. A cold session needs to be opened (SSE
+attach) first; opening it triggers <code>resumeSession</code>, which picks
+up the supervisor flag and includes the tools in <code>customTools</code>.</p>
+<p><strong>Supervisor doesn&#39;t react to worker activity.</strong> Two failure
+modes to distinguish:</p>
+<ol>
+<li>The supervisor LLM isn&#39;t calling <code>orchestrate_read_inbox</code>. The
+inbox file is being written to; check
+<code>${FORGE_DATA_DIR}/orchestrator-inbox.json</code> and look for
+<code>delivered: false</code> items. The wake-up prompt may have been
+ignored — strengthen the supervisor&#39;s system prompt or
+instruct it explicitly.</li>
+<li>The wake-up isn&#39;t firing. Look for
+<code>orchestration-wake-delivered</code> / <code>orchestration-wake-failed</code>
+lines in stderr. A &quot;failed&quot; line usually means the supervisor
+session has no model configured — supervisors need provider
+credentials just like any other session.</li>
+</ol>
+<p><strong><code>fanout_limit_exceeded</code> errors.</strong> Spawn was rejected because the
+supervisor already has the max live workers. Either kill some
+(<code>orchestrate_kill_worker</code>), detach the ones you no longer care
+about (<code>orchestrate_detach_worker</code>), or raise
+<code>ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR</code>.</p>
+<p><strong><code>depth_limit_exceeded</code>.</strong> A worker is trying to become a
+supervisor. v1 disallows this by design — depth is capped at 1.</p>
+<h2>See also</h2>
+<ul>
+<li><a href="./webhooks.md"><code>webhooks.md</code></a> — the other &quot;tell something about
+agent events&quot; surface. Webhooks fan out OVER HTTPS to external
+systems; orchestration fans IN to a supervisor session.</li>
+<li><a href="./processes.md"><code>processes.md</code></a> — workers can spawn background
+processes the same way standalone sessions can; process alerts
+fed back into the supervisor&#39;s inbox as <code>worker.process_alert</code>.</li>
+<li><a href="./ask-user-question.md"><code>ask-user-question.md</code></a> — when a worker
+calls this tool, the supervisor sees a <code>worker.ask_user</code> inbox
+item and can answer via <code>orchestrate_send_to_worker</code>.</li>
+<li><a href="../CLAUDE.md"><code>CLAUDE.md</code></a> — file-by-file map of the
+<code>packages/server/src/orchestration/</code> module.</li>
+</ul>
+
+    </main>
+  </div>
+
+  <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">&#9776;</button>
+
+  <script>
+    document.getElementById('mobileToggle').addEventListener('click', () => {
+      document.getElementById('navLinks').classList.toggle('open');
+    });
+    document.getElementById('sidebarToggle').addEventListener('click', () => {
+      document.getElementById('docsSidebar').classList.toggle('open');
+    });
+  </script>
+</body>
+</html>

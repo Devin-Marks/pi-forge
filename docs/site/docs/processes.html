@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Background Processes — pi-forge</title>
+  <meta name="description" content="The process tool — long-running processes the agent manages across turns.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='1' y='1' width='30' height='30' rx='7' fill='%230d0d10'/><path d='M12 13 H20 M14 13 V21 M18 13 V21' stroke='%23e6e7eb' stroke-width='1.6' stroke-linecap='round' fill='none'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="../index.html" class="logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="#0d0d10"/>
+  <path d="M9 11 L6 16 L9 21" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M23 11 L26 16 L23 21" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M12 13 H20 M14 13 V21 M18 13 V21" stroke="#e6e7eb" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
+        pi-forge
+      </a>
+      <nav class="nav-links" id="navLinks">
+        <a href="../index.html#features">Features</a>
+        <a href="../index.html#quickstart">Quick Start</a>
+        <a href="architecture.html">Docs</a>
+        <a href="https://github.com/Devin-Marks/pi-forge" class="nav-cta">GitHub</a>
+      </nav>
+      <button class="mobile-toggle" id="mobileToggle" aria-label="Toggle menu">&#9776;</button>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+    <aside class="docs-sidebar" id="docsSidebar">
+      <div class="sidebar-section">
+        <h4>Documentation</h4>
+        <a href="architecture.html">Architecture</a>
+        <a href="configuration.html">Configuration</a>
+        <a href="containers.html">Containers</a>
+        <a href="deployment.html">Deployment</a>
+        <a href="mobile.html">Mobile</a>
+        <a href="api.html">API Examples</a>
+        <a href="mcp.html">MCP Servers</a>
+        <a href="webhooks.html">Webhooks</a>
+        <a href="orchestration.html">Session Orchestration</a>
+        <a href="processes.html" class="active">Background Processes</a>
+        <a href="todo.html">Todo Tool</a>
+        <a href="ask-user-question.html">Ask User Question</a>
+        <a href="quick-actions.html">Quick Actions</a>
+        <a href="sse-events.html">SSE Events</a>
+      </div>
+      <div class="sidebar-section">
+        <h4>Project</h4>
+        <a href="https://github.com/Devin-Marks/pi-forge">GitHub</a>
+        <a href="https://github.com/Devin-Marks/pi-forge/blob/main/CHANGELOG.md">Changelog</a>
+        <a href="https://github.com/Devin-Marks/pi-forge/blob/main/SECURITY.md">Security</a>
+      </div>
+    </aside>
+
+    <main class="docs-main">
+      <h1>Background Processes</h1>
+      <p class="docs-subtitle">The process tool — long-running processes the agent manages across turns.</p>
+<p>pi-forge ships a browser-native implementation of the <code>process</code>
+tool: a session-scoped manager for background processes the agent
+spawns (dev servers, test watchers, builds, log tails). Separate
+from <code>bash</code> — that tool is for one-shot synchronous commands; the
+<code>process</code> tool is for things that should keep running while the
+conversation continues.</p>
+<h2>Actions</h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>start</code></td>
+<td><code>name</code>, <code>command</code></td>
+<td>Spawns under <code>/bin/sh -c</code> with a scrubbed env (same posture as the integrated terminal — no pi-forge or provider secrets leak). Returns the process id.</td>
+</tr>
+<tr>
+<td><code>list</code></td>
+<td>—</td>
+<td>Returns every process for the session, newest-first.</td>
+</tr>
+<tr>
+<td><code>output</code></td>
+<td><code>id</code></td>
+<td>Recent in-memory tail of stdout/stderr (~200 lines). For the full history, use <code>logs</code> to get the file paths and read them.</td>
+</tr>
+<tr>
+<td><code>logs</code></td>
+<td><code>id</code></td>
+<td>Absolute paths to the on-disk log files. Agents can read them with the <code>read</code> tool; the UI streams them via <code>GET /logs/file</code>.</td>
+</tr>
+<tr>
+<td><code>kill</code></td>
+<td><code>id</code></td>
+<td>SIGTERM → 5 s grace → SIGKILL. Returns once the signal is sent; the lifecycle event fans out async on actual exit.</td>
+</tr>
+<tr>
+<td><code>clear</code></td>
+<td>—</td>
+<td>Drop FINISHED processes from the list. Live ones stay.</td>
+</tr>
+<tr>
+<td><code>write</code></td>
+<td><code>id</code>, <code>input</code>, optional <code>end</code></td>
+<td>Pipe data to stdin. <code>end: true</code> closes the stream (for programs reading until EOF).</td>
+</tr>
+</tbody></table>
+<h2>Notifications</h2>
+<p>Per-<code>start</code> flags control whether the agent gets a turn to react
+on lifecycle events:</p>
+<ul>
+<li><code>alertOnSuccess</code> (default: <code>false</code>) — non-zero exit gates this off</li>
+<li><code>alertOnFailure</code> (default: <code>true</code>) — fires on crash / non-zero exit</li>
+<li><code>alertOnKill</code> (default: <code>false</code>) — fires only on external signal; killing via the tool never triggers a turn</li>
+</ul>
+<p><code>logWatches</code> adds runtime regex matchers per process. On match, the
+manager emits a watch event the UI surfaces as an alert badge.
+<code>stream: &quot;stdout&quot; | &quot;stderr&quot; | &quot;both&quot;</code>; <code>repeat: false</code> is the
+default (single-fire) — set <code>true</code> for repeat alerts.</p>
+<h2>UI</h2>
+<table>
+<thead>
+<tr>
+<th>Surface</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Right-pane &quot;Processes&quot; tab</strong></td>
+<td>Always present. Running on top, finished below. Per-row: status icon + name + truncated command + duration. Click to expand → stdout/stderr tails + Kill button + links to the full log files.</td>
+</tr>
+<tr>
+<td><strong>Chat-input badge</strong></td>
+<td>Small <code>Activity</code> icon in the top-right of the chat composer, visible only when the active session has ≥1 running process. Click → auto-opens the right pane (if collapsed) and switches the tab to Processes.</td>
+</tr>
+<tr>
+<td><strong>Tab badge</strong></td>
+<td>Numeric count of running processes on the Processes tab itself.</td>
+</tr>
+<tr>
+<td><strong>Watch alerts</strong></td>
+<td>A small amber header in the panel lists the latest match events. Click the rotate icon to dismiss.</td>
+</tr>
+</tbody></table>
+<h2>Persistence</h2>
+<p><strong>In-memory only.</strong> A server restart drops every process record;
+the OS may leak the actual children if pi-forge crashes mid-
+lifecycle (same posture as the upstream plugin). The panel footer
+says so explicitly: <em>&quot;In-memory only — processes don&#39;t survive a
+server restart.&quot;</em></p>
+<p>Log files DO persist on disk at
+<code>${FORGE_DATA_DIR}/processes/&lt;sessionId&gt;/&lt;processId&gt;/{stdout,stderr}.log</code>
+(rotated at 10 MB → <code>.1</code>), and are cleaned up when the session is
+disposed.</p>
+<h2>Session lifecycle</h2>
+<p>When a session is disposed (<code>disposeSession</code> in
+<code>session-registry.ts</code>):</p>
+<ol>
+<li>Every live process for the session gets SIGTERM</li>
+<li>Brief grace window</li>
+<li>Any survivors get SIGKILL</li>
+<li>The session&#39;s log directory is <code>rm -rf</code>&#39;d</li>
+<li>The manager&#39;s in-memory map drops the session entry</li>
+</ol>
+<h2>MINIMAL_UI</h2>
+<p><code>process.start</code> returns an error envelope under <code>MINIMAL_UI=1</code> —
+spawning new processes is a trust surface peer to bash. Listing /
+killing / clearing existing processes remains usable so an
+operator who toggles <code>MINIMAL_UI</code> on can still see and stop
+whatever was already running.</p>
+<h2>Disabling the tool</h2>
+<p>The tool appears under <strong>Settings → Tools → Built-in tools</strong>.
+Toggle it off there to filter <code>process</code> out of every new session&#39;s
+tool allowlist. Live sessions keep the tool list they were created
+with.</p>
+<h2>Relationship to <code>@aliou/pi-processes</code></h2>
+<p>The wire contract — tool name (<code>process</code>), action enum, per-
+process <code>ProcessInfo</code> shape, status state machine (<code>running | terminating | terminate_timeout | exited | killed</code>), <code>LogWatch</code>
+shape with <code>pattern/stream/repeat</code>, and <code>ProcessesDetails</code>
+response envelope — is <strong>contract-compatible with
+<a href="https://github.com/aliou/pi-processes" target="_blank" rel="noopener noreferrer"><code>@aliou/pi-processes</code></a></strong>
+(MIT). An agent prompt authored against the plugin works against
+this implementation unchanged.</p>
+<p>Implementation is independent. The reducer, lifecycle, signal
+handling, log capture, regex watches, SSE bridge, REST routes,
+and React UI are all pi-forge&#39;s own. The prompt snippet + tool
+description + guidelines are <strong>ported verbatim with attribution</strong>
+in <code>packages/server/src/processes/prompt-strings.ts</code> — wording
+like &quot;avoid shell background patterns such as <code>&amp;</code>, <code>nohup</code>,
+<code>disown</code>, or <code>setsid</code> when the process tool fits&quot; steers the
+model toward the right primitive; rederiving it risks worse
+tool-invocation patterns.</p>
+
+    </main>
+  </div>
+
+  <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">&#9776;</button>
+
+  <script>
+    document.getElementById('mobileToggle').addEventListener('click', () => {
+      document.getElementById('navLinks').classList.toggle('open');
+    });
+    document.getElementById('sidebarToggle').addEventListener('click', () => {
+      document.getElementById('docsSidebar').classList.toggle('open');
+    });
+  </script>
+</body>
+</html>

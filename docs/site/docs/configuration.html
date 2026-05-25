@@ -44,6 +44,12 @@
         <a href="mobile.html">Mobile</a>
         <a href="api.html">API Examples</a>
         <a href="mcp.html">MCP Servers</a>
+        <a href="webhooks.html">Webhooks</a>
+        <a href="orchestration.html">Session Orchestration</a>
+        <a href="processes.html">Background Processes</a>
+        <a href="todo.html">Todo Tool</a>
+        <a href="ask-user-question.html">Ask User Question</a>
+        <a href="quick-actions.html">Quick Actions</a>
         <a href="sse-events.html">SSE Events</a>
       </div>
       <div class="sidebar-section">
@@ -138,12 +144,22 @@ in <code>cli.ts</code>). The most-touched ones:</p>
 <tr>
 <td><code>MINIMAL_UI</code></td>
 <td><code>false</code></td>
-<td>Hide terminal / git / last-turn / providers / agent-settings panels. Frontend gate; server routes unchanged.</td>
+<td>Hide terminal / git / last-turn / providers / agent-settings panels. Frontend gate; server routes unchanged. ALSO hard-disables webhook configuration, session orchestration, and the quick-actions runner.</td>
 </tr>
 <tr>
 <td><code>TRUST_PROXY</code></td>
 <td><code>false</code></td>
 <td>Set when behind a reverse proxy so <code>req.ip</code> is the real client (required for per-user login rate limits).</td>
+</tr>
+<tr>
+<td><code>ORCHESTRATION_ENABLED</code></td>
+<td><code>false</code></td>
+<td>Surface the chat-view <code>Orch</code> toggle so sessions can opt in to supervisor mode (<code>orchestrate_*</code> tool group, worker spawning, inbox). Hard-disabled under <code>MINIMAL_UI</code> regardless. See <a href="./orchestration.md"><code>orchestration.md</code></a>.</td>
+</tr>
+<tr>
+<td><code>ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR</code></td>
+<td><code>8</code></td>
+<td>Per-supervisor live-worker cap. Bounded to <code>[1, 100]</code>.</td>
 </tr>
 </tbody></table>
 <p>Production-tuning knobs (rate limits, JWT lifetime, TLS / proxy posture)
@@ -395,7 +411,17 @@ internals, and override env vars.</p>
 reverse proxy</li>
 <li><a href="./mobile.md"><code>mobile.md</code></a> — mobile / PWA install</li>
 <li><a href="./containers.md"><code>containers.md</code></a> — container internals + bind mounts</li>
-<li><a href="./mcp.md"><code>mcp.md</code></a> — MCP server config reference</li>
+<li><a href="./mcp.md"><code>mcp.md</code></a> — MCP server config reference (remote + stdio)</li>
+<li><a href="./webhooks.md"><code>webhooks.md</code></a> — HTTPS POSTs on agent/session events</li>
+<li><a href="./orchestration.md"><code>orchestration.md</code></a> — supervisor sessions that
+spawn and coordinate worker sessions</li>
+<li><a href="./processes.md"><code>processes.md</code></a> — background-process tool the
+agent uses for dev servers, watchers, builds</li>
+<li><a href="./todo.md"><code>todo.md</code></a> — browser-native <code>todo</code> tool</li>
+<li><a href="./ask-user-question.md"><code>ask-user-question.md</code></a> — browser-native
+<code>ask_user_question</code> tool</li>
+<li><a href="./quick-actions.md"><code>quick-actions.md</code></a> — operator-defined chat
+toolbar chips (shell commands + prompt templates)</li>
 <li><a href="../SECURITY.md"><code>SECURITY.md</code></a> — <code>auth.json</code> key safety + threat model</li>
 </ul>
 
