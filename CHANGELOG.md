@@ -15,6 +15,8 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-05-25
+
 ### Security
 
 - **Bumped `uuid` to ≥11.1.1** via an `overrides` entry to fix
