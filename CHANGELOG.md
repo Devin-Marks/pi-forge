@@ -15,7 +15,104 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Changed
+
+- **Clone-repository project setup gains an "Allow self-signed /
+  invalid TLS certificate" checkbox.** Mirrors the same posture
+  as the webhook `insecureTls` flag — necessary for internal Git
+  hosts with self-signed certs (corporate GHE, on-prem GitLab
+  with a private CA). When set, the spawn passes
+  `GIT_SSL_NO_VERIFY=true` to git, and a
+  `git-clone-insecure-tls` line gets written to stderr on every
+  use so the relaxed posture is visible in `docker logs`. URL
+  validation still enforces HTTPS — the flag relaxes cert
+  validation, not the scheme.
+
 ### Added
+
+- **Webhooks for agent and session events.** New Settings →
+  Webhooks tab lets the user configure HTTPS POST destinations
+  that fire when interesting things happen. Six event types in
+  v1:
+  - `agent_end` — turn finished. Payload includes stopReason,
+    errorMessage (if any), assistant text, usage stats,
+    provider/model.
+  - `ask_user_question` — agent put up a multi-choice prompt and
+    is waiting on the user. Payload includes the questions array.
+  - `process_alert` — background process exited (success /
+    failure / external kill). Same trigger conditions as the
+    in-chat agent alert.
+  - `auto_retry_end` (failures only) — provider-side retry
+    exhausted. The kind of thing you'd want to page on.
+  - `compaction_end` — context was compacted (not aborted).
+  - `session_created` / `session_deleted` — lifecycle audit
+    events.
+
+  Scoping: each webhook is either **global** (fires for every
+  project's events) or **per-project** (fires only for events
+  with a matching projectId). Both can coexist.
+
+  Delivery: fire-and-forget POST with retry on 5xx / network
+  errors (exponential backoff: 1s, 5s, 30s — 3 attempts total).
+  4xx responses are terminal (no retry; consumer's problem).
+  Per-webhook delivery history is persisted at
+  `${FORGE_DATA_DIR}/webhook-deliveries.json` capped at 100
+  entries per webhook (rolling FIFO) and surfaced in the
+  Settings tab for debugging.
+
+  Security:
+  - HTTPS-only URLs. HTTP is rejected even with the cert-bypass
+    flag set — that flag relaxes cert validation, not the
+    scheme.
+  - Optional HMAC-SHA256 signing: when a secret is configured,
+    every delivery includes `X-Pi-Forge-Signature: sha256=<hex>`
+    over the raw JSON body. Same convention as GitHub webhooks.
+  - Secrets stored in `${FORGE_DATA_DIR}/webhooks.json` (mode
+    0600) and never returned over the wire (`hasSecret: boolean`
+    presence flag instead).
+  - Per-webhook "Allow self-signed / invalid TLS certificate"
+    opt-in for internal hosts with custom CAs. Every fire with
+    `insecureTls=true` logs to stderr so the relaxed posture is
+    visible in `docker logs`.
+  - Custom user-supplied request headers (e.g. `Authorization:
+    Bearer ...`) are merged into every delivery, but reserved
+    `X-Pi-Forge-*` headers cannot be overridden by config.
+    Header VALUES are redacted on the wire — GET responses show
+    the header NAME but replace the value with the
+    `***REDACTED***` sentinel, the same convention
+    `config-manager.ts` uses for inline `apiKey` in models.json.
+    Editing in the UI preserves stored values: any header line
+    left with the sentinel value on PATCH is "keep the existing
+    value"; typing a new value replaces it; deleting the line
+    removes the header. CREATE rejects the sentinel as a real
+    header value (no prior to keep). Defense-in-depth in the
+    dispatcher: if the sentinel ever sneaks into the stored
+    config (hand-edit, future bug), it's skipped at outbound-
+    POST time so consumers never see `Authorization:
+    ***REDACTED***` on the wire.
+  - Disabled under MINIMAL_UI: POST/PATCH/DELETE/test routes
+    return 403; the Webhooks Settings tab is hidden entirely.
+    Locked-down deploys can still GET to audit configured
+    webhooks via the API.
+
+  Headers on every delivery: `X-Pi-Forge-Event: <event>`,
+  `X-Pi-Forge-Delivery: <uuid>` (idempotency key, same across
+  retries of one logical delivery), `X-Pi-Forge-Signature:
+  sha256=<hex>` when signing is enabled.
+
+  Routes (all `/api/v1/`): `GET /webhooks` (optional
+  `?projectId=` filter), `POST /webhooks`, `PATCH /webhooks/:id`,
+  `DELETE /webhooks/:id`, `POST /webhooks/:id/test` (fire a
+  synthetic `webhook.test` event for verification), `GET
+  /webhooks/:id/deliveries` (newest-first history).
+
+  New test: `tests/test-webhooks.ts` — 37 assertions covering
+  URL validation, CRUD round-trip, wire shape (secret stripped),
+  HMAC signature, custom header merge with reserved override
+  protection, scope and event filtering, disabled webhooks
+  skipped, retry policy (2xx no retry, 4xx no retry, 5xx
+  retries), delivery history persisted + capped, and the
+  MINIMAL_UI gate.
 
 - **Mobile-only quick-list popovers for processes and todos on
   the chat-input footer badges.** The chat-input badges for

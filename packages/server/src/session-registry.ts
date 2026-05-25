@@ -29,6 +29,7 @@ import {
 } from "./todo/store.js";
 import { createProcessTool } from "./processes/tool.js";
 import { processManager } from "./processes/manager.js";
+import { bridgeAgentSessionEvent, bridgeSessionCreated } from "./webhooks/event-bridge.js";
 
 /**
  * Minimal SSE client contract used by the registry to fan out events.
@@ -409,6 +410,16 @@ function makeSubscribeHandler(live: LiveSession): () => void {
         live.clients.delete(client);
       }
     }
+
+    // Webhook fan-out. Filters internally for the 3 SDK events
+    // it cares about (agent_end, auto_retry_end failures,
+    // compaction_end success). Fire-and-forget — webhook
+    // dispatch returns immediately after queueing the per-target
+    // POSTs and retries happen in the background.
+    bridgeAgentSessionEvent(
+      { sessionId: live.sessionId, projectId: live.projectId, session: live.session },
+      event,
+    );
   });
 }
 
@@ -495,6 +506,11 @@ export async function createSession(
     // sidebar fall back to "session <id>" if needed.
   }
 
+  bridgeSessionCreated({
+    sessionId: live.sessionId,
+    projectId: live.projectId,
+    workspacePath: live.workspacePath,
+  });
   return live;
 }
 
@@ -783,6 +799,29 @@ export async function deleteColdSession(
     }
   }
   return "not_found";
+}
+
+/**
+ * Look up the projectId a session belongs to without resuming it.
+ * Used by the DELETE route to fire `session_deleted` webhooks with
+ * the project context. Scans projects.json + each project's
+ * session dir; returns undefined if no project owns the id.
+ */
+export async function findProjectIdForSession(sessionId: string): Promise<string | undefined> {
+  const live = registry.get(sessionId);
+  if (live !== undefined) return live.projectId;
+  const projects = await readProjects();
+  for (const project of projects) {
+    try {
+      const infos = await discoverSessionsOnDisk(project.id, project.path);
+      if (infos.some((s) => s.sessionId === sessionId)) return project.id;
+    } catch {
+      // Skip this project's dir on error — caller treats undefined
+      // as "no project context for this delete."
+      continue;
+    }
+  }
+  return undefined;
 }
 
 export async function disposeSession(sessionId: string): Promise<boolean> {

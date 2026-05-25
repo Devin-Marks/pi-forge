@@ -398,6 +398,7 @@ function CloneForm({
   const [token, setToken] = useState("");
   const [folderName, setFolderName] = useState("");
   const [projectName, setProjectName] = useState(initialName);
+  const [insecureTls, setInsecureTls] = useState(false);
   const [folderTouched, setFolderTouched] = useState(false);
   const [projectTouched, setProjectTouched] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -468,6 +469,7 @@ function CloneForm({
         projectName: string;
         branch?: string;
         token?: string;
+        insecureTls?: boolean;
       } = {
         url: url.trim(),
         parentPath: workspaceRoot,
@@ -476,6 +478,7 @@ function CloneForm({
       };
       if (branch.trim().length > 0) body.branch = branch.trim();
       if (token.length > 0) body.token = token;
+      if (insecureTls) body.insecureTls = true;
 
       const res = await api.cloneProject(body, ac.signal);
       let createdProjectId: string | undefined;
@@ -620,6 +623,27 @@ function CloneForm({
         <span className="block text-[11px] text-neutral-500">
           Sent over HTTPS, embedded as <code>x-access-token:&lt;token&gt;</code> in the clone URL,
           and stripped from <code>.git/config</code> after success.
+        </span>
+      </label>
+
+      <label className="flex items-start gap-2 rounded border border-amber-900/40 bg-amber-950/30 px-2 py-1.5 text-xs light:border-amber-300 light:bg-amber-50">
+        <input
+          type="checkbox"
+          checked={insecureTls}
+          onChange={(e) => setInsecureTls(e.target.checked)}
+          disabled={submitting}
+          className="mt-0.5"
+        />
+        <span>
+          <span className="text-amber-200 light:text-amber-800">
+            Allow self-signed / invalid TLS certificate
+          </span>
+          <br />
+          <span className="text-[11px] text-amber-300/70 light:text-amber-700/80">
+            ⚠ Disables MITM protection for this clone. Use only for internal Git hosts with known
+            self-signed certs (corporate GHE, on-prem GitLab with a private CA). The server logs{" "}
+            <code>git-clone-insecure-tls</code> to stderr on every use.
+          </span>
         </span>
       </label>
 

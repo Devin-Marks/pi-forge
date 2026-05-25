@@ -616,6 +616,128 @@ function vProcessAction(value: unknown, status: number): ProcessActionResult {
   return out;
 }
 
+// ---- webhooks ----
+
+export type WebhookEvent =
+  | "agent_end"
+  | "ask_user_question"
+  | "process_alert"
+  | "auto_retry_end"
+  | "compaction_end"
+  | "session_created"
+  | "session_deleted";
+
+export const WEBHOOK_EVENTS: readonly WebhookEvent[] = [
+  "agent_end",
+  "ask_user_question",
+  "process_alert",
+  "auto_retry_end",
+  "compaction_end",
+  "session_created",
+  "session_deleted",
+] as const;
+
+export type WebhookScope = { kind: "global" } | { kind: "project"; projectId: string };
+
+export interface WebhookConfigWire {
+  id: string;
+  name: string;
+  url: string;
+  events: WebhookEvent[];
+  scope: WebhookScope;
+  enabled: boolean;
+  /** True when the server has a secret stored for this webhook.
+   *  The secret itself is never returned over the wire. */
+  hasSecret: boolean;
+  headers?: Record<string, string>;
+  insecureTls?: boolean;
+  createdAt: string;
+}
+
+export interface WebhookCreateBody {
+  name: string;
+  url: string;
+  events: WebhookEvent[];
+  scope: WebhookScope;
+  secret?: string;
+  headers?: Record<string, string>;
+  insecureTls?: boolean;
+  enabled?: boolean;
+}
+
+export type WebhookUpdateBody = Partial<WebhookCreateBody>;
+
+export interface WebhookDelivery {
+  id: string;
+  webhookId: string;
+  deliveryId: string;
+  event: string;
+  sessionId?: string;
+  projectId?: string;
+  attempt: number;
+  status: "delivered" | "failed" | "error";
+  statusCode?: number;
+  durationMs: number;
+  errorPreview?: string;
+  requestedAt: string;
+}
+
+function vWebhook(value: unknown, status: number): WebhookConfigWire {
+  if (
+    !isObject(value) ||
+    typeof value.id !== "string" ||
+    typeof value.name !== "string" ||
+    typeof value.url !== "string" ||
+    !Array.isArray(value.events) ||
+    !isObject(value.scope) ||
+    typeof value.enabled !== "boolean" ||
+    typeof value.hasSecret !== "boolean" ||
+    typeof value.createdAt !== "string"
+  ) {
+    fail(status, "expected webhook config");
+  }
+  const scope = value.scope;
+  let parsedScope: WebhookScope;
+  if (scope.kind === "global") parsedScope = { kind: "global" };
+  else if (scope.kind === "project" && typeof scope.projectId === "string") {
+    parsedScope = { kind: "project", projectId: scope.projectId };
+  } else fail(status, "bad scope");
+  const out: WebhookConfigWire = {
+    id: value.id,
+    name: value.name,
+    url: value.url,
+    events: (value.events as unknown[]).filter(
+      (e): e is WebhookEvent =>
+        typeof e === "string" && (WEBHOOK_EVENTS as readonly string[]).includes(e),
+    ),
+    scope: parsedScope,
+    enabled: value.enabled,
+    hasSecret: value.hasSecret,
+    createdAt: value.createdAt,
+  };
+  if (isObject(value.headers)) {
+    out.headers = Object.fromEntries(
+      Object.entries(value.headers).filter(([, v]) => typeof v === "string"),
+    ) as Record<string, string>;
+  }
+  if (value.insecureTls === true) out.insecureTls = true;
+  return out;
+}
+
+function vWebhookList(value: unknown, status: number): { webhooks: WebhookConfigWire[] } {
+  if (!isObject(value) || !Array.isArray(value.webhooks)) {
+    fail(status, "expected { webhooks: [...] }");
+  }
+  return { webhooks: value.webhooks.map((w) => vWebhook(w, status)) };
+}
+
+function vDeliveryList(value: unknown, status: number): { deliveries: WebhookDelivery[] } {
+  if (!isObject(value) || !Array.isArray(value.deliveries)) {
+    fail(status, "expected { deliveries: [...] }");
+  }
+  return { deliveries: value.deliveries as WebhookDelivery[] };
+}
+
 function vTodoList(value: unknown, status: number): TodoListResponse {
   if (!isObject(value) || !Array.isArray(value.tasks) || typeof value.nextId !== "number") {
     fail(status, "expected { tasks: [...], nextId: number }");
@@ -1261,6 +1383,7 @@ export const api = {
       projectName: string;
       branch?: string;
       token?: string;
+      insecureTls?: boolean;
     },
     signal?: AbortSignal,
   ): Promise<Response> => {
@@ -1640,6 +1763,37 @@ export const api = {
       vProcessAction,
       { method: "POST", body },
     ),
+
+  // ---------------- webhooks ----------------
+  /**
+   * List webhooks. Optional `projectId` filter narrows the list to
+   * `(global ∪ webhooks scoped to that project)` — useful when the
+   * settings UI is mounted in a project-specific view.
+   */
+  listWebhooks: (projectId?: string) => {
+    const qs = projectId !== undefined ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    return request(`/api/v1/webhooks${qs}`, vWebhookList);
+  },
+  createWebhook: (body: WebhookCreateBody) =>
+    request("/api/v1/webhooks", vWebhook, { method: "POST", body }),
+  updateWebhook: (id: string, body: WebhookUpdateBody) =>
+    request(`/api/v1/webhooks/${encodeURIComponent(id)}`, vWebhook, {
+      method: "PATCH",
+      body,
+    }),
+  deleteWebhook: (id: string) =>
+    request(`/api/v1/webhooks/${encodeURIComponent(id)}`, vVoid, { method: "DELETE" }),
+  testWebhook: (id: string) =>
+    request(
+      `/api/v1/webhooks/${encodeURIComponent(id)}/test`,
+      (v, s) => {
+        if (!isObject(v) || typeof v.queued !== "boolean") fail(s, "expected { queued }");
+        return { queued: v.queued };
+      },
+      { method: "POST" },
+    ),
+  listWebhookDeliveries: (id: string) =>
+    request(`/api/v1/webhooks/${encodeURIComponent(id)}/deliveries`, vDeliveryList),
 
   listSkills: (projectId: string) =>
     request(

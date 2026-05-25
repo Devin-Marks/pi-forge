@@ -33,6 +33,8 @@ import { searchRoutes } from "./routes/search.js";
 import { terminalRoutes } from "./routes/terminal.js";
 import { disposeAll as disposeAllMcp, loadGlobal as loadGlobalMcp } from "./mcp/manager.js";
 import { initAskUserQuestionFanout, initProcessesFanout, initTodoFanout } from "./sse-bridge.js";
+import { webhookRoutes } from "./routes/webhooks.js";
+import { initAskUserQuestionWebhookBridge, initProcessesWebhookBridge } from "./webhooks/init.js";
 import { disposeAllSessions } from "./session-registry.js";
 import { disposeAllPtys, installPtyExitHandler } from "./pty-manager.js";
 import { logSecretHygieneState } from "./agent-resource-loader.js";
@@ -392,6 +394,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       await api.register(askUserQuestionRoutes);
       await api.register(todoRoutes);
       await api.register(processesRoutes);
+      await api.register(webhookRoutes);
       await api.register(searchRoutes);
       await api.register(terminalRoutes);
     },
@@ -483,6 +486,16 @@ export async function buildServer(): Promise<FastifyInstance> {
   initAskUserQuestionFanout();
   initTodoFanout();
   initProcessesFanout();
+
+  // Webhook bridges for the same forge-native event channels. Each
+  // subscribes alongside the SSE fanout so webhooks see the same
+  // events SSE clients see, without coupling the two systems.
+  // Per-AgentSession events (agent_end, etc.) are wired directly
+  // inside session-registry's subscribe handler — those need the
+  // LiveSession context at construction time, not from a singleton
+  // channel.
+  initAskUserQuestionWebhookBridge();
+  initProcessesWebhookBridge();
 
   return fastify;
 }
