@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quick Actions — pi-forge</title>
+  <meta name="description" content="Operator-defined chat-toolbar chips for shell commands and prompt templates.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='1' y='1' width='30' height='30' rx='7' fill='%230d0d10'/><path d='M12 13 H20 M14 13 V21 M18 13 V21' stroke='%23e6e7eb' stroke-width='1.6' stroke-linecap='round' fill='none'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="../index.html" class="logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="#0d0d10"/>
+  <path d="M9 11 L6 16 L9 21" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M23 11 L26 16 L23 21" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M12 13 H20 M14 13 V21 M18 13 V21" stroke="#e6e7eb" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
+        pi-forge
+      </a>
+      <nav class="nav-links" id="navLinks">
+        <a href="../index.html#features">Features</a>
+        <a href="../index.html#quickstart">Quick Start</a>
+        <a href="architecture.html">Docs</a>
+        <a href="https://github.com/Devin-Marks/pi-forge" class="nav-cta">GitHub</a>
+      </nav>
+      <button class="mobile-toggle" id="mobileToggle" aria-label="Toggle menu">&#9776;</button>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+    <aside class="docs-sidebar" id="docsSidebar">
+      <div class="sidebar-section">
+        <h4>Documentation</h4>
+        <a href="architecture.html">Architecture</a>
+        <a href="configuration.html">Configuration</a>
+        <a href="containers.html">Containers</a>
+        <a href="deployment.html">Deployment</a>
+        <a href="mobile.html">Mobile</a>
+        <a href="api.html">API Examples</a>
+        <a href="mcp.html">MCP Servers</a>
+        <a href="webhooks.html">Webhooks</a>
+        <a href="orchestration.html">Session Orchestration</a>
+        <a href="processes.html">Background Processes</a>
+        <a href="todo.html">Todo Tool</a>
+        <a href="ask-user-question.html">Ask User Question</a>
+        <a href="quick-actions.html" class="active">Quick Actions</a>
+        <a href="sse-events.html">SSE Events</a>
+      </div>
+      <div class="sidebar-section">
+        <h4>Project</h4>
+        <a href="https://github.com/Devin-Marks/pi-forge">GitHub</a>
+        <a href="https://github.com/Devin-Marks/pi-forge/blob/main/CHANGELOG.md">Changelog</a>
+        <a href="https://github.com/Devin-Marks/pi-forge/blob/main/SECURITY.md">Security</a>
+      </div>
+    </aside>
+
+    <main class="docs-main">
+      <h1>Quick Actions</h1>
+      <p class="docs-subtitle">Operator-defined chat-toolbar chips for shell commands and prompt templates.</p>
+<p>Operator-defined chips on the chat-view toolbar that either run a
+shell command in the active project&#39;s cwd OR insert/send a
+templated prompt to the active session. Configure from
+<strong>Settings → Quick Actions</strong>.</p>
+<h2>Two kinds</h2>
+<p>Each action is one or the other — never both:</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Discriminator</th>
+<th>What happens when clicked</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Command</strong></td>
+<td><code>command</code> is set</td>
+<td>pi-forge runs the command in the active project&#39;s working directory and renders the result as a <code>QuickActionRunCard</code> in the chat.</td>
+</tr>
+<tr>
+<td><strong>Prompt</strong></td>
+<td><code>text</code> is set</td>
+<td>The templated prompt either <strong>sends</strong> to the active session (<code>mode: &quot;send&quot;</code>) or <strong>inserts</strong> into the composer (<code>mode: &quot;insert&quot;</code>) for you to edit before sending.</td>
+</tr>
+</tbody></table>
+<p>Why the split: commands are about &quot;I want to see the output of
+<code>npm run build</code> right now&quot; — fast, one-shot, no LLM round trip.
+Prompts are about &quot;I want to say the same thing to the agent
+every time without retyping it&quot; — <code>Refactor this for clarity</code>,
+<code>Add tests for this module</code>, etc.</p>
+<h2>Storage</h2>
+<p><code>${FORGE_DATA_DIR}/quick-actions.json</code> (mode <code>0600</code>). Atomic-write</p>
+<ul>
+<li>in-process lock pattern, same as the other forge-owned
+JSON files. Single flat array — chips are the operator&#39;s
+personal toolbox, global by design rather than per-project.</li>
+</ul>
+<pre><code class="language-json">[
+  {
+    &quot;id&quot;: &quot;build&quot;,
+    &quot;name&quot;: &quot;Build&quot;,
+    &quot;command&quot;: &quot;npm run build&quot;,
+    &quot;timeoutMs&quot;: 60000,
+    &quot;enabled&quot;: true
+  },
+  {
+    &quot;id&quot;: &quot;refactor&quot;,
+    &quot;name&quot;: &quot;Refactor for clarity&quot;,
+    &quot;text&quot;: &quot;Refactor the file I&#39;m currently looking at for clarity. Keep behavior identical.&quot;,
+    &quot;mode&quot;: &quot;insert&quot;,
+    &quot;enabled&quot;: true
+  }
+]
+</code></pre>
+<h2>Field reference</h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>id</code></td>
+<td>yes</td>
+<td>UUID generated at create time; stable across renames.</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>yes</td>
+<td>Label shown on the chip.</td>
+</tr>
+<tr>
+<td><code>enabled</code></td>
+<td>optional</td>
+<td>Defaults to <code>true</code>. Disabled actions stay in the registry but don&#39;t render the chip.</td>
+</tr>
+<tr>
+<td><code>command</code></td>
+<td>one-of</td>
+<td>Shell command string. Required when this is a command action. Capped at 8 KB.</td>
+</tr>
+<tr>
+<td><code>timeoutMs</code></td>
+<td>optional (command-only)</td>
+<td>Per-run timeout. Default 30 s, ceiling 5 min.</td>
+</tr>
+<tr>
+<td><code>text</code></td>
+<td>one-of</td>
+<td>Prompt template. Required when this is a prompt action. Capped at 32 KB.</td>
+</tr>
+<tr>
+<td><code>mode</code></td>
+<td>optional (prompt-only)</td>
+<td><code>send</code> (default for prompts created via UI) or <code>insert</code>.</td>
+</tr>
+</tbody></table>
+<p>The store rejects entries with <strong>both</strong> <code>command</code> and <code>text</code>, or
+<strong>neither</strong> — that&#39;s the discriminator integrity check.</p>
+<h2>Command execution</h2>
+<ul>
+<li>Spawned via <code>child_process.spawn</code> with <code>shell: false</code> and
+<code>[&quot;bash&quot;, &quot;-lc&quot;, command]</code> as argv, so shell built-ins (pipes,
+redirects, <code>&amp;&amp;</code>) work.</li>
+<li><strong>cwd is the active project&#39;s path.</strong> The chip is project-scoped
+at runtime even though chip definitions are global.</li>
+<li><strong>Env is scrubbed</strong> through the same allowlist as the integrated
+terminal (<code>pty-manager.ts#scrubbedEnv</code>). Provider API keys from
+the pi-forge process env do <strong>not</strong> leak into chip-spawned
+commands by default. Add specific passthrough vars via
+<code>TERMINAL_PASSTHROUGH_ENV</code> (e.g.,
+<code>TERMINAL_PASSTHROUGH_ENV=KUBECONFIG,EDITOR</code>).</li>
+<li><strong>Output is captured both streams</strong>, truncated at 1 MB per
+stream (re-run in the integrated terminal if you need the full
+output). Truncation surfaces as <code>truncated: true</code> on the result.</li>
+<li><strong>Disabled under <code>MINIMAL_UI=true</code>.</strong> Command runs return 403
+<code>minimal_ui_disabled</code>. The Quick Actions Settings tab itself is
+hidden; chips don&#39;t render in the chat toolbar.</li>
+</ul>
+<h2>Prompt actions</h2>
+<ul>
+<li>The template text is delivered as a user-role message to the
+active session — exactly as if the user had typed it.</li>
+<li><code>mode: &quot;send&quot;</code> posts straight to
+<code>POST /api/v1/sessions/:id/prompt</code>.</li>
+<li><code>mode: &quot;insert&quot;</code> writes the text into the chat composer; the
+user can edit before pressing send.</li>
+<li>Templates are static for v1 — no variable interpolation. If you
+need per-call dynamism, use <code>mode: &quot;insert&quot;</code> and edit at run
+time.</li>
+<li><strong>Available under <code>MINIMAL_UI=true</code></strong>: prompts don&#39;t open a
+shell, they just deliver text to the agent. Same gate as the
+rest of the chat surface.</li>
+</ul>
+<h2>REST surface</h2>
+<table>
+<thead>
+<tr>
+<th>Method + path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GET /api/v1/quick-actions</code></td>
+<td>List configured actions (any project context).</td>
+</tr>
+<tr>
+<td><code>POST /api/v1/quick-actions</code></td>
+<td>Create. Validates the one-of discriminator + byte caps.</td>
+</tr>
+<tr>
+<td><code>PUT /api/v1/quick-actions/:id</code></td>
+<td>Update. Switching kind (command → prompt or vice-versa) drops the now-unused fields.</td>
+</tr>
+<tr>
+<td><code>DELETE /api/v1/quick-actions/:id</code></td>
+<td>Remove.</td>
+</tr>
+<tr>
+<td><code>POST /api/v1/quick-actions/:id/run?projectId=…</code></td>
+<td>Run a command action against the given project&#39;s cwd. Returns <code>{ success, exitCode, stdout, stderr, durationMs, timedOut, truncated }</code>. Returns 403 <code>minimal_ui_disabled</code> if MINIMAL_UI is on.</td>
+</tr>
+</tbody></table>
+<p>Prompt-mode actions don&#39;t have a server-side <code>run</code> route — the
+client just posts to the session&#39;s <code>/prompt</code> endpoint. Full
+schemas at <code>/api/docs</code>.</p>
+<h2>UI surface</h2>
+<ul>
+<li><strong>Settings → Quick Actions.</strong> Hidden under MINIMAL_UI.
+Add/edit/delete chips, reorder is by creation order (not yet
+draggable in v1).</li>
+<li><strong>Chat toolbar <code>QuickActionsMenu</code>.</strong> Renders the enabled chips
+for the active project. Click → run (command) or send/insert
+(prompt). Hidden under MINIMAL_UI.</li>
+<li><strong><code>QuickActionRunCard</code>.</strong> Inline card in the chat surface that
+renders a completed command run — stdout, stderr, exit code,
+duration, truncation indicator. Lives in the chat transcript so
+the agent can see what ran (and reference it in subsequent
+turns).</li>
+</ul>
+<h2>Troubleshooting</h2>
+<p><strong>Command returns immediately with <code>exitCode: -1</code> and
+<code>stderr: &quot;spawn …&quot;</code></strong>: the binary isn&#39;t on the agent process&#39;s
+PATH. Pi-forge launches commands with the same PATH as the
+parent process; for chips that need <code>gh</code>, <code>kubectl</code>, etc.,
+ensure they&#39;re installed in the container (the shipped image
+already has <code>git</code>, <code>gh</code>, <code>ripgrep</code>, <code>bash</code>, <code>curl</code>, <code>less</code>,
+<code>procps</code>).</p>
+<p><strong>Chip ran successfully but the output looks cut off.</strong> Stream
+output caps at 1 MB per stream; <code>truncated: true</code> on the result
+means there was more. Re-run in the integrated terminal for the
+full output, or pipe through <code>head</code> / <code>tail</code> in the command
+itself.</p>
+<p><strong>Chip secrets aren&#39;t available.</strong> That&#39;s the scrubbed-env
+behaviour — see <code>TERMINAL_PASSTHROUGH_ENV</code> in
+<a href="./configuration.md#environment-variables"><code>configuration.md</code></a>.
+Add specific var names to the passthrough allowlist.</p>
+<p><strong>Quick Actions tab missing under MINIMAL_UI.</strong> Intentional. The
+chip surface lets the operator embed arbitrary shell commands;
+under MINIMAL_UI the deployment is locked down and end users
+shouldn&#39;t be configuring those. Edit
+<code>${FORGE_DATA_DIR}/quick-actions.json</code> directly and restart.</p>
+<h2>See also</h2>
+<ul>
+<li><a href="./configuration.md"><code>configuration.md</code></a> — <code>FORGE_DATA_DIR</code>
+layout, <code>TERMINAL_PASSTHROUGH_ENV</code> allowlist.</li>
+<li><a href="./processes.md"><code>processes.md</code></a> — the chip-vs-process
+distinction. Chips are one-shot synchronous; the <code>process</code>
+tool is for long-running background processes the agent
+manages.</li>
+</ul>
+
+    </main>
+  </div>
+
+  <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">&#9776;</button>
+
+  <script>
+    document.getElementById('mobileToggle').addEventListener('click', () => {
+      document.getElementById('navLinks').classList.toggle('open');
+    });
+    document.getElementById('sidebarToggle').addEventListener('click', () => {
+      document.getElementById('docsSidebar').classList.toggle('open');
+    });
+  </script>
+</body>
+</html>

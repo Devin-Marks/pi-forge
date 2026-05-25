@@ -46,8 +46,10 @@ in `cli.ts`). The most-touched ones:
 | `UI_PASSWORD` | (unset) | Enables browser JWT auth. After the user changes it via the UI, a scrypt hash is persisted to `${FORGE_DATA_DIR}/password-hash` and the env value is ignored. |
 | `API_KEY` | (unset) | Static bearer token for programmatic access. |
 | `JWT_SECRET` | (auto-generated) | HS256 signing key. Auto-generated and persisted to `${FORGE_DATA_DIR}/jwt-secret` (mode 0600) when `UI_PASSWORD` or `password-hash` is in play. Set explicitly (`openssl rand -hex 32`) to override; delete the file to rotate. |
-| `MINIMAL_UI` | `false` | Hide terminal / git / last-turn / providers / agent-settings panels. Frontend gate; server routes unchanged. |
+| `MINIMAL_UI` | `false` | Hide terminal / git / last-turn / providers / agent-settings panels. Frontend gate; server routes unchanged. ALSO hard-disables webhook configuration, session orchestration, and the quick-actions runner. |
 | `TRUST_PROXY` | `false` | Set when behind a reverse proxy so `req.ip` is the real client (required for per-user login rate limits). |
+| `ORCHESTRATION_ENABLED` | `false` | Surface the chat-view `Orch` toggle so sessions can opt in to supervisor mode (`orchestrate_*` tool group, worker spawning, inbox). Hard-disabled under `MINIMAL_UI` regardless. See [`orchestration.md`](./orchestration.md). |
+| `ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR` | `8` | Per-supervisor live-worker cap. Bounded to `[1, 100]`. |
 
 Production-tuning knobs (rate limits, JWT lifetime, TLS / proxy posture)
 are documented in [`deployment.md`](./deployment.md).
@@ -236,5 +238,15 @@ internals, and override env vars.
   reverse proxy
 - [`mobile.md`](./mobile.md) — mobile / PWA install
 - [`containers.md`](./containers.md) — container internals + bind mounts
-- [`mcp.md`](./mcp.md) — MCP server config reference
+- [`mcp.md`](./mcp.md) — MCP server config reference (remote + stdio)
+- [`webhooks.md`](./webhooks.md) — HTTPS POSTs on agent/session events
+- [`orchestration.md`](./orchestration.md) — supervisor sessions that
+  spawn and coordinate worker sessions
+- [`processes.md`](./processes.md) — background-process tool the
+  agent uses for dev servers, watchers, builds
+- [`todo.md`](./todo.md) — browser-native `todo` tool
+- [`ask-user-question.md`](./ask-user-question.md) — browser-native
+  `ask_user_question` tool
+- [`quick-actions.md`](./quick-actions.md) — operator-defined chat
+  toolbar chips (shell commands + prompt templates)
 - [`SECURITY.md`](../SECURITY.md) — `auth.json` key safety + threat model

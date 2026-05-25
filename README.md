@@ -95,12 +95,35 @@ For source builds and a development setup see
 - **Workspace tools in one tab** — file browser, tabbed CodeMirror editor with
   ripgrep search, integrated `node-pty` terminal (persists across page refresh),
   and a full git panel (status, diff, stage, commit, push, branch, log).
-- **MCP integration** — connect remote servers over StreamableHTTP / SSE,
-  per-project `.mcp.json`, per-tool toggles, master kill-switch in Settings.
+- **MCP integration** — connect remote servers (StreamableHTTP / SSE) AND
+  local stdio servers; per-project `.mcp.json` with a per-project trust
+  gate on stdio (you opt in once per project), per-tool toggles, master
+  kill-switch in Settings.
 - **Pi-subagents support** — built-in surfacing of the community
   [pi-subagents](https://github.com/nicobailon/pi-subagents) plugin (install
   separately): rich tool card for parent calls, child sessions in the project
   sidebar with cascade-delete on parent removal.
+- **Session orchestration** — opt-in supervisor mode for a session
+  (`ORCHESTRATION_ENABLED=true`, then toggle per-session): adds an
+  `orchestrate_*` tool group so the agent can spawn, observe, message,
+  interrupt, and kill worker sessions in the same project. Worker
+  events stream back into the supervisor's inbox; the supervisor's
+  LLM wakes on activity and reacts.
+- **Webhooks** — HTTPS POST deliveries on agent and session events
+  (`agent_end`, `ask_user_question`, `process_alert`, `auto_retry_end`,
+  `compaction_end`, `session_created`, `session_deleted`). Global or
+  per-project scope, optional HMAC-SHA256 signing, custom headers (Bearer
+  tokens etc., redacted on the wire), delivery history with retries.
+- **Background-process tool** — the `process` tool lets the agent
+  spawn long-running processes (dev servers, watchers, builds) that
+  outlive a single turn. Per-session manager, log capture, regex
+  watches, alerts on exit.
+- **Browser-native `todo` + `ask_user_question` tools** — drop-in
+  contract-compatible implementations of the community plugins; live
+  panel in the chat surface, per-session state.
+- **Quick actions** — operator-defined chips in the chat toolbar
+  that either run a shell command in the active project's cwd or
+  insert/send a templated prompt to the active session.
 - **Provider management** — Anthropic / OpenAI / Google / OpenRouter built-in,
   plus custom OpenAI-compatible endpoints (vLLM, LiteLLM, Ollama, internal
   gateways) via `models.json`.
@@ -128,7 +151,12 @@ The full feature grid (with categories and screenshots) is on the
 
 **Configure & extend**
 - [Configuration & env vars](./docs/configuration.md) — every flag, env var, and pi config file
-- [MCP servers](./docs/mcp.md) — connect remote MCP servers, per-tool toggles
+- [MCP servers](./docs/mcp.md) — remote + stdio servers, per-project trust gate, per-tool toggles
+- [Webhooks](./docs/webhooks.md) — HTTPS POSTs on agent/session events, HMAC signing, retry
+- [Session orchestration](./docs/orchestration.md) — supervisor sessions that spawn and coordinate workers
+- [Background processes](./docs/processes.md) — the `process` tool for dev servers, watchers, builds
+- [`todo` tool](./docs/todo.md) · [`ask_user_question` tool](./docs/ask-user-question.md) — browser-native plugin tools
+- [Quick actions](./docs/quick-actions.md) — operator-defined chat-toolbar chips
 - [Mobile / PWA install](./docs/mobile.md) — "Add to Home Screen" on iOS / Android
 
 **Use programmatically**
