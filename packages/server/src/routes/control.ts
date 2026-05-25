@@ -83,6 +83,15 @@ function mapSdkError(reply: FastifyReply, err: unknown): FastifyReply {
   if (/no api key found/i.test(m)) {
     return reply.code(400).send({ error: "no_api_key" });
   }
+  // SDK 0.75.x replaces the old "No API key found" wording on a
+  // session with no auth/model configured with "No API provider
+  // registered for api: <name>" (thrown out of the provider
+  // registry, not the auth layer). Semantically the same operator-
+  // facing problem — "you haven't set up an LLM provider" — so
+  // map to the same typed code.
+  if (/no api provider registered/i.test(m)) {
+    return reply.code(400).send({ error: "no_api_key" });
+  }
   if (/compaction cancelled/i.test(m)) {
     // User-driven abort during compact — not an internal error. The route
     // itself returned 200/202 successfully; this catch path is for the
