@@ -30,6 +30,11 @@ import {
 import { createProcessTool } from "./processes/tool.js";
 import { processManager } from "./processes/manager.js";
 import { bridgeAgentSessionEvent, bridgeSessionCreated } from "./webhooks/event-bridge.js";
+import { isOrchestrationEnabled } from "./orchestration/config.js";
+import { isSupervisor } from "./orchestration/store.js";
+import { createOrchestrationTools } from "./orchestration/tools.js";
+import { bridgeWorkerAgentEvent } from "./orchestration/event-bridge.js";
+import { notifySupervisorDisposed, notifySupervisorIdle } from "./orchestration/inbox.js";
 
 /**
  * Minimal SSE client contract used by the registry to fan out events.
@@ -420,7 +425,57 @@ function makeSubscribeHandler(live: LiveSession): () => void {
       { sessionId: live.sessionId, projectId: live.projectId, session: live.session },
       event,
     );
+
+    // Orchestration fan-out. Filters internally for agent_end and
+    // failed auto_retry_end; routes worker events to the owning
+    // supervisor's inbox (no-op for non-worker sessions). Separate
+    // call from the webhook bridge so the two systems stay
+    // independent — disabling one doesn't affect the other.
+    void bridgeWorkerAgentEvent({ sessionId: live.sessionId, session: live.session }, event);
+
+    // Supervisor-side wake-up recovery: when a supervisor's own
+    // agent_end fires (i.e. it just became idle), check whether
+    // any inbox items piled up during the just-finished turn and
+    // re-fire the wake-up nudge. Covers the case where the
+    // supervisor LLM finished a turn without calling
+    // orchestrate_read_inbox.
+    if (e.type === "agent_end") {
+      void (async () => {
+        try {
+          if (await isSupervisor(live.sessionId)) {
+            await notifySupervisorIdle(live.sessionId);
+          }
+        } catch {
+          // Best-effort recovery; never surface to the SSE caller.
+        }
+      })();
+    }
   });
+}
+
+/**
+ * Resolve the orchestration tools for a given session. Returns the
+ * empty array when:
+ *   - the instance-level orchestration flag is off (env or
+ *     MINIMAL_UI gate), OR
+ *   - the session isn't a registered supervisor.
+ *
+ * Read fresh per session create/resume so toggling supervisor mode
+ * in the UI and then re-resuming the session picks up the new
+ * tools (same recompute-on-create posture MCP / tool-overrides
+ * already use).
+ */
+async function resolveOrchestrationTools(sessionId: string): Promise<ToolDefinition[]> {
+  if (!isOrchestrationEnabled()) return [];
+  try {
+    if (!(await isSupervisor(sessionId))) return [];
+  } catch {
+    // If the store is unreadable, skip — orchestration is
+    // experimental + opt-in; a missing/corrupt file should not
+    // break session creation.
+    return [];
+  }
+  return createOrchestrationTools(sessionId);
 }
 
 export async function createSession(
@@ -444,7 +499,14 @@ export async function createSession(
   const askTool = createAskUserQuestionTool(sessionManager.getSessionId());
   const todoTool = createTodoTool(sessionManager.getSessionId(), sessionManager);
   const processTool = createProcessTool(sessionManager.getSessionId(), workspacePath);
-  const customTools: ToolDefinition[] = [...mcpTools, askTool, todoTool, processTool];
+  const orchestrationTools = await resolveOrchestrationTools(sessionManager.getSessionId());
+  const customTools: ToolDefinition[] = [
+    ...mcpTools,
+    askTool,
+    todoTool,
+    processTool,
+    ...orchestrationTools,
+  ];
   const settingsManager = await buildSessionSettingsManager(workspacePath, projectId);
   const resourceLoader = await buildForgeResourceLoader(
     workspacePath,
@@ -669,7 +731,14 @@ export async function resumeSession(
     const askTool = createAskUserQuestionTool(sessionManager.getSessionId());
     const todoTool = createTodoTool(sessionManager.getSessionId(), sessionManager);
     const processTool = createProcessTool(sessionManager.getSessionId(), workspacePath);
-    const customTools: ToolDefinition[] = [...mcpTools, askTool, todoTool, processTool];
+    const orchestrationTools = await resolveOrchestrationTools(sessionManager.getSessionId());
+    const customTools: ToolDefinition[] = [
+      ...mcpTools,
+      askTool,
+      todoTool,
+      processTool,
+      ...orchestrationTools,
+    ];
     // Resumed session — refresh the todo cache from the branch so
     // the UI panel sees the persisted state on first SSE connect,
     // not an empty list.
@@ -879,6 +948,11 @@ export async function disposeSession(sessionId: string): Promise<boolean> {
     // path; even without this, a future session with the same id
     // would recover via replay-on-miss. Cleaner to be explicit.
     clearTodoForSession(sessionId);
+    // Clear the orchestration in-memory dedupe state. Cheap
+    // (Set/Map delete) and idempotent on non-supervisors, so call
+    // unconditionally rather than gating on `isSupervisor` (which
+    // would mean an extra disk read inside the dispose hot path).
+    notifySupervisorDisposed(sessionId);
     // Terminate every live process owned by this session (SIGTERM,
     // brief grace, SIGKILL) and remove the per-session log dir.
     // Best-effort + bounded — disposeSession itself can take up to
@@ -1311,7 +1385,14 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
   const askTool = createAskUserQuestionTool(sessionManager.getSessionId());
   const todoTool = createTodoTool(sessionManager.getSessionId(), sessionManager);
   const processTool = createProcessTool(sessionManager.getSessionId(), source.workspacePath);
-  const customTools: ToolDefinition[] = [...mcpTools, askTool, todoTool, processTool];
+  const orchestrationTools = await resolveOrchestrationTools(sessionManager.getSessionId());
+  const customTools: ToolDefinition[] = [
+    ...mcpTools,
+    askTool,
+    todoTool,
+    processTool,
+    ...orchestrationTools,
+  ];
   // Forked session — replay the branch (which now belongs to the
   // fork) so the new session's todo cache reflects the inherited
   // state, not the parent's stale entry.
@@ -1396,11 +1477,15 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
         restoredManager.getSessionId(),
         source.workspacePath,
       );
+      const restoredOrchestrationTools = await resolveOrchestrationTools(
+        restoredManager.getSessionId(),
+      );
       const restoredCustomTools: ToolDefinition[] = [
         ...restoredMcpTools,
         restoredAskTool,
         restoredTodoTool,
         restoredProcessTool,
+        ...restoredOrchestrationTools,
       ];
       // Re-derive the original source's todo cache from the (now
       // un-mutated) source JSONL — the SDK's fork machinery left
@@ -1460,6 +1545,112 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
     }
   }
 
+  return live;
+}
+
+/**
+ * Rebuild the live AgentSession in-place — same SessionManager, fresh
+ * `customTools` list. Used by the orchestration enable/disable route
+ * to make the orchestrate_* tools appear (or disappear) immediately
+ * without disposing the session (and triggering all the SSE-disconnect
+ * + tombstone + cold-session race fallout that comes with dispose).
+ *
+ * Pattern mirrors the source-restore branch of `forkSession`:
+ * unsubscribe the old AgentSession, instantiate a new one against
+ * the same SessionManager, mutate `live.session` in place, re-wire
+ * the registry's own subscribe handler against the new instance.
+ * The LiveSession entry stays in the registry, attached SSE clients
+ * stay connected, the live.clients Set is reused so events from the
+ * new AgentSession fan out to the same browsers without a reconnect.
+ *
+ * Aborts any in-flight turn first (best-effort, bounded at 5s) so a
+ * mid-stream rebuild doesn't leave the old AgentSession's LLM call
+ * orphaned. No-op when the session isn't live.
+ *
+ * Why not dispose + let SSE reconnect:
+ *   1. Pre-prompt sessions have no .jsonl on disk yet — `resumeSession`
+ *      throws `SessionNotFoundError`, the client's SSE error handler
+ *      maps the 404 to "session was deleted elsewhere" and removes
+ *      the session from local state. The session vanishes from the
+ *      sidebar with no warning.
+ *   2. Post-prompt sessions hit the dispose tombstone — the
+ *      `disposeTombstones` map blocks resume for `TOMBSTONE_MS` (1.5s)
+ *      to prevent a polling SSE client from racing a hard-delete.
+ *      The orchestration enable doesn't have a hard-delete intent, but
+ *      it still sets the tombstone, so the SSE reconnect attempts
+ *      get 410 `stream_open_failed` until it expires.
+ */
+export async function rebuildAgentSessionForTools(
+  sessionId: string,
+): Promise<LiveSession | undefined> {
+  const live = registry.get(sessionId);
+  if (live === undefined) return undefined;
+  // Bound the abort race so a hung LLM call can't block the rebuild
+  // (and therefore the operator's UI click) forever. Best-effort —
+  // the SDK doesn't currently throw from abort, but defend against
+  // future versions same as disposeSession does.
+  try {
+    await Promise.race([
+      live.session.abort(),
+      new Promise<void>((resolve) => setTimeout(resolve, 5_000).unref()),
+    ]);
+  } catch (err) {
+    void err;
+  }
+  try {
+    live.unsubscribe();
+  } catch {
+    // ignore
+  }
+  // Reuse the SessionManager so the underlying .jsonl identity
+  // doesn't shift. For pre-prompt sessions this is the in-memory
+  // SessionManager from SessionManager.create — no file on disk
+  // yet, the SDK rehydrates an empty session from it. For sessions
+  // with prior turns, the SDK reads the existing messages from the
+  // file the SessionManager points at.
+  const sessionManager = live.session.sessionManager;
+  const mcpTools = await resolveMcpCustomTools(live.projectId, live.workspacePath);
+  const askTool = createAskUserQuestionTool(sessionManager.getSessionId());
+  const todoTool = createTodoTool(sessionManager.getSessionId(), sessionManager);
+  const processTool = createProcessTool(sessionManager.getSessionId(), live.workspacePath);
+  const orchestrationTools = await resolveOrchestrationTools(sessionManager.getSessionId());
+  const customTools: ToolDefinition[] = [
+    ...mcpTools,
+    askTool,
+    todoTool,
+    processTool,
+    ...orchestrationTools,
+  ];
+  const settingsManager = await buildSessionSettingsManager(live.workspacePath, live.projectId);
+  const resourceLoader = await buildForgeResourceLoader(
+    live.workspacePath,
+    config.piConfigDir,
+    settingsManager,
+    live.projectId,
+  );
+  const { session: newSession } = await createAgentSession({
+    cwd: live.workspacePath,
+    sessionManager,
+    settingsManager,
+    resourceLoader,
+    agentDir: config.piConfigDir,
+    customTools,
+    tools: await buildToolsAllowlist(customTools, live.projectId, live.workspacePath),
+  });
+  // Drop the old AgentSession only AFTER the new one is constructed
+  // — if createAgentSession throws, we still have a working session.
+  try {
+    live.session.dispose();
+  } catch {
+    // ignore — SDK doesn't currently throw, H2-defensive
+  }
+  // Swap in place. Same sessionId, same projectId, same SSE clients
+  // — the browser side notices nothing beyond the new tools showing
+  // up on the next agent turn.
+  live.session = newSession;
+  live.lastActivityAt = new Date();
+  live.lastAgentStartIndex = undefined;
+  live.unsubscribe = makeSubscribeHandler(live);
   return live;
 }
 

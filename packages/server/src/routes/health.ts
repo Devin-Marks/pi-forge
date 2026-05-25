@@ -5,6 +5,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { sessionCount } from "../session-registry.js";
 import { ptyCount } from "../pty-manager.js";
 import { config, passwordAuthEnabled } from "../config.js";
+import { isOrchestrationEnabled } from "../orchestration/config.js";
 
 /**
  * Read the server's own package.json once at module load. Used by the
@@ -96,7 +97,13 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
         response: {
           200: {
             type: "object",
-            required: ["minimal", "workspaceRoot", "version", "passwordAuthEnabled"],
+            required: [
+              "minimal",
+              "workspaceRoot",
+              "version",
+              "passwordAuthEnabled",
+              "orchestrationEnabled",
+            ],
             properties: {
               // True when MINIMAL_UI is set: hides terminal, git pane,
               // last-turn pane, and providers/agent settings sections;
@@ -117,6 +124,11 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
               // deployments report false; the Settings → General
               // password change section hides in that case.
               passwordAuthEnabled: { type: "boolean" },
+              // True iff session orchestration is reachable. Off
+              // when ORCHESTRATION_ENABLED is unset OR MINIMAL_UI
+              // is true (orchestration is hard-disabled under
+              // MINIMAL_UI regardless of the env flag).
+              orchestrationEnabled: { type: "boolean" },
             },
           },
         },
@@ -127,6 +139,7 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
       workspaceRoot: config.workspacePath,
       version: SERVER_VERSION,
       passwordAuthEnabled: passwordAuthEnabled(),
+      orchestrationEnabled: isOrchestrationEnabled(),
     }),
   );
 };

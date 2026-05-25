@@ -59,9 +59,17 @@ pi-forge/
 │   │   │   │   ├── event-bridge.ts      # SDK/forge events → dispatcher
 │   │   │   │   ├── init.ts              # Boot-time wiring of ask-user-question + processes
 │   │   │   │   └── types.ts             # WebhookConfig, DeliveryRecord, event union
+│   │   │   ├── orchestration/            # Session-as-supervisor / session-as-worker (opt-in)
+│   │   │   │   ├── store.ts             # session-orchestration.json + orchestrator-inbox.json
+│   │   │   │   ├── tools.ts             # orchestrate_* ToolDefinition factory (8 tools)
+│   │   │   │   ├── inbox.ts             # PUSH wakeup when supervisor idle + PULL drain
+│   │   │   │   ├── event-bridge.ts      # Worker SDK/forge events → supervisor inbox
+│   │   │   │   ├── init.ts              # Boot-time wiring of ask-user-question + processes
+│   │   │   │   ├── config.ts            # ORCHESTRATION_ENABLED env + fanout cap
+│   │   │   │   └── types.ts             # InboxItem, SupervisorRecord, WorkerRecord
 │   │   │   └── routes/                  # auth, config, control, exec, files, git, health,
 │   │   │                                #   mcp, projects, prompt, sessions, stream, terminal,
-│   │   │                                #   webhooks, _schemas (shared JSON schemas)
+│   │   │                                #   webhooks, orchestration, _schemas (shared schemas)
 │   │   └── package.json
 │   └── client/                          # React + Vite frontend (TypeScript)
 │       ├── index.html                   # Viewport meta + theme-color (dark default; updated by theme.ts)
@@ -451,6 +459,8 @@ route handlers).
 | `prompts-overrides.json` | Per-project pi-prompt enable/disable patterns | `prompt-overrides.ts` |
 | `webhooks.json` | Webhook configs (HMAC secrets stored here — mode 0600) | `webhooks/store.ts` |
 | `webhook-deliveries.json` | Rolling delivery history (cap 100 / webhook) | `webhooks/store.ts` |
+| `session-orchestration.json` | Supervisor opt-in + supervisor↔worker links (mode 0600) | `orchestration/store.ts` |
+| `orchestrator-inbox.json` | Per-supervisor pending event queue (cap 200 / supervisor) | `orchestration/store.ts` |
 | `jwt-secret` | Auto-generated HS256 signing key (mode 0600) | `config.ts` (`loadOrGenerateJwtSecret`) |
 | `password-hash` | scrypt hash of the user's persisted password (mode 0600) | `auth.ts` (`persistPassword`) |
 
