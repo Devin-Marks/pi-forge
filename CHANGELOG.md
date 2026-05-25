@@ -15,6 +15,36 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Security
+
+- **Bumped `uuid` to ≥11.1.1** via an `overrides` entry to fix
+  [GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq)
+  (missing buffer bounds check in v3/v5/v6 when `buf` is provided).
+  The vulnerable copy was pulled transitively by `exceljs@4.4.0`,
+  which declares `uuid: ^8.3.0`; the override forces it past the
+  range. exceljs's actual usage is `v4`-only, which is API-compatible
+  across the major bump, so the override is safe at runtime
+  (verified by `test-session-export.ts`).
+- **Bumped `qs` to ≥6.15.2** via an `overrides` entry to fix
+  [GHSA-q8mj-m7cp-5q26](https://github.com/advisories/GHSA-q8mj-m7cp-5q26)
+  (DoS via `qs.stringify` crash on null/undefined comma-format array
+  entries when `encodeValuesOnly` is set). Vulnerable copy was pulled
+  transitively by `@modelcontextprotocol/sdk → express → body-parser`.
+
+### Changed
+
+- **Pi SDK trio bumped 0.74.0 → 0.75.5** (`@earendil-works/pi-coding-agent`,
+  `@earendil-works/pi-agent-core`, `@earendil-works/pi-ai`). Notable
+  behaviour change absorbed: `session.compact()` on a session with no
+  provider configured now throws `"No API provider registered for api: X"`
+  instead of the older `"No API key found"`. The `mapSdkError` helper in
+  `routes/control.ts` was extended with a regex case so the new wording
+  still maps to the typed `no_api_key` 400 response that clients depend on.
+- **Dev-tooling bumps**: `eslint` 10.3.0 → 10.4.0, `typescript-eslint`
+  8.59.3 → 8.59.4, `@types/node` 25.8.0 → 25.9.1, `@types/react`
+  19.2.14 → 19.2.15, `vite` 8.0.13 → 8.0.14, `marked` 18.0.3 → 18.0.4.
+  No code-level fallout — typecheck + lint + full test suite clean.
+
 ### Added
 
 - **Session orchestration — one session can spawn, observe, and

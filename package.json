@@ -21,21 +21,23 @@
     "build:publish": "node scripts/build-publish-dir.mjs"
   },
   "overrides": {
-    "serialize-javascript": ">=6.0.2"
+    "serialize-javascript": ">=6.0.2",
+    "qs": ">=6.15.2",
+    "uuid": ">=11.1.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^25.8.0",
+    "@types/node": "^25.9.1",
     "concurrently": "^9.1.2",
-    "eslint": "^10.3.0",
+    "eslint": "^10.4.0",
     "eslint-config-prettier": "^10.1.2",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
     "prettier": "^3.5.3",
-    "marked": "^18.0.3",
+    "marked": "^18.0.4",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.59.3"
+    "typescript-eslint": "^8.59.4"
   }
 }
