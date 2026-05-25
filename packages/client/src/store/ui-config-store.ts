@@ -29,6 +29,13 @@ interface UiConfigState {
    * flashing the form away on first paint.
    */
   passwordAuthEnabled: boolean;
+  /**
+   * True when the server has session orchestration available
+   * (ORCHESTRATION_ENABLED set AND not MINIMAL_UI). Default false —
+   * orchestration is an opt-in feature; rendering its UI on a
+   * server that doesn't have it on would be confusing.
+   */
+  orchestrationEnabled: boolean;
   /** Last load error (sticky until a retry succeeds), for diagnostics. */
   error: string | undefined;
   load: () => Promise<void>;
@@ -40,6 +47,7 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
   workspaceRoot: "",
   version: "",
   passwordAuthEnabled: true,
+  orchestrationEnabled: false,
   error: undefined,
   load: async () => {
     try {
@@ -50,6 +58,7 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
         workspaceRoot: cfg.workspaceRoot,
         version: cfg.version,
         passwordAuthEnabled: cfg.passwordAuthEnabled,
+        orchestrationEnabled: cfg.orchestrationEnabled,
         error: undefined,
       });
     } catch (err) {

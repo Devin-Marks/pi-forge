@@ -141,11 +141,16 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
   const version = typeof value.version === "string" ? value.version : "unknown";
   const passwordAuthEnabled =
     typeof value.passwordAuthEnabled === "boolean" ? value.passwordAuthEnabled : true;
+  // Default to false on older servers — orchestration is gated by
+  // an explicit env flag, so absence === disabled.
+  const orchestrationEnabled =
+    typeof value.orchestrationEnabled === "boolean" ? value.orchestrationEnabled : false;
   return {
     minimal: value.minimal,
     workspaceRoot: value.workspaceRoot,
     version,
     passwordAuthEnabled,
+    orchestrationEnabled,
   };
 }
 
@@ -743,6 +748,168 @@ function vTodoList(value: unknown, status: number): TodoListResponse {
     fail(status, "expected { tasks: [...], nextId: number }");
   }
   return { tasks: value.tasks as TodoTask[], nextId: value.nextId };
+}
+
+// ---- orchestration ----
+
+export type SessionRole = "supervisor" | "worker" | "standalone";
+
+export interface OrchestrationConfig {
+  enabled: boolean;
+  maxWorkersPerSupervisor: number;
+  maxDepth: number;
+  /** Empty string when enabled; otherwise the disable reason. */
+  disabledReason: "" | "minimal_ui_disabled" | "orchestration_disabled";
+}
+
+export interface SessionLink {
+  sessionId: string;
+  role: SessionRole;
+  /** Worker only — supervisor's session id. */
+  supervisorId?: string;
+  /** Supervisor only — list of worker session ids. */
+  workerIds?: string[];
+  /** Supervisor only — count of inbox items not yet drained by the
+   *  supervisor's LLM via orchestrate_read_inbox. */
+  pendingInbox?: number;
+  /** Supervisor only — ISO timestamp. */
+  enabledAt?: string;
+  /** Worker only — ISO timestamp. */
+  spawnedAt?: string;
+  /** Worker only — back-reference to handoff source. */
+  spawnedFrom?: { sessionId: string; mode: "fresh" | "summary" };
+}
+
+export interface WorkerSummary {
+  workerId: string;
+  isLive: boolean;
+  isStreaming?: boolean;
+  state?: "streaming" | "idle" | "cold";
+  name?: string;
+  lastActivityAt?: string;
+  messageCount?: number;
+  projectId?: string;
+  spawnedAt?: string;
+  spawnedFrom?: { sessionId: string; mode: string };
+}
+
+export type InboxItemType =
+  | "worker.ended"
+  | "worker.ask_user"
+  | "worker.auto_retry_failed"
+  | "worker.process_alert"
+  | "worker.deleted";
+
+export interface InboxItemWire {
+  id: string;
+  type: InboxItemType;
+  workerId: string;
+  occurredAt: string;
+  data: Record<string, unknown>;
+  delivered: boolean;
+}
+
+function vOrchestrationConfig(value: unknown, status: number): OrchestrationConfig {
+  if (
+    !isObject(value) ||
+    typeof value.enabled !== "boolean" ||
+    typeof value.maxWorkersPerSupervisor !== "number" ||
+    typeof value.maxDepth !== "number" ||
+    typeof value.disabledReason !== "string"
+  ) {
+    fail(status, "expected orchestration config");
+  }
+  return {
+    enabled: value.enabled,
+    maxWorkersPerSupervisor: value.maxWorkersPerSupervisor,
+    maxDepth: value.maxDepth,
+    disabledReason: value.disabledReason as OrchestrationConfig["disabledReason"],
+  };
+}
+
+function vSessionLink(value: unknown, status: number): SessionLink {
+  if (!isObject(value) || typeof value.sessionId !== "string" || typeof value.role !== "string") {
+    fail(status, "expected session link");
+  }
+  const role = value.role as SessionRole;
+  if (role !== "supervisor" && role !== "worker" && role !== "standalone") {
+    fail(status, "bad session role");
+  }
+  const out: SessionLink = { sessionId: value.sessionId, role };
+  if (typeof value.supervisorId === "string") out.supervisorId = value.supervisorId;
+  if (Array.isArray(value.workerIds)) {
+    out.workerIds = value.workerIds.filter((s): s is string => typeof s === "string");
+  }
+  if (typeof value.pendingInbox === "number") out.pendingInbox = value.pendingInbox;
+  if (typeof value.enabledAt === "string") out.enabledAt = value.enabledAt;
+  if (typeof value.spawnedAt === "string") out.spawnedAt = value.spawnedAt;
+  if (isObject(value.spawnedFrom) && typeof value.spawnedFrom.sessionId === "string") {
+    const mode = value.spawnedFrom.mode;
+    if (mode === "fresh" || mode === "summary") {
+      out.spawnedFrom = { sessionId: value.spawnedFrom.sessionId, mode };
+    }
+  }
+  return out;
+}
+
+function vWorkerSummaryList(value: unknown, status: number): { workers: WorkerSummary[] } {
+  if (!isObject(value) || !Array.isArray(value.workers)) {
+    fail(status, "expected { workers: [...] }");
+  }
+  const workers: WorkerSummary[] = [];
+  for (const raw of value.workers) {
+    if (!isObject(raw) || typeof raw.workerId !== "string" || typeof raw.isLive !== "boolean") {
+      continue;
+    }
+    const w: WorkerSummary = { workerId: raw.workerId, isLive: raw.isLive };
+    if (typeof raw.isStreaming === "boolean") w.isStreaming = raw.isStreaming;
+    if (raw.state === "streaming" || raw.state === "idle" || raw.state === "cold") {
+      w.state = raw.state;
+    }
+    if (typeof raw.name === "string") w.name = raw.name;
+    if (typeof raw.lastActivityAt === "string") w.lastActivityAt = raw.lastActivityAt;
+    if (typeof raw.messageCount === "number") w.messageCount = raw.messageCount;
+    if (typeof raw.projectId === "string") w.projectId = raw.projectId;
+    if (typeof raw.spawnedAt === "string") w.spawnedAt = raw.spawnedAt;
+    if (
+      isObject(raw.spawnedFrom) &&
+      typeof raw.spawnedFrom.sessionId === "string" &&
+      typeof raw.spawnedFrom.mode === "string"
+    ) {
+      w.spawnedFrom = { sessionId: raw.spawnedFrom.sessionId, mode: raw.spawnedFrom.mode };
+    }
+    workers.push(w);
+  }
+  return { workers };
+}
+
+function vInboxList(value: unknown, status: number): { items: InboxItemWire[] } {
+  if (!isObject(value) || !Array.isArray(value.items)) {
+    fail(status, "expected { items: [...] }");
+  }
+  const items: InboxItemWire[] = [];
+  for (const raw of value.items) {
+    if (
+      !isObject(raw) ||
+      typeof raw.id !== "string" ||
+      typeof raw.type !== "string" ||
+      typeof raw.workerId !== "string" ||
+      typeof raw.occurredAt !== "string" ||
+      !isObject(raw.data) ||
+      typeof raw.delivered !== "boolean"
+    ) {
+      continue;
+    }
+    items.push({
+      id: raw.id,
+      type: raw.type as InboxItemType,
+      workerId: raw.workerId,
+      occurredAt: raw.occurredAt,
+      data: raw.data,
+      delivered: raw.delivered,
+    });
+  }
+  return { items };
 }
 
 function vAuthSummary(value: unknown, status: number): AuthSummary {
@@ -1794,6 +1961,62 @@ export const api = {
     ),
   listWebhookDeliveries: (id: string) =>
     request(`/api/v1/webhooks/${encodeURIComponent(id)}/deliveries`, vDeliveryList),
+
+  // ---------------- orchestration ----------------
+  /**
+   * Fetch the instance-level orchestration config — whether the
+   * feature is enabled, the per-supervisor fanout cap, and (if
+   * disabled) the reason. Cheap to call on every supervisor view
+   * since this is purely env-derived.
+   */
+  orchestrationConfig: () => request("/api/v1/orchestration/config", vOrchestrationConfig),
+  getSessionLink: (sessionId: string) =>
+    request(`/api/v1/orchestration/sessions/${encodeURIComponent(sessionId)}`, vSessionLink),
+  enableSupervisor: (sessionId: string) =>
+    request(
+      `/api/v1/orchestration/sessions/${encodeURIComponent(sessionId)}/enable`,
+      vSessionLink,
+      { method: "POST" },
+    ),
+  disableSupervisor: (sessionId: string) =>
+    request(`/api/v1/orchestration/sessions/${encodeURIComponent(sessionId)}/disable`, vVoid, {
+      method: "POST",
+    }),
+  listSupervisorWorkers: (sessionId: string) =>
+    request(
+      `/api/v1/orchestration/sessions/${encodeURIComponent(sessionId)}/workers`,
+      vWorkerSummaryList,
+    ),
+  listSupervisorInbox: (sessionId: string) =>
+    request(`/api/v1/orchestration/sessions/${encodeURIComponent(sessionId)}/inbox`, vInboxList),
+  clearSupervisorInbox: (sessionId: string) =>
+    request(`/api/v1/orchestration/sessions/${encodeURIComponent(sessionId)}/inbox/clear`, vVoid, {
+      method: "POST",
+    }),
+  detachWorker: (supervisorId: string, workerId: string) =>
+    request(
+      `/api/v1/orchestration/sessions/${encodeURIComponent(supervisorId)}/workers/${encodeURIComponent(workerId)}/detach`,
+      vVoid,
+      { method: "POST" },
+    ),
+  killWorker: (supervisorId: string, workerId: string) =>
+    request(
+      `/api/v1/orchestration/sessions/${encodeURIComponent(supervisorId)}/workers/${encodeURIComponent(workerId)}/kill`,
+      (v, s) => {
+        if (!isObject(v) || typeof v.wasLive !== "boolean") fail(s, "expected { wasLive }");
+        return { wasLive: v.wasLive };
+      },
+      { method: "POST" },
+    ),
+  resumeWorker: (supervisorId: string, workerId: string) =>
+    request(
+      `/api/v1/orchestration/sessions/${encodeURIComponent(supervisorId)}/workers/${encodeURIComponent(workerId)}/resume`,
+      (v, s) => {
+        if (!isObject(v) || typeof v.resumed !== "boolean") fail(s, "expected { resumed }");
+        return { resumed: v.resumed };
+      },
+      { method: "POST" },
+    ),
 
   listSkills: (projectId: string) =>
     request(

@@ -15,6 +15,89 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Added
+
+- **Session orchestration — one session can spawn, observe, and
+  coordinate other sessions.** Off by default; the operator opts
+  in with `ORCHESTRATION_ENABLED=true`, and each session that
+  should act as a supervisor opts in separately via the chat-view
+  `Orch` toggle. Hard-disabled under MINIMAL_UI regardless of the
+  env flag.
+
+  Topology: strict hub-and-spoke at depth=1. A supervisor session
+  gets a new `orchestrate_*` tool group; workers do not, so they
+  have no way to talk to each other. Workers cannot themselves
+  become supervisors (no fork-bombs by buggy prompts). Same-
+  project only — cross-project orchestration is intentionally out
+  of scope for v1.
+
+  Tool surface (8 tools, supervisor-only):
+  - `orchestrate_spawn_worker` — create a new worker session in
+    the same project. `name` is required so the picker stays
+    legible when several workers run in parallel. Optional
+    `contextSummary` parameter prepends a handoff summary to the
+    worker's initial prompt.
+  - `orchestrate_list_workers` — current state of every linked
+    worker (streaming / idle / cold) with message counts.
+  - `orchestrate_read_worker` — fetch the most recent messages
+    from a worker's transcript (auto-resumes cold workers).
+    Default `limit` is 1 — the worker's single latest message is
+    enough context for most supervisor decisions, and bigger
+    pulls burn the supervisor's own context window. Messages are
+    serialized into the tool-result *text* as a readable
+    transcript (per-message role + extracted text + tool_use
+    names + tool_result previews); the supervisor LLM cannot see
+    fields placed only in `details`, so the read tools have to
+    encode their payload into the content.
+  - `orchestrate_send_to_worker` — inject a message into a
+    worker's prompt stream as `prompt | steer | followUp`.
+    Tagged `[supervisor:<id>]` in the worker's transcript.
+  - `orchestrate_interrupt_worker` — abort a worker's current
+    turn.
+  - `orchestrate_kill_worker` — dispose the worker session,
+    optionally also delete the .jsonl from disk.
+  - `orchestrate_detach_worker` — drop the supervisor↔worker
+    link; the worker continues as a standalone session.
+  - `orchestrate_read_inbox` — drain pending worker events
+    (ended / asked / retry-failed / process-alert / deleted).
+
+  Wake-up: worker events route into a per-supervisor inbox queue
+  (`${FORGE_DATA_DIR}/orchestrator-inbox.json`, FIFO-capped at
+  200 / supervisor). When the supervisor is live and idle, a
+  `[orchestration]` system prompt is injected so the agent
+  starts a new turn that processes the inbox via
+  `orchestrate_read_inbox`. If the supervisor is mid-turn, the
+  push skips and the items wait — recovery fires another push
+  when the supervisor's own `agent_end` lands.
+
+  Safety:
+  - Per-supervisor live-worker cap (default 8, configurable via
+    `ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR`).
+  - Every orchestration tool that names a workerId verifies
+    ownership against the store first — a supervisor cannot
+    touch another supervisor's workers by id-guessing.
+  - Worker spawn/kill events route through the existing webhooks
+    event bridge AND the orchestration inbox in parallel — the
+    two systems are independent.
+  - Audit trail is `process.stderr` JSON-line logs
+    (`orchestration-inbox-enqueued`, `orchestration-wake-
+    delivered`, etc.) — no separate audit-log UI by design,
+    operators tail container logs.
+
+  UI: a `Orch` toggle button in the chat-view toolbar (visible
+  only when the instance flag is on) opens the per-session
+  Orchestration panel. Standalone sessions get an "Enable
+  supervisor mode" button; supervisors see their workers list
+  with detach / kill / resume controls and an inbox-history
+  drawer; workers see a back-link to their supervisor. The
+  panel polls every 4s while open. Enable / disable rebuild
+  the live AgentSession in-place (same SessionManager, new
+  `customTools`, SSE clients stay attached) so the
+  orchestrate_* tools appear or disappear immediately — no
+  reconnect, no risk of a pre-prompt session being lost to
+  the cold-resume 404 race or a post-prompt session hitting
+  the dispose tombstone's 410.
+
 ### Changed
 
 - **Clone-repository project setup gains an "Allow self-signed /

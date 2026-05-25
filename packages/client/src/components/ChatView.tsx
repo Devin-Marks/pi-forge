@@ -33,6 +33,8 @@ import { QuickActionsMenu } from "./QuickActionsMenu";
 import { QuickActionRunCard } from "./QuickActionRunCard";
 import { useQuickActionRunsStore } from "../store/quick-actions-store";
 import { parseSubagentDetails, type SubagentResult } from "../lib/subagent-parser";
+import { OrchestrationPanel } from "./OrchestrationPanel";
+import { useUiConfigStore } from "../store/ui-config-store";
 
 /**
  * Per-ChatView diff view-type preference. Each diff-rendering surface
@@ -127,6 +129,8 @@ export function ChatView({ sessionId }: Props) {
   // regardless of how far the user has scrolled.
   const project = useActiveProject();
   const [treeOpen, setTreeOpen] = useState(false);
+  const [orchOpen, setOrchOpen] = useState(false);
+  const orchestrationEnabled = useUiConfigStore((s) => s.orchestrationEnabled);
 
   // Conversation export menu (Markdown / Raw JSONL). Hidden on mobile —
   // the file-download flow is desktop-shaped (browser save dialog,
@@ -315,8 +319,28 @@ export function ChatView({ sessionId }: Props) {
               <GitBranch size={11} />
               Tree
             </button>
+            {orchestrationEnabled && (
+              <button
+                onClick={() => setOrchOpen((v) => !v)}
+                aria-pressed={orchOpen}
+                className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider hover:bg-neutral-800 ${
+                  orchOpen
+                    ? "bg-neutral-800 text-violet-300"
+                    : "text-neutral-400 hover:text-neutral-200"
+                }`}
+                title="Orchestration — supervisor / worker controls"
+              >
+                <Users size={11} />
+                Orch
+              </button>
+            )}
           </div>
         </div>
+        {orchOpen && orchestrationEnabled && (
+          <div className="border-b border-neutral-800 bg-neutral-900/40 px-3 py-2">
+            <OrchestrationPanel sessionId={sessionId} onClose={() => setOrchOpen(false)} />
+          </div>
+        )}
         {/* Banner sits ABOVE the scroll container so it stays pinned to the top
             of the chat view regardless of how far the user has scrolled into a
             long session. Earlier we rendered it inside the scroll container,

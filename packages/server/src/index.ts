@@ -35,6 +35,11 @@ import { disposeAll as disposeAllMcp, loadGlobal as loadGlobalMcp } from "./mcp/
 import { initAskUserQuestionFanout, initProcessesFanout, initTodoFanout } from "./sse-bridge.js";
 import { webhookRoutes } from "./routes/webhooks.js";
 import { initAskUserQuestionWebhookBridge, initProcessesWebhookBridge } from "./webhooks/init.js";
+import { orchestrationRoutes } from "./routes/orchestration.js";
+import {
+  initOrchestrationAskUserQuestionBridge,
+  initOrchestrationProcessesBridge,
+} from "./orchestration/init.js";
 import { disposeAllSessions } from "./session-registry.js";
 import { disposeAllPtys, installPtyExitHandler } from "./pty-manager.js";
 import { logSecretHygieneState } from "./agent-resource-loader.js";
@@ -395,6 +400,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       await api.register(todoRoutes);
       await api.register(processesRoutes);
       await api.register(webhookRoutes);
+      await api.register(orchestrationRoutes);
       await api.register(searchRoutes);
       await api.register(terminalRoutes);
     },
@@ -496,6 +502,14 @@ export async function buildServer(): Promise<FastifyInstance> {
   // channel.
   initAskUserQuestionWebhookBridge();
   initProcessesWebhookBridge();
+
+  // Orchestration bridges for the same forge-native event channels.
+  // Per-AgentSession events (agent_end, auto_retry_end) are wired
+  // directly inside session-registry's subscribe handler — those
+  // need the LiveSession context at construction time. These two
+  // singleton-channel sources are subscribed once at boot.
+  initOrchestrationAskUserQuestionBridge();
+  initOrchestrationProcessesBridge();
 
   return fastify;
 }

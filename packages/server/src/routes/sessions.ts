@@ -12,6 +12,8 @@ import {
   type UnifiedSession,
 } from "../session-registry.js";
 import { bridgeSessionDeleted } from "../webhooks/event-bridge.js";
+import { bridgeWorkerDeleted } from "../orchestration/event-bridge.js";
+import { unregisterWorker } from "../orchestration/store.js";
 import { errorSchema, liveSummaryBody, liveSummarySchema } from "./_schemas.js";
 import { buildTurnDiff } from "../turn-diff-builder.js";
 import { buildCompactionHistory } from "../compaction-history.js";
@@ -812,6 +814,11 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
           ...(projectIdForWebhook !== undefined ? { projectId: projectIdForWebhook } : {}),
           wasLive,
         });
+        // Fire the worker.deleted inbox event BEFORE unregistering
+        // so the bridge can still resolve the supervisor link.
+        // Best-effort: a failure here doesn't undo the delete.
+        void bridgeWorkerDeleted(req.params.id, { wasLive });
+        void unregisterWorker(req.params.id).catch(() => undefined);
         return reply.code(204).send();
       }
       if (r === "live") {
@@ -832,6 +839,8 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
                 ...(projectIdForWebhook !== undefined ? { projectId: projectIdForWebhook } : {}),
                 wasLive: true,
               });
+              void bridgeWorkerDeleted(req.params.id, { wasLive: true });
+              void unregisterWorker(req.params.id).catch(() => undefined);
               return reply.code(204).send();
             }
           } catch (err) {
@@ -855,6 +864,8 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
           ...(projectIdForWebhook !== undefined ? { projectId: projectIdForWebhook } : {}),
           wasLive: true,
         });
+        void bridgeWorkerDeleted(req.params.id, { wasLive: true });
+        void unregisterWorker(req.params.id).catch(() => undefined);
         return reply.code(204).send();
       }
       return notFound(reply);

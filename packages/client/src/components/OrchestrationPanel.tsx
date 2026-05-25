@@ -1,0 +1,500 @@
+import { useEffect, useState } from "react";
+import { Loader2, RefreshCw, Users, X } from "lucide-react";
+import {
+  api,
+  ApiError,
+  type InboxItemType,
+  type InboxItemWire,
+  type SessionLink,
+  type WorkerSummary,
+} from "../lib/api-client";
+import { useUiConfigStore } from "../store/ui-config-store";
+import { useSessionStore } from "../store/session-store";
+
+interface Props {
+  sessionId: string;
+  /** Optional close handler — when set, a close button renders in the
+   *  header so the panel can be dismissed from inside (used by the
+   *  ChatView dropdown integration). */
+  onClose?: () => void;
+}
+
+/**
+ * Per-session orchestration controls. Renders nothing when
+ * orchestration is disabled on this server. Otherwise shows the
+ * session's role (supervisor / worker / standalone) with appropriate
+ * controls:
+ *
+ *   - standalone: button to enable supervisor mode
+ *   - supervisor: worker list + inbox history + disable button
+ *   - worker:     supervisor back-link
+ *
+ * Side effects (enable/disable/kill/detach) reload the link state
+ * after the mutation so the UI stays in sync with the store.
+ *
+ * The supervisor's worker list polls every 4s while the panel is
+ * mounted. Idle UI overhead is small — one cheap HTTP call.
+ */
+export function OrchestrationPanel({ sessionId, onClose }: Props) {
+  const orchestrationEnabled = useUiConfigStore((s) => s.orchestrationEnabled);
+  const [link, setLink] = useState<SessionLink | undefined>(undefined);
+  const [workers, setWorkers] = useState<WorkerSummary[]>([]);
+  const [inbox, setInbox] = useState<InboxItemWire[]>([]);
+  const [showInbox, setShowInbox] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>(undefined);
+
+  const reload = async (): Promise<void> => {
+    setLoading(true);
+    setError(undefined);
+    try {
+      const l = await api.getSessionLink(sessionId);
+      setLink(l);
+      if (l.role === "supervisor") {
+        const w = await api.listSupervisorWorkers(sessionId);
+        setWorkers(w.workers);
+        const i = await api.listSupervisorInbox(sessionId);
+        setInbox(i.items);
+      } else {
+        setWorkers([]);
+        setInbox([]);
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.code : (err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!orchestrationEnabled) return;
+    void reload();
+    // Poll for live worker state. 4s — fast enough to feel live,
+    // slow enough not to spam the server. Aligns with the cadence
+    // the webhooks deliveries panel uses.
+    const t = setInterval(() => {
+      void reload();
+    }, 4_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orchestrationEnabled, sessionId]);
+
+  if (!orchestrationEnabled) return null;
+
+  const role = link?.role ?? "standalone";
+
+  return (
+    <div className="rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 p-3 text-sm">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 font-medium">
+          <Users size={14} />
+          <span>Orchestration</span>
+          <RoleBadge role={role} />
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              void reload();
+            }}
+            title="Refresh"
+            className="p-1 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+          >
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+          </button>
+          {onClose !== undefined && (
+            <button
+              type="button"
+              onClick={onClose}
+              title="Close"
+              className="p-1 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {error !== undefined && (
+        <div className="mt-2 rounded bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300 px-2 py-1 text-xs">
+          {error}
+        </div>
+      )}
+
+      {role === "standalone" && (
+        <StandaloneControls
+          sessionId={sessionId}
+          busy={busy}
+          setBusy={setBusy}
+          setError={setError}
+          onAfter={reload}
+        />
+      )}
+      {role === "supervisor" && link !== undefined && (
+        <SupervisorControls
+          link={link}
+          workers={workers}
+          inbox={inbox}
+          showInbox={showInbox}
+          setShowInbox={setShowInbox}
+          busy={busy}
+          setBusy={setBusy}
+          setError={setError}
+          onAfter={reload}
+        />
+      )}
+      {role === "worker" && link !== undefined && <WorkerControls link={link} />}
+    </div>
+  );
+}
+
+function RoleBadge({ role }: { role: "supervisor" | "worker" | "standalone" }) {
+  const styles =
+    role === "supervisor"
+      ? "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200"
+      : role === "worker"
+        ? "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200"
+        : "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+  return (
+    <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${styles}`}>
+      {role === "supervisor" ? "Supervisor" : role === "worker" ? "Worker" : "Standalone"}
+    </span>
+  );
+}
+
+function StandaloneControls({
+  sessionId,
+  busy,
+  setBusy,
+  setError,
+  onAfter,
+}: {
+  sessionId: string;
+  busy: boolean;
+  setBusy: (b: boolean) => void;
+  setError: (s: string | undefined) => void;
+  onAfter: () => Promise<void>;
+}) {
+  const onEnable = async (): Promise<void> => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      // Server-side: enable rebuilds the live AgentSession in-place
+      // so the orchestrate_* tools become available immediately. The
+      // SSE connection stays attached — no client-side reconnect
+      // needed, no flicker, no risk of losing a pre-prompt session
+      // to the cold-resume 404 race.
+      await api.enableSupervisor(sessionId);
+      await onAfter();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.code : (err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-2 space-y-2">
+      <p className="text-xs text-zinc-600 dark:text-zinc-400">
+        This session is standalone. Enable supervisor mode to give this session the{" "}
+        <code className="text-xs">orchestrate_*</code> tools — letting it spawn, observe, and
+        coordinate other worker sessions in the same project.
+      </p>
+      <button
+        type="button"
+        onClick={() => {
+          void onEnable();
+        }}
+        disabled={busy}
+        className="rounded bg-violet-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-violet-500 disabled:opacity-50"
+      >
+        {busy ? "Enabling…" : "Enable supervisor mode"}
+      </button>
+      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+        The agent's tool list refreshes immediately — no reload needed.
+      </p>
+    </div>
+  );
+}
+
+function SupervisorControls({
+  link,
+  workers,
+  inbox,
+  showInbox,
+  setShowInbox,
+  busy,
+  setBusy,
+  setError,
+  onAfter,
+}: {
+  link: SessionLink;
+  workers: WorkerSummary[];
+  inbox: InboxItemWire[];
+  showInbox: boolean;
+  setShowInbox: (b: boolean) => void;
+  busy: boolean;
+  setBusy: (b: boolean) => void;
+  setError: (s: string | undefined) => void;
+  onAfter: () => Promise<void>;
+}) {
+  const openSession = useSessionStore((s) => s.setActiveSession);
+
+  const onDisable = async (): Promise<void> => {
+    if (!confirm("Disable supervisor mode? Linked workers become standalone sessions.")) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      // Server-side: disable rebuilds the live AgentSession in-place
+      // so the orchestrate_* tools vanish from its tool surface
+      // without an SSE reconnect.
+      await api.disableSupervisor(link.sessionId);
+      await onAfter();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.code : (err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDetach = async (workerId: string): Promise<void> => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await api.detachWorker(link.sessionId, workerId);
+      await onAfter();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.code : (err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onKill = async (workerId: string): Promise<void> => {
+    if (!confirm(`Kill worker ${workerId.slice(0, 8)}? (Transcript stays on disk.)`)) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await api.killWorker(link.sessionId, workerId);
+      await onAfter();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.code : (err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onResume = async (workerId: string): Promise<void> => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await api.resumeWorker(link.sessionId, workerId);
+      await onAfter();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.code : (err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onClearInbox = async (): Promise<void> => {
+    if (!confirm("Clear inbox history?")) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await api.clearSupervisorInbox(link.sessionId);
+      await onAfter();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.code : (err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pendingCount = link.pendingInbox ?? 0;
+
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-zinc-600 dark:text-zinc-400">
+          {workers.length} worker{workers.length === 1 ? "" : "s"}
+          {pendingCount > 0 ? (
+            <span className="ml-2 rounded bg-amber-200 dark:bg-amber-700/50 text-amber-900 dark:text-amber-100 px-1.5 py-0.5">
+              {pendingCount} pending inbox
+            </span>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            void onDisable();
+          }}
+          disabled={busy}
+          className="rounded text-xs text-zinc-600 dark:text-zinc-400 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50 px-1.5 py-0.5"
+        >
+          Disable supervisor mode
+        </button>
+      </div>
+      {workers.length === 0 ? (
+        <p className="text-xs italic text-zinc-500 dark:text-zinc-400">
+          No workers yet. The agent can spawn one with{" "}
+          <code className="text-xs">orchestrate_spawn_worker</code>.
+        </p>
+      ) : (
+        <ul className="divide-y divide-zinc-200 dark:divide-zinc-800 rounded border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950">
+          {workers.map((w) => (
+            <li key={w.workerId} className="flex items-center gap-2 px-2 py-1.5">
+              <StateDot state={w.state ?? (w.isLive ? "idle" : "cold")} />
+              <button
+                type="button"
+                onClick={() => openSession(w.workerId)}
+                className="flex-1 text-left truncate text-xs hover:underline"
+                title={w.workerId}
+              >
+                <span className="font-medium">{w.name ?? w.workerId.slice(0, 8)}</span>
+                {w.messageCount !== undefined && (
+                  <span className="ml-1 text-zinc-500">({w.messageCount} msgs)</span>
+                )}
+              </button>
+              <div className="flex items-center gap-1">
+                {!w.isLive && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void onResume(w.workerId);
+                    }}
+                    disabled={busy}
+                    className="text-[11px] text-zinc-600 dark:text-zinc-400 hover:text-violet-700 dark:hover:text-violet-300 disabled:opacity-50 px-1 py-0.5"
+                  >
+                    Resume
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    void onDetach(w.workerId);
+                  }}
+                  disabled={busy}
+                  className="text-[11px] text-zinc-600 dark:text-zinc-400 hover:text-amber-700 dark:hover:text-amber-300 disabled:opacity-50 px-1 py-0.5"
+                  title="Detach (worker continues as standalone)"
+                >
+                  Detach
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void onKill(w.workerId);
+                  }}
+                  disabled={busy}
+                  className="text-[11px] text-zinc-600 dark:text-zinc-400 hover:text-red-700 dark:hover:text-red-300 disabled:opacity-50 px-1 py-0.5"
+                  title="Kill (dispose live session; transcript stays on disk)"
+                >
+                  Kill
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <details open={showInbox} onToggle={(e) => setShowInbox(e.currentTarget.open)}>
+        <summary className="cursor-pointer text-xs text-zinc-600 dark:text-zinc-400 select-none">
+          Inbox history ({inbox.length}) {pendingCount > 0 && `— ${pendingCount} pending`}
+        </summary>
+        {inbox.length === 0 ? (
+          <p className="text-xs italic text-zinc-500 dark:text-zinc-400 mt-1">No inbox items.</p>
+        ) : (
+          <div className="mt-1 space-y-1">
+            <ul className="divide-y divide-zinc-200 dark:divide-zinc-800 rounded border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 max-h-48 overflow-auto">
+              {inbox.map((item) => (
+                <InboxRow key={item.id} item={item} />
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={() => {
+                void onClearInbox();
+              }}
+              disabled={busy}
+              className="text-[11px] text-zinc-500 dark:text-zinc-400 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50"
+            >
+              Clear inbox
+            </button>
+          </div>
+        )}
+      </details>
+    </div>
+  );
+}
+
+function InboxRow({ item }: { item: InboxItemWire }) {
+  const label = inboxTypeLabel(item.type);
+  return (
+    <li className="flex items-baseline gap-2 px-2 py-1 text-xs">
+      <span
+        className={`rounded px-1 py-0.5 ${
+          item.delivered
+            ? "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
+            : "bg-amber-200 text-amber-900 dark:bg-amber-700/40 dark:text-amber-200"
+        }`}
+      >
+        {label}
+      </span>
+      <span className="font-mono text-zinc-500" title={item.workerId}>
+        {item.workerId.slice(0, 8)}
+      </span>
+      <span className="text-zinc-500 ml-auto">
+        {new Date(item.occurredAt).toLocaleTimeString()}
+      </span>
+    </li>
+  );
+}
+
+function inboxTypeLabel(t: InboxItemType): string {
+  switch (t) {
+    case "worker.ended":
+      return "ended";
+    case "worker.ask_user":
+      return "asked";
+    case "worker.auto_retry_failed":
+      return "retry failed";
+    case "worker.process_alert":
+      return "process";
+    case "worker.deleted":
+      return "deleted";
+  }
+}
+
+function WorkerControls({ link }: { link: SessionLink }) {
+  const openSession = useSessionStore((s) => s.setActiveSession);
+  const supervisorId = link.supervisorId;
+  if (supervisorId === undefined) return null;
+  return (
+    <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+      Owned by supervisor{" "}
+      <button
+        type="button"
+        onClick={() => openSession(supervisorId)}
+        className="font-mono underline hover:text-violet-700 dark:hover:text-violet-300"
+        title={supervisorId}
+      >
+        {supervisorId.slice(0, 8)}
+      </button>
+      {link.spawnedFrom !== undefined && link.spawnedFrom.mode === "summary" && (
+        <span className="ml-2 italic">(handoff with context summary)</span>
+      )}
+    </div>
+  );
+}
+
+function StateDot({ state }: { state: "streaming" | "idle" | "cold" }) {
+  const cls =
+    state === "streaming"
+      ? "bg-emerald-500 animate-pulse"
+      : state === "idle"
+        ? "bg-sky-500"
+        : "bg-zinc-400";
+  return (
+    <span className={`inline-block h-2 w-2 rounded-full ${cls}`} title={state} aria-label={state} />
+  );
+}
