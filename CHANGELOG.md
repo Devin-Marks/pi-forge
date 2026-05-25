@@ -44,6 +44,12 @@ section. See the "Versions" section of the README for the support window policy.
   8.59.3 → 8.59.4, `@types/node` 25.8.0 → 25.9.1, `@types/react`
   19.2.14 → 19.2.15, `vite` 8.0.13 → 8.0.14, `marked` 18.0.3 → 18.0.4.
   No code-level fallout — typecheck + lint + full test suite clean.
+- **Client `katex` 0.16.47 → 0.17.0**. Used only via the
+  `katex/dist/katex.min.css` import in `ChatMarkdown.tsx` (math
+  rendering itself is done by `rehype-katex@7.0.1`, which still
+  pins its own transitive `katex@0.16.47` for HTML generation).
+  Worth a manual smoke of math-block rendering in chat to confirm
+  the 0.17 CSS still styles 0.16-emitted HTML correctly.
 
 ### Added
 
