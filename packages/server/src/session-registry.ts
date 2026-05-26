@@ -468,6 +468,46 @@ function makeSubscribeHandler(live: LiveSession): () => void {
       }
     }
 
+    // Tools that create new sessions in this project: push a
+    // `session_list_changed` event so the sidebar picks up the new
+    // session without the user reloading. Covers two cases:
+    //
+    //   - pi-subagents `subagent` tool fires on `tool_execution_start`
+    //     because the plugin writes the child .jsonl in the first
+    //     second of the tool call (the run itself can take minutes,
+    //     and waiting until tool_execution_end means the child only
+    //     appears in the sidebar after the entire subagent run
+    //     completes — by which time the user usually already hit
+    //     reload).
+    //   - Same tool name also handled on `tool_execution_end` as a
+    //     race fallback: if the start-side push raced ahead of the
+    //     plugin's .jsonl write, the end-side push picks up the now-
+    //     existing child.
+    //
+    // orchestration's `orchestrate_spawn_worker` pushes
+    // session_list_changed itself from inside execute() — sync with
+    // the actual createSession call, no need to wait for SDK lifecycle
+    // events.
+    const toolEv = event as unknown as { type?: string; toolName?: string };
+    if (
+      (toolEv.type === "tool_execution_start" || toolEv.type === "tool_execution_end") &&
+      toolEv.toolName === "subagent"
+    ) {
+      const refresh = {
+        type: "session_list_changed" as const,
+        reason: toolEv.type === "tool_execution_start" ? "subagent_start" : "subagent_end",
+        projectId: live.projectId,
+      };
+      for (const client of live.clients) {
+        try {
+          client.send(refresh);
+        } catch {
+          // SSE client already gone; safe to ignore — its entry
+          // gets cleaned up on the next event.
+        }
+      }
+    }
+
     // Webhook fan-out. Filters internally for the 3 SDK events
     // it cares about (agent_end, auto_retry_end failures,
     // compaction_end success). Fire-and-forget — webhook
