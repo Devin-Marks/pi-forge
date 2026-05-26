@@ -1,6 +1,6 @@
 # Dependabot config for pi-forge.
 #
-# Three ecosystems, weekly cadence each. The npm entry covers root
+# Three ecosystems, daily cadence each. The npm entry covers root
 # plus every workspace under packages/* — Dependabot's npm support
 # auto-discovers workspace-managed packages, so a single root entry
 # is sufficient (no per-workspace duplication needed).
@@ -22,7 +22,7 @@ updates:
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "daily"
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
@@ -55,7 +55,7 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "daily"
     labels:
       - "dependencies"
       - "github-actions"
@@ -67,7 +67,7 @@ updates:
   - package-ecosystem: "docker"
     directory: "/docker"
     schedule:
-      interval: "weekly"
+      interval: "daily"
     labels:
       - "dependencies"
       - "docker"
