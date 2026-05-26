@@ -75,6 +75,21 @@ section. See the "Versions" section of the README for the support window policy.
   subagents that meant up to several minutes of staleness, and
   for orchestration workers no refresh at all (the toolName check
   only matched `subagent`).
+- **Streaming bubble at the bottom of the chat no longer
+  accumulates text across tool-call boundaries within a turn.**
+  The `streamingTextBySession` buffer used to reset only at
+  `agent_start` and `agent_end` — so when an assistant message
+  ended mid-turn (a tool call about to start), the assistant
+  message moved into the transcript via the post-`message_end`
+  refetch, but the streaming bubble kept its accumulated text.
+  The next assistant message's `text_delta` events then APPENDED
+  onto the previous message's text, so for the rest of the turn
+  the bottom bubble showed
+  `<prior message text> + <currently streaming text>` until
+  `agent_end` finally cleared it. Now `message_end` for an
+  assistant message also drops the streaming buffer (and any
+  in-flight RAF / pendingDeltas so a mid-flight delta can't
+  flush into the now-cleared buffer).
 
 ## [1.3.0] — 2026-05-25
 
