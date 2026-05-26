@@ -15,6 +15,39 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Surface provider errors that previously vanished into a blank
+  assistant turn (or a frozen spinner mid-tool-chain).** Three
+  defects piled up: (1) the client store had two `message_end`
+  handlers; the first refetched messages and returned, leaving the
+  second (which set the error banner) unreachable. A 402 / 401 /
+  5xx from the provider was logged to stderr but never surfaced in
+  the UI. (2) The server's `agent_end` enrichment only forwarded
+  `session.errorMessage`; some failure paths populate
+  `message.errorMessage` on the last assistant message but never
+  promote it to the session, so even after the SSE round-trip the
+  client got an empty `agent_end`. (3) The chat renderer ignored
+  per-message `errorMessage` entirely — so even when a banner did
+  set, the failed turn itself stayed a blank bubble. All three
+  closed:
+  - Merged the two `message_end` branches so the error banner
+    actually sets on `stopReason="error"`.
+  - Added a fallback in `session-registry.ts` that scans the most-
+    recent assistant message for an `errorMessage` when
+    `session.errorMessage` is empty.
+  - Assistant message bubbles now render an inline amber
+    "Provider error:" strip when the message carries
+    `stopReason="error"` + `errorMessage`. Stays visible after the
+    next prompt clears the global banner.
+
+  Repro that surfaced the bugs: an openrouter key with a per-key
+  monthly cap returned `HTTP 402 This request requires more
+  credits` mid-turn; the user saw a blank assistant bubble
+  (single-turn) or a hung spinner (mid-tool-chain) while
+  `agent turn ended with error stopReason` lines piled up in
+  server stderr unanswered.
+
 ## [1.3.0] — 2026-05-25
 
 ### Security

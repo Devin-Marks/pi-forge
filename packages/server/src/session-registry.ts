@@ -286,6 +286,34 @@ function logAgentEvent(level: "info" | "warn", payload: Record<string, unknown>)
   );
 }
 
+/**
+ * Walk the session's messages newest-to-oldest and return the first
+ * assistant message that ended with `stopReason="error"` (capturing
+ * its `errorMessage`). Used by the `agent_end` enrichment as a
+ * fallback when `session.errorMessage` is empty but a provider
+ * failure landed on a message earlier in the turn.
+ *
+ * Provider-error messages have `stopReason === "error"` per the
+ * SDK's openai-completions catch path; we scope the scan to those
+ * to avoid surfacing a stale errorMessage from a previous turn.
+ */
+function findLastAssistantErrorMessage(messages: readonly unknown[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as {
+      role?: string;
+      stopReason?: string;
+      errorMessage?: string;
+    };
+    if (m?.role !== "assistant") continue;
+    if (m.stopReason !== "error") continue;
+    if (typeof m.errorMessage === "string" && m.errorMessage.length > 0) return m.errorMessage;
+    // Found an errored assistant but no message text — stop here
+    // rather than picking up an older one from a previous turn.
+    return undefined;
+  }
+  return undefined;
+}
+
 function makeSubscribeHandler(live: LiveSession): () => void {
   const verbose = process.env.DEBUG_AGENT_EVENTS === "1";
   return live.session.subscribe((event: AgentSessionEvent) => {
@@ -382,13 +410,37 @@ function makeSubscribeHandler(live: LiveSession): () => void {
     // no error banner, and the user sees an empty assistant message.
     let outboundEvent: AgentSessionEvent = event;
     if (e.type === "agent_end") {
-      const errMsg = (live.session as unknown as { errorMessage?: string }).errorMessage;
-      if (errMsg !== undefined && errMsg !== "") {
+      // Primary: session-level `errorMessage` — the SDK's
+      // documented authoritative field. Most failure modes set
+      // this (auth failures, validation, etc.).
+      let errMsg = (live.session as unknown as { errorMessage?: string }).errorMessage;
+      // Fallback: a provider-side failure (openai-completions catch
+      // path, openrouter 4xx, etc.) finalises the assistant message
+      // with `stopReason="error"` and `errorMessage` on the MESSAGE
+      // but does NOT always promote it to `session.errorMessage`.
+      // Without this fallback, agent_end goes out empty, the client
+      // shows neither a banner nor any per-message indicator, and
+      // the user just sees a blank assistant turn (or a frozen
+      // spinner mid-tool-chain). Scan the post-turn messages for the
+      // most-recent assistant with an error and surface that.
+      if (errMsg === undefined || errMsg === "") {
+        const fromMessage = findLastAssistantErrorMessage(live.session.messages);
+        if (fromMessage !== undefined && fromMessage !== "") {
+          errMsg = fromMessage;
+          logAgentEvent("warn", {
+            msg: "agent_end without session.errorMessage — surfacing message-level error",
+            sessionId: live.sessionId,
+            errorMessage: errMsg,
+          });
+        }
+      } else {
         logAgentEvent("warn", {
           msg: "agent_end with session.errorMessage",
           sessionId: live.sessionId,
           errorMessage: errMsg,
         });
+      }
+      if (errMsg !== undefined && errMsg !== "") {
         // Forward a merged event that includes the error detail. Cast
         // through unknown — the SDK's union doesn't declare an
         // errorMessage field on agent_end (it expects callers to read

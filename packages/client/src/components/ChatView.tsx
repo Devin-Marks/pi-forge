@@ -902,6 +902,18 @@ function Message({
     // text block — toolCall and thinking blocks aren't markdown and
     // the toggle would do nothing useful for them.
     const hasTextBlock = content.some((b) => (b as Record<string, unknown>).type === "text");
+    // Provider-side failures (openai-completions catch path, openrouter
+    // 4xx, etc.) finalise the assistant message with `stopReason="error"`
+    // and an `errorMessage`. The session-level banner gets cleared by the
+    // next agent_start, so without an inline indicator the failed turn
+    // would show as a blank bubble with no signal what went wrong. Render
+    // an amber inline strip below the content carrying the SDK's message.
+    const stopReason = (message as { stopReason?: unknown }).stopReason;
+    const errorMessage = (message as { errorMessage?: unknown }).errorMessage;
+    const inlineError =
+      stopReason === "error" && typeof errorMessage === "string" && errorMessage.length > 0
+        ? errorMessage
+        : undefined;
     return (
       <div
         className="message-bubble group rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3"
@@ -925,6 +937,15 @@ function Message({
         <div className="space-y-2 text-sm text-neutral-100">
           {renderAssistantBlocks(content as Record<string, unknown>[], toolResultsById, showRaw)}
         </div>
+        {inlineError !== undefined && (
+          <div
+            className="mt-2 rounded border border-amber-700/40 bg-amber-900/20 px-3 py-2 text-xs text-amber-200 light:border-amber-300 light:bg-amber-50 light:text-amber-800"
+            role="alert"
+          >
+            <span className="font-medium">Provider error: </span>
+            {inlineError}
+          </div>
+        )}
       </div>
     );
   }

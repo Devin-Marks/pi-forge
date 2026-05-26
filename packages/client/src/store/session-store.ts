@@ -894,6 +894,29 @@ function applyEvent(
     // that finalize an assistant message containing a toolCall before
     // any execution event fires).
     scheduleMessagesRefetch(set, sessionId);
+    // openai-completions and a few other provider adapters surface
+    // upstream errors as `message_end` with stopReason="error" rather
+    // than throwing — so it's the only signal we get for several
+    // failure modes (provider 401/402/5xx mid-tool-chain, context-
+    // overflow that pi's auto-compaction couldn't recover from).
+    // Surface the embedded errorMessage as a banner.
+    //
+    // This branch USED to live in its own `if (event.type ===
+    // "message_end")` block lower in this function — which was dead
+    // code because the handler above matched first and returned. The
+    // user-visible symptom was a blank assistant bubble + no banner,
+    // even though the server logged the full error to stderr.
+    if (event.type === "message_end") {
+      const msg = (event as { message?: { stopReason?: unknown; errorMessage?: unknown } }).message;
+      if (msg?.stopReason === "error") {
+        const m = typeof msg.errorMessage === "string" ? msg.errorMessage : "";
+        if (m.length > 0) {
+          set((s) => ({
+            bannerBySession: { ...s.bannerBySession, [sessionId]: `Agent error: ${m}` },
+          }));
+        }
+      }
+    }
     return;
   }
 
@@ -1091,24 +1114,10 @@ function applyEvent(
     }));
     return;
   }
-  if (event.type === "message_end") {
-    // openai-completions and a few other provider adapters surface
-    // upstream errors as message_end with stopReason="error" rather
-    // than throwing — so it's the only signal we get for some
-    // failure modes (notably context-window overflow that pi's
-    // auto-compaction couldn't recover from). Surface the embedded
-    // errorMessage as a banner; otherwise let the event flow through.
-    const msg = (event as { message?: { stopReason?: unknown; errorMessage?: unknown } }).message;
-    if (msg?.stopReason === "error") {
-      const m = typeof msg.errorMessage === "string" ? msg.errorMessage : "";
-      if (m.length > 0) {
-        set((s) => ({
-          bannerBySession: { ...s.bannerBySession, [sessionId]: `Agent error: ${m}` },
-        }));
-      }
-    }
-    return;
-  }
+  // (The former second `message_end` handler that lived here was
+  // unreachable — the earlier `message_end || tool_result` branch
+  // matched first and returned. Its error-surfacing logic has been
+  // folded into that earlier branch.)
 
   // For message_*/tool_*/turn_* events the chat surface in Phase 8 displays
   // the latest authoritative state by re-fetching on agent_end (above).
