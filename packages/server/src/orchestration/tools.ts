@@ -442,6 +442,29 @@ function createSpawnWorker(supervisorId: string): ToolDefinition {
           }) + "\n",
         );
       });
+      // Push a synthetic `session_list_changed` event to the
+      // supervisor's SSE clients so the sidebar picks up the new
+      // worker immediately — without this, the sidebar only refreshes
+      // when the supervisor's enclosing turn ends (potentially many
+      // seconds later, since the supervisor often continues working
+      // after the spawn). The client handles this event by calling
+      // `loadSessionsForProject(projectId)`.
+      const sup = getSession(supervisorId);
+      if (sup !== undefined) {
+        for (const client of sup.clients) {
+          try {
+            client.send({
+              type: "session_list_changed",
+              reason: "spawn_worker",
+              projectId: supLive.projectId,
+              sessionId: worker.sessionId,
+            });
+          } catch {
+            // SSE client dropped — registry's own client cleanup
+            // will remove it on the next event.
+          }
+        }
+      }
       return ok(
         {
           workerId: worker.sessionId,
@@ -462,9 +485,10 @@ function createListWorkers(supervisorId: string): ToolDefinition {
     name: "orchestrate_list_workers",
     label: "List workers",
     description:
-      "Return every worker registered under this supervisor with its " +
-      "current state (live / idle / streaming / cold), last activity " +
-      "timestamp, and message count. Cheap to call repeatedly.",
+      "Survey worker state (live / idle / streaming / cold) + activity. " +
+      "DO NOT poll — worker events push into your inbox, you're woken " +
+      "automatically. Call once before spawning, or when an inbox event " +
+      "needs neighbour-worker context.",
     parameters: Type.Unsafe<Record<string, unknown>>({ type: "object", properties: {} }),
     async execute() {
       interface WorkerRow {
@@ -530,13 +554,10 @@ const readWorkerSchema = {
       minimum: 1,
       maximum: 100,
       description:
-        "How many of the most recent messages to return. Default 1 — " +
-        "the worker's single latest message is enough context for most " +
-        "supervisor decisions (typically the assistant's last turn or the " +
-        "last user-side handoff). Bump this only when one-message context " +
-        "isn't enough — e.g. you need to see the worker's reasoning chain " +
-        "across several turns, or you're auditing a long tool-call sequence. " +
-        "Bigger `limit` burns more of YOUR context window per call.",
+        "Most-recent messages to return. Default 1 — the single latest " +
+        "message is enough for most decisions. Bump only to inspect a " +
+        "multi-turn reasoning chain. Bigger `limit` costs more supervisor " +
+        "context.",
     },
   },
 } as const;
@@ -546,12 +567,11 @@ function createReadWorker(supervisorId: string): ToolDefinition {
     name: "orchestrate_read_worker",
     label: "Read worker transcript",
     description:
-      "Fetch the most recent messages from a worker's transcript. Returns the " +
-      "last N messages newest-last (chronological order, ready to read). " +
-      "Default `limit` is 1: most supervisor decisions only need the worker's " +
-      "latest message. Only bump `limit` when one message doesn't give you " +
-      "enough context. Auto-resumes cold workers from disk so the tool works " +
-      "regardless of whether the worker is currently live.",
+      "Fetch a worker's most recent messages (newest-last). Default `limit` " +
+      "is 1. DO NOT poll waiting for the worker to finish — worker events " +
+      "push into your inbox, you're woken automatically. Call this in " +
+      "REACTION to an inbox event, or when the user asks to inspect a " +
+      "worker. Auto-resumes cold workers.",
     parameters: Type.Unsafe<Record<string, unknown>>(readWorkerSchema),
     async execute(_toolCallId, params) {
       const p = params as { workerId: string; limit?: number };
@@ -801,12 +821,11 @@ function createReadInbox(supervisorId: string): ToolDefinition {
     name: "orchestrate_read_inbox",
     label: "Read inbox",
     description:
-      "Drain pending worker events: turn-ends, ask-user-question requests, " +
-      "auto-retry failures, process alerts, and deletions. Items are " +
-      "returned oldest-first and marked delivered — calling again returns " +
-      "only NEW items unless you also call `orchestrate_list_workers` to " +
-      "re-survey state. Items stay in the audit history (visible in the " +
-      "REST UI) regardless.",
+      "Drain pending worker events (turn-ends, ask-user-question, retry " +
+      "failures, process alerts, deletions), oldest-first. The inbox is " +
+      "PUSH-DRIVEN — you're woken by an `[orchestration]` system message " +
+      "when events arrive, so call this in REACTION to the wake-up, not " +
+      "in a polling loop. Items stay in the audit history after draining.",
     parameters: Type.Unsafe<Record<string, unknown>>({ type: "object", properties: {} }),
     async execute() {
       const items = await drainInbox(supervisorId);

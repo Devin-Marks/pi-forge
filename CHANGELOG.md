@@ -15,6 +15,17 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Changed
+
+- **Orchestration tool descriptions tightened to push supervisors
+  toward the inbox instead of polling.** `orchestrate_list_workers`,
+  `orchestrate_read_worker`, and `orchestrate_read_inbox`
+  descriptions now lead with "DO NOT poll — worker events are
+  push-driven via the inbox, you're woken automatically." The
+  earlier wording invited supervisors to call `list_workers` /
+  `read_worker` in a watcher loop, burning supervisor context for
+  no reason; the inbox wake-up already covers the same need.
+
 ### Fixed
 
 - **Surface provider errors that previously vanished into a blank
@@ -47,6 +58,23 @@ section. See the "Versions" section of the README for the support window policy.
   (single-turn) or a hung spinner (mid-tool-chain) while
   `agent turn ended with error stopReason` lines piled up in
   server stderr unanswered.
+- **Sidebar now picks up new sessions created by the agent without
+  a manual page reload.** Two paths feed a single
+  `session_list_changed` SSE event that the client routes into
+  `loadSessionsForProject`:
+  - pi-subagents `subagent` tool fires the event on
+    `tool_execution_start` (so the child appears in the sidebar
+    immediately, not after the multi-minute subagent run
+    completes) AND on `tool_execution_end` as a race fallback.
+  - `orchestrate_spawn_worker` pushes the same event directly from
+    inside the tool's `execute()`, synchronously with the actual
+    `createSession` call.
+
+  The previous behaviour was to wait for the spawning tool's
+  `tool_execution_end` to fire the refresh client-side; for
+  subagents that meant up to several minutes of staleness, and
+  for orchestration workers no refresh at all (the toolName check
+  only matched `subagent`).
 
 ## [1.3.0] — 2026-05-25
 

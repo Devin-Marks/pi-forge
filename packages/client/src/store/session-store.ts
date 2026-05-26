@@ -866,6 +866,12 @@ function applyEvent(
     // becomes visible immediately (the SDK finalizes the assistant
     // message right before it kicks off tool execution).
     scheduleMessagesRefetch(set, sessionId);
+    // (The session-list refresh for session-creating tools — subagent,
+    // orchestrate_spawn_worker — used to live here as a client-side
+    // toolName check. The server now pushes `session_list_changed`
+    // directly: from session-registry's subscribe handler for subagent,
+    // from inside execute() for orchestrate_spawn_worker. The handler
+    // below routes both into loadSessionsForProject.)
     return;
   }
 
@@ -877,15 +883,19 @@ function applyEvent(
     // bubble) shows up before the next tool fires. Without this the
     // user sees a stretch of "running …" badges with no output.
     scheduleMessagesRefetch(set, sessionId);
-    // pi-subagents: a `subagent` tool call just finished, which
-    // means one or more child session JSONLs were written to disk
-    // under the parent's directory. Refetch the project's session
-    // list so the sidebar picks them up — pi has no native
-    // "child session created" SDK event we can hook into.
-    if (event.toolName === "subagent") {
-      const projectId = findProjectIdForSession(get(), sessionId);
-      if (projectId !== undefined) void get().loadSessionsForProject(projectId);
-    }
+    // (Session-list refresh for session-creating tools is now handled
+    // server-side via `session_list_changed` — see the handler below.)
+    return;
+  }
+
+  if (event.type === "session_list_changed") {
+    // Server-pushed nudge that a session was created (or otherwise
+    // mutated) in a project we're watching. Sent by
+    // `orchestrate_spawn_worker` immediately after creating the
+    // worker so the sidebar updates without waiting for the
+    // supervisor's enclosing turn to finish.
+    const pid = typeof event.projectId === "string" ? event.projectId : undefined;
+    if (pid !== undefined) void get().loadSessionsForProject(pid);
     return;
   }
 
