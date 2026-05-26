@@ -911,13 +911,18 @@ function applyEvent(
     // overflow that pi's auto-compaction couldn't recover from).
     // Surface the embedded errorMessage as a banner.
     //
-    // This branch USED to live in its own `if (event.type ===
-    // "message_end")` block lower in this function — which was dead
-    // code because the handler above matched first and returned. The
-    // user-visible symptom was a blank assistant bubble + no banner,
-    // even though the server logged the full error to stderr.
+    // Also drop the streaming buffer (and any in-flight RAF /
+    // pendingDeltas) when an assistant message_end fires MID-TURN:
+    // the refetch above has just promoted those bytes into a real
+    // message, so leaving them in the streaming bubble shows the
+    // text twice. Worse, the next assistant message's text_delta
+    // events APPEND to the existing buffer, so the bottom bubble
+    // would show "<prior message text> + <currently streaming text>"
+    // until agent_end finally clears it.
     if (event.type === "message_end") {
-      const msg = (event as { message?: { stopReason?: unknown; errorMessage?: unknown } }).message;
+      const msg = (
+        event as { message?: { stopReason?: unknown; errorMessage?: unknown; role?: unknown } }
+      ).message;
       if (msg?.stopReason === "error") {
         const m = typeof msg.errorMessage === "string" ? msg.errorMessage : "";
         if (m.length > 0) {
@@ -925,6 +930,15 @@ function applyEvent(
             bannerBySession: { ...s.bannerBySession, [sessionId]: `Agent error: ${m}` },
           }));
         }
+      }
+      if (msg?.role === "assistant") {
+        const raf = pendingRaf.get(sessionId);
+        if (raf !== undefined) cancelAnimationFrame(raf);
+        pendingRaf.delete(sessionId);
+        pendingDeltas.delete(sessionId);
+        set((s) => ({
+          streamingTextBySession: { ...s.streamingTextBySession, [sessionId]: "" },
+        }));
       }
     }
     return;
