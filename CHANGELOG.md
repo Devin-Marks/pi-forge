@@ -15,6 +15,31 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`set_model_failed` when picking a model from a provider that
+  was enabled AFTER the session was created.** The live
+  `AgentSession`'s `ModelRegistry` is built once at session-create
+  time from a snapshot of `auth.json` + `models.json` and never
+  re-reads either file on its own. The server's `POST
+  /api/v1/sessions/:id/model` route validated the requested model
+  against a *fresh* `liveModelRegistry()` (which passed), but the
+  SDK's `setModel()` then re-validated via
+  `_modelRegistry.hasConfiguredAuth(...)` against its own *frozen*
+  `AuthStorage.data` snapshot — which couldn't see the just-added
+  auth entry — and threw `"No API key for ..."`, surfacing as the
+  `set_model_failed` banner. Now the route reloads both layers in
+  place before the SDK call: `modelRegistry.authStorage.reload()`
+  (re-reads `auth.json` into the in-memory `data` map that
+  `hasAuth` queries) followed by `modelRegistry.refresh()`
+  (re-reads `models.json` + resets API/OAuth provider
+  registrations). `refresh()` alone is insufficient — it
+  intentionally does not touch `AuthStorage`. Both calls mutate
+  in place, so every subsequent SDK use inside this session (turn
+  execution, per-request auth lookup, model picker enumeration)
+  also picks up the new keys — no app restart, no session
+  recreate.
+
 ## [1.3.1] — 2026-05-26
 
 ### Changed

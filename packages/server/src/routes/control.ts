@@ -502,6 +502,30 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
           // undefined so we don't try to restore a phantom snapshot.
         }
         try {
+          // The live AgentSession was created with a ModelRegistry
+          // snapshot of auth.json + models.json at session-create time;
+          // the SDK never re-reads either file on its own. If the user
+          // added a provider/key AFTER this session was created, the
+          // SDK's `setModel` -> `_modelRegistry.hasConfiguredAuth(...)`
+          // check would fail against the stale snapshot even though
+          // our route-level `liveModelRegistry()` validation just
+          // passed (it reads fresh each call).
+          //
+          // TWO reloads are needed, in this order: ModelRegistry's
+          // `refresh()` re-reads models.json + resets API/OAuth
+          // provider registrations, but does NOT touch AuthStorage —
+          // the AuthStorage.data map (what `hasAuth(provider)` queries)
+          // stays frozen at session-create time. Without the explicit
+          // `authStorage.reload()`, refresh() alone closes only half
+          // the staleness gap and `set_model_failed` still fires for
+          // any provider whose key was added post-create.
+          //
+          // Both calls mutate in place, so every subsequent SDK use
+          // inside this session (turn execution, per-request auth
+          // lookup, model picker enumeration) also picks up the new
+          // keys without restarting the session.
+          live.session.modelRegistry.authStorage.reload();
+          live.session.modelRegistry.refresh();
           // Wrap in withTimeout so a hung SDK setModel can't hold the
           // settings lock indefinitely. Without this, a single hung
           // setModel blocks every subsequent PUT /config/settings,
