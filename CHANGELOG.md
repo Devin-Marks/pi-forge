@@ -15,6 +15,8 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.3.1] — 2026-05-26
+
 ### Changed
 
 - **Orchestration tool descriptions tightened to push supervisors
