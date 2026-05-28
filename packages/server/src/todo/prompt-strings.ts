@@ -16,7 +16,8 @@
  * and React UI are independent implementations.
  */
 
-export const DEFAULT_PROMPT_SNIPPET = "Manage a task list only for larger plans with 4+ distinct tasks";
+export const DEFAULT_PROMPT_SNIPPET =
+  "Manage a task list only for larger plans with 4+ distinct tasks";
 
 export const DEFAULT_PROMPT_GUIDELINES: string[] = [
   "Do NOT call `todo` unless the work clearly has more than 3 distinct tasks (4+ tasks). For 1-3 tasks, do the work directly without creating a todo list. Skip it for single trivial tasks and purely conversational requests.",
