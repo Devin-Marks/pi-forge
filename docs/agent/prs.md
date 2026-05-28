@@ -2,6 +2,27 @@
 
 Read this near the end of a session when preparing a PR description, handoff summary, or merge-ready change report.
 
+## Pull Request Title
+
+Use conventional PR naming conventions for the title. Match the commit style used
+by this repo: `<type>(optional-scope): <imperative summary>`.
+
+Common types:
+
+- `feat:` for user-facing features
+- `fix:` for bug fixes
+- `docs:` for documentation-only changes
+- `test:` for test-only changes
+- `refactor:` for behavior-preserving code changes
+- `chore:` for maintenance, release, or tooling work
+
+Keep the summary concise, lowercase after the colon unless it is a proper noun,
+and do not end with a period. Examples:
+
+- `fix: allow dev remote hosts behind proxies`
+- `docs: split agent instructions by topic`
+- `chore(release): v1.3.3`
+
 ## Pull Request Structure
 
 When preparing or describing a PR, use a concise, review-friendly structure with
