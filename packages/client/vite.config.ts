@@ -3,6 +3,24 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
 
+/**
+ * Parse the `VITE_DEV_ALLOWED_HOSTS` env into the shape Vite's
+ * `server.allowedHosts` expects. Returns `undefined` when unset (Vite
+ * falls back to its default allowlist), `true` for `"all"` (disable
+ * the check entirely), or a string[] for a comma-separated list. See
+ * the comment on the `server.allowedHosts` field below for the
+ * security trade-offs of each shape.
+ */
+function parseAllowedHosts(raw: string | undefined): true | string[] | undefined {
+  if (raw === undefined) return undefined;
+  if (raw.trim().toLowerCase() === "all") return true;
+  const entries = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  return entries.length > 0 ? entries : undefined;
+}
+
 export default defineConfig({
   plugins: [
     react(),
@@ -133,6 +151,24 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // `VITE_DEV_ALLOWED_HOSTS` opens the dev server up to reverse-proxy
+    // hostnames that Vite's default `allowedHosts` (localhost + LAN
+    // IPs, the anti-DNS-rebinding allowlist) would otherwise block.
+    // Needed when `npm run dev:remote` is fronted by a proxy serving a
+    // public/internal hostname like `forgetest.example.com` — without
+    // it Vite responds with `Blocked request. This host (...) is not
+    // allowed.` and refuses to load the SPA.
+    //
+    // Three accepted shapes:
+    //   - unset       → use Vite's default allowlist (safest)
+    //   - "all"       → disable the check entirely (dev convenience;
+    //                   ACCEPTS the DNS-rebinding risk — only use on
+    //                   trusted networks)
+    //   - "a.b,c.d"   → comma-separated explicit allowlist; whitespace
+    //                   around entries is trimmed, empties dropped
+    //
+    // Production / built bundle is unaffected — this is dev-server only.
+    allowedHosts: parseAllowedHosts(process.env.VITE_DEV_ALLOWED_HOSTS),
     proxy: {
       "/api": {
         target: "http://localhost:3000",

@@ -18,6 +18,29 @@ no base-URL config. Environment variables are in
 [`docs/configuration.md`](./docs/configuration.md); the Docker-compose path
 is in [`docs/containers.md`](./docs/containers.md).
 
+### Running dev:remote behind a proxy
+
+`npm run dev:remote` exposes Vite on `0.0.0.0` so other devices on
+your LAN can hit it directly by IP. Vite's anti-DNS-rebinding
+allowlist permits `localhost` + LAN-IP requests by default, but
+*blocks* requests whose `Host:` header is a hostname (e.g. a
+reverse-proxied `dev.example.com`) with `Blocked request. This host
+(...) is not allowed.`
+
+Pass extra allowed hosts via `VITE_DEV_ALLOWED_HOSTS`:
+
+```bash
+# Specific hostnames (comma-separated, whitespace-tolerant):
+VITE_DEV_ALLOWED_HOSTS=dev.example.com,staging.example.com npm run dev:remote
+
+# Or disable the check entirely (dev convenience; accepts the
+# DNS-rebinding risk — only use on trusted networks):
+VITE_DEV_ALLOWED_HOSTS=all npm run dev:remote
+```
+
+Unset, the default Vite behaviour stays in effect. Production builds
+are unaffected — this is dev-server only.
+
 ### Native module gotcha (node-pty)
 
 The integrated terminal needs `node-pty`'s prebuilt binary to be
