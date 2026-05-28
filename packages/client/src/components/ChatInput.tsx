@@ -941,6 +941,18 @@ export function ChatInput({ sessionId }: Props) {
   // the call failed; the picker hides itself in that case.
   const [thinkingLevel, setThinkingLevel] = useState<string | undefined>(undefined);
   const [thinkingError, setThinkingError] = useState<string | undefined>(undefined);
+  // The live AgentSession's actual active model, as reported by the
+  // server (`session.model.provider` / `session.model.id`). Used as the
+  // activeModel fallback when the user hasn't set a per-session
+  // override. The settings.json `defaultModel` we fetched above is NOT
+  // a substitute: it's empty when no global default is configured and
+  // can point at a model the registry doesn't know about, both of which
+  // would hide the thinking-level picker even though the SDK
+  // definitely has SOME reasoning-capable model loaded. Undefined while
+  // the initial GET /sessions/:id is in flight or if the call failed.
+  const [activeSessionModel, setActiveSessionModel] = useState<
+    { provider: string; modelId: string } | undefined
+  >(undefined);
 
   useEffect(() => {
     void api
@@ -980,10 +992,11 @@ export function ChatInput({ sessionId }: Props) {
     setModelError(undefined);
     setThinkingError(undefined);
     setThinkingLevel(undefined);
-    // Pull the SDK-persisted thinking level for this session. Same
-    // captured-id pattern as the setModel call below — a slow GET for
-    // session A that resolves after the user switched to B mustn't
-    // overwrite B's thinkingLevel state with A's value.
+    setActiveSessionModel(undefined);
+    // Pull the SDK-persisted thinking level + active model for this
+    // session. Same captured-id pattern as the setModel call below — a
+    // slow GET for session A that resolves after the user switched to
+    // B mustn't overwrite B's state with A's values.
     {
       const callSessionId = sessionId;
       void api
@@ -991,6 +1004,12 @@ export function ChatInput({ sessionId }: Props) {
         .then((summary) => {
           if (callSessionId !== sessionId) return;
           setThinkingLevel(summary.thinkingLevel);
+          if (summary.modelProvider !== undefined && summary.modelId !== undefined) {
+            setActiveSessionModel({
+              provider: summary.modelProvider,
+              modelId: summary.modelId,
+            });
+          }
         })
         .catch(() => {
           // Disk-only or transient — leave thinkingLevel undefined so
@@ -1067,13 +1086,23 @@ export function ChatInput({ sessionId }: Props) {
       // the active level against the new model's capabilities (e.g.
       // picking a non-reasoning model after running on "high" forces
       // the level to "off"). Refetch the summary so the picker
-      // reflects whatever the SDK landed on.
+      // reflects whatever the SDK landed on. Also refresh
+      // activeSessionModel so the lookup-key for the thinking picker
+      // matches the SDK's new state (the optimistic modelChoice we
+      // just set covers this too, but the server-canonical value
+      // keeps both in sync after any clamp / fallback the SDK applies).
       const callSessionId = sessionId;
       void api
         .getSession(callSessionId)
         .then((summary) => {
           if (callSessionId !== sessionId) return;
           setThinkingLevel(summary.thinkingLevel);
+          if (summary.modelProvider !== undefined && summary.modelId !== undefined) {
+            setActiveSessionModel({
+              provider: summary.modelProvider,
+              modelId: summary.modelId,
+            });
+          }
         })
         .catch(() => {
           // Non-fatal: a stale picker is recoverable on next session
@@ -1085,14 +1114,27 @@ export function ChatInput({ sessionId }: Props) {
     }
   };
 
-  // Resolve which model is currently active (per-session override if
-  // set, otherwise the settings.json default) and pull its entry from
-  // the providers listing so we can gate the thinking-level picker on
-  // `reasoning`. Returns undefined while providers/defaultModel are
-  // still loading OR when the active model can't be found in the
-  // listing (e.g. settings.json points at a model that's since been
-  // removed from models.json) — in either case the picker stays
-  // hidden.
+  // Resolve which model the SDK is actually running for this session
+  // and pull its entry from the providers listing so we can gate the
+  // thinking-level picker on `reasoning`. Returns undefined while
+  // providers/activeSessionModel are still loading OR when the active
+  // model can't be found in the listing (e.g. settings.json points at
+  // a removed model and the SDK fell back to a default the registry
+  // doesn't know about) — in either case the picker stays hidden.
+  //
+  // Two sources, in priority order:
+  //   1. modelChoice — per-session override the user just picked.
+  //      Optimistic: takes effect before the setModel round-trip
+  //      completes so the picker doesn't flicker mid-call.
+  //   2. activeSessionModel — server-canonical
+  //      session.model.provider/id, refreshed on session switch and
+  //      after every setModel success.
+  //
+  // settings.json's defaultModel is NOT consulted here — it can be
+  // empty (no global default set) or stale (points at a removed model)
+  // while the SDK is happily running on its own compile-time fallback.
+  // Falling back to it produced the bug where the picker disappeared
+  // for default-model sessions even on reasoning-capable models.
   const activeModel = useMemo(() => {
     if (providers === undefined) return undefined;
     let provider: string;
@@ -1102,19 +1144,15 @@ export function ChatInput({ sessionId }: Props) {
       if (p === undefined) return undefined;
       provider = p;
       modelId = rest.join(":");
-    } else if (
-      defaultModel !== undefined &&
-      defaultModel.provider.length > 0 &&
-      defaultModel.modelId.length > 0
-    ) {
-      provider = defaultModel.provider;
-      modelId = defaultModel.modelId;
+    } else if (activeSessionModel !== undefined) {
+      provider = activeSessionModel.provider;
+      modelId = activeSessionModel.modelId;
     } else {
       return undefined;
     }
     const entry = providers.providers.find((p) => p.provider === provider);
     return entry?.models.find((m) => m.id === modelId);
-  }, [providers, modelChoice, defaultModel]);
+  }, [providers, modelChoice, activeSessionModel]);
 
   const onThinkingLevelChange = async (level: string): Promise<void> => {
     // Optimistic — the SDK clamps so the response may differ; we

@@ -237,6 +237,8 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
             lastActivityAt: forked.lastActivityAt,
             name: forked.session.sessionName,
             thinkingLevel: forked.session.thinkingLevel,
+            modelProvider: forked.session.model?.provider,
+            modelId: forked.session.model?.id,
             messageCount: forked.session.messages.length,
             isStreaming: forked.session.isStreaming,
           }),

@@ -31,6 +31,23 @@ section. See the "Versions" section of the README for the support window policy.
   "Running dev:remote behind a proxy" section walking through the
   options.
 
+### Fixed
+
+- **Inline thinking-level picker no longer disappears when the
+  session is running on the default model.** The picker resolved its
+  "active model" by checking `modelChoice` (per-session override)
+  with a fallback to `settings.json`'s `defaultProvider` /
+  `defaultModel`. That fallback is empty when no global default is
+  configured AND can point at a model the registry no longer knows
+  about — in both cases the SDK is happily running on its own
+  compile-time fallback model, but the client lookup returned
+  `undefined` and the picker hid. Server's `liveSummary` now also
+  emits `modelProvider` + `modelId` from `session.model.provider/id`
+  (alongside the existing `thinkingLevel`); client uses those as the
+  no-override fallback instead of `settings.json`, so the picker
+  reflects the actual live model the SDK has loaded — reasoning or
+  not — regardless of settings-file state.
+
 ## [1.3.2] — 2026-05-27
 
 ### Added

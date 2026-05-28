@@ -54,6 +54,16 @@ export const liveSummarySchema = {
     // the current value requires the replay logic, which is what
     // session-manager does on resume).
     thinkingLevel: { type: "string" },
+    // Live AgentSession's active model identity (`session.model.provider`
+    // and `session.model.id`). The client uses this to resolve the
+    // "what model is this session actually using" question for UI
+    // surfaces like the inline thinking-level picker — without it, the
+    // client could only guess from per-session localStorage override OR
+    // settings.json default, both of which can be empty/stale when the
+    // SDK is running on its compile-time fallback model. Omitted for
+    // disk-only entries (no live session, no active model).
+    modelProvider: { type: "string" },
+    modelId: { type: "string" },
   },
 } as const;
 
@@ -76,6 +86,12 @@ export function liveSummaryBody(args: {
   isStreaming: boolean;
   isLive?: boolean;
   thinkingLevel?: string;
+  // `string | undefined` (not just `?: string`) so callers can pass
+  // `session.model?.provider` directly without an upstream guard —
+  // exactOptionalPropertyTypes rejects an explicit `undefined` against a
+  // bare optional field. Body skips the emit when undefined either way.
+  modelProvider?: string | undefined;
+  modelId?: string | undefined;
 }): Record<string, unknown> {
   const out: Record<string, unknown> = {
     sessionId: args.sessionId,
@@ -89,5 +105,7 @@ export function liveSummaryBody(args: {
   };
   if (args.name !== undefined) out.name = args.name;
   if (args.thinkingLevel !== undefined) out.thinkingLevel = args.thinkingLevel;
+  if (args.modelProvider !== undefined) out.modelProvider = args.modelProvider;
+  if (args.modelId !== undefined) out.modelId = args.modelId;
   return out;
 }

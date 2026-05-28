@@ -206,6 +206,8 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
           messageCount: live.session.messages.length,
           isStreaming: live.session.isStreaming,
           thinkingLevel: live.session.thinkingLevel,
+          modelProvider: live.session.model?.provider,
+          modelId: live.session.model?.id,
         }),
       );
     },
@@ -243,6 +245,8 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
           messageCount: live.session.messages.length,
           isStreaming: live.session.isStreaming,
           thinkingLevel: live.session.thinkingLevel,
+          modelProvider: live.session.model?.provider,
+          modelId: live.session.model?.id,
         });
       }
       const loc = await findSessionLocation(req.params.id);
@@ -758,6 +762,8 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
         messageCount: live.session.messages.length,
         isStreaming: live.session.isStreaming,
         thinkingLevel: live.session.thinkingLevel,
+        modelProvider: live.session.model?.provider,
+        modelId: live.session.model?.id,
       });
     },
   );

@@ -329,6 +329,18 @@ export interface SessionSummary {
    * want the discriminated union should narrow at use site.
    */
   thinkingLevel?: string;
+  /**
+   * Active model identity (`session.model.provider` / `session.model.id`)
+   * on the live AgentSession. Used by the chat-input thinking-level
+   * picker to resolve "what model is this session actually using" when
+   * the user has no per-session override — without it, the client
+   * would fall back to settings.json's defaultProvider/defaultModel,
+   * which can be empty when the SDK is running on its own compile-time
+   * default and would hide the thinking picker. Only set for live
+   * sessions.
+   */
+  modelProvider?: string;
+  modelId?: string;
 }
 
 export type SkillOverrideState = "enabled" | "disabled";
