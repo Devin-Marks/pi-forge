@@ -66,8 +66,6 @@ export interface SettingsJson {
   defaultProvider?: string;
   defaultModel?: string;
   defaultThinkingLevel?: string;
-  steeringMode?: "all" | "one-at-a-time";
-  followUpMode?: "all" | "one-at-a-time";
   skills?: string[];
   /** Pi's prompt-pattern overrides — same `!name`/`+name`/`-name` grammar as `skills`. */
   prompts?: string[];

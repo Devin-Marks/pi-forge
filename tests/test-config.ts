@@ -233,7 +233,6 @@ async function main(): Promise<void> {
       const update = await jsend(base, "PUT", "/api/v1/config/settings", {
         defaultProvider: "anthropic",
         defaultModel: "claude-opus-4-5",
-        steeringMode: "all",
       });
       assert("PUT /config/settings → 200", update.status === 200);
       const merged = update.body as { defaultProvider: string; defaultModel: string };

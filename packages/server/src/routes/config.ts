@@ -69,8 +69,6 @@ const settingsSchema = {
     defaultProvider: { type: ["string", "null"] },
     defaultModel: { type: ["string", "null"] },
     defaultThinkingLevel: { type: ["string", "null"] },
-    steeringMode: { type: ["string", "null"] },
-    followUpMode: { type: ["string", "null"] },
     skills: { type: ["array", "null"], items: { type: "string" } },
     enableSkillCommands: { type: ["boolean", "null"] },
   },
