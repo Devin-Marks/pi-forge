@@ -100,6 +100,27 @@ interface ToolParams {
   logWatches?: LogWatch[];
 }
 
+const POLL_SUPPRESSION_MS = 15_000;
+
+interface PollObservation {
+  at: number;
+  signature: string;
+}
+
+const pollObservations = new Map<string, PollObservation>();
+
+function shouldSuppressPoll(key: string, signature: string, now = Date.now()): boolean {
+  const prior = pollObservations.get(key);
+  pollObservations.set(key, { at: now, signature });
+  return (
+    prior !== undefined && prior.signature === signature && now - prior.at < POLL_SUPPRESSION_MS
+  );
+}
+
+function pollingSuppressedMessage(action: "list" | "output"): string {
+  return `Polling suppressed: process.${action} was called again while live process state/output had not changed. Do not call process.${action} repeatedly to wait; continue other work or rely on alertOnSuccess / alertOnFailure / logWatches notifications.`;
+}
+
 function validateLogWatches(watches: LogWatch[] | undefined): string | null {
   if (watches === undefined) return null;
   if (!Array.isArray(watches)) return "Invalid parameter: logWatches must be an array";
@@ -201,6 +222,14 @@ function executeStart(sessionId: string, workspacePath: string, p: ToolParams): 
 
 function executeList(sessionId: string): ExecuteResult {
   const processes = processManager.list(sessionId);
+  const liveSignature = processes
+    .filter((p) => p.endTime === null)
+    .map((p) => `${p.id}:${p.status}`)
+    .sort()
+    .join("|");
+  if (liveSignature.length > 0 && shouldSuppressPoll(`${sessionId}:list`, liveSignature)) {
+    return err("list", pollingSuppressedMessage("list"));
+  }
   return ok({
     action: "list",
     success: true,
@@ -217,6 +246,16 @@ function executeOutput(sessionId: string, p: ToolParams): ExecuteResult {
   if (out === undefined) return err("output", `Process not found: ${p.id}`);
   const stdoutTail = out.stdout.slice(Math.max(0, out.stdout.length - 50)).join("\n");
   const stderrTail = out.stderr.slice(Math.max(0, out.stderr.length - 50)).join("\n");
+  if (
+    out.status === "running" ||
+    out.status === "terminating" ||
+    out.status === "terminate_timeout"
+  ) {
+    const signature = `${out.status}:${out.stdout.length}:${out.stderr.length}:${stdoutTail}:${stderrTail}`;
+    if (shouldSuppressPoll(`${sessionId}:output:${p.id}`, signature)) {
+      return err("output", pollingSuppressedMessage("output"));
+    }
+  }
   const parts = [`Status: ${out.status}`];
   if (stdoutTail.length > 0) parts.push("--- stdout ---", stdoutTail);
   if (stderrTail.length > 0) parts.push("--- stderr ---", stderrTail);

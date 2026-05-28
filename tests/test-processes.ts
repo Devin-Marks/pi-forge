@@ -404,6 +404,25 @@ async function main(): Promise<void> {
       assert("start sleeper → running", info?.status === "running");
     }
 
+    // -------- repeated live polling is suppressed --------
+    {
+      const first = await call({ action: "output", id: p2Id });
+      const second = await call({ action: "output", id: p2Id });
+      assert("first live output poll → success", first.details.success === true);
+      assert("repeated live output poll → suppressed", second.details.success === false);
+      assert(
+        "  suppression message discourages polling",
+        typeof second.details.message === "string" &&
+          second.details.message.includes("Polling suppressed"),
+      );
+    }
+    {
+      const first = await call({ action: "list" });
+      const second = await call({ action: "list" });
+      assert("first live list poll → success", first.details.success === true);
+      assert("repeated live list poll → suppressed", second.details.success === false);
+    }
+
     // -------- kill the sleeper --------
     {
       const r = await call({ action: "kill", id: p2Id });
