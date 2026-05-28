@@ -41,6 +41,7 @@ import {
   initOrchestrationProcessesBridge,
 } from "./orchestration/init.js";
 import { disposeAllSessions } from "./session-registry.js";
+import { cleanupArchivedSessions } from "./session-archive.js";
 import { disposeAllPtys, installPtyExitHandler } from "./pty-manager.js";
 import { logSecretHygieneState } from "./agent-resource-loader.js";
 
@@ -124,6 +125,13 @@ export async function buildServer(): Promise<FastifyInstance> {
     // bodyLimit further without revisiting `parseMultipart` to stream
     // attachments to disk instead of buffering.
     bodyLimit: 100 * 1024 * 1024,
+  });
+
+  // Purge archived sessions whose 7-day retention window has elapsed.
+  // Best-effort: cleanup failures should not prevent the server from
+  // starting, but they should be visible in logs.
+  cleanupArchivedSessions().catch((err: unknown) => {
+    fastify.log.warn({ err }, "archived session cleanup failed");
   });
 
   // Install the PTY exit handler — was previously fired at module-load

@@ -773,18 +773,15 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
     {
       schema: {
         description:
-          "Dispose the live session AND delete the on-disk JSONL (plus " +
-          "any pi-subagents child JSONLs nested under it). Always destructive " +
-          "— matches the UI's expectation that 'delete' means the session is " +
-          "gone from disk and the sidebar.\n" +
-          "  - live → dispose AND delete the JSONL → 204\n" +
-          "  - cold → delete the JSONL → 204\n" +
+          "Dispose the live session and archive the on-disk JSONL (plus " +
+          "any pi-subagents child JSONLs nested under it) for 7 days. The " +
+          "session disappears from the sidebar immediately, but the files are " +
+          "kept in the server-side archive until cleanup purges them.\n" +
+          "  - live → dispose AND archive the JSONL → 204\n" +
+          "  - cold → archive the JSONL → 204\n" +
           "  - not found anywhere → 404\n" +
-          "Earlier versions of this route accepted a `?hard=0|1` query " +
-          "param to opt into JSONL deletion. The non-destructive default was " +
-          "vestigial (the UI always passed `hard=1`) and confusing for " +
-          "programmatic clients, so v1.3.0 dropped the param and made hard " +
-          "delete the only behavior.",
+          "There is intentionally no browser UI for immediate permanent " +
+          "delete; cleanup removes archived sessions after the retention window.",
         tags: ["sessions"],
         params: {
           type: "object",
@@ -804,10 +801,9 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
       // mid-flow. Used for the session_deleted webhook payload.
       const projectIdForWebhook = await findProjectIdForSession(req.params.id);
       const wasLive = await disposeSession(req.params.id);
-      // Always hard-delete: dispose (above) + remove JSONL (below).
-      // After dispose, the registry no longer has the entry;
-      // deleteColdSession's "live" guard doesn't trip on the ordinary
-      // case.
+      // Always soft-delete: dispose (above) + move JSONL into the 7-day
+      // archive (below). After dispose, the registry no longer has the entry;
+      // deleteColdSession's "live" guard doesn't trip on the ordinary case.
       let r: "deleted" | "live" | "not_found";
       try {
         r = await deleteColdSession(req.params.id);
@@ -833,7 +829,7 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
       if (r === "live") {
         // Race: another client resumed the session between our
         // dispose and the cold-delete file lookup. The user asked
-        // for hard delete; honor that by retrying once.
+        // to delete/archive it; honor that by retrying once.
         // (As of the tombstone fix in session-registry, this path is
         // very rare — disposeSession sets a 1.5s no-revive window
         // that resumeSession enforces. The retry stays as defense

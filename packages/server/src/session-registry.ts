@@ -1,4 +1,4 @@
-import { mkdir, readdir, rm } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import {
   AgentSession,
@@ -35,6 +35,7 @@ import { isSupervisor } from "./orchestration/store.js";
 import { createOrchestrationTools } from "./orchestration/tools.js";
 import { bridgeWorkerAgentEvent } from "./orchestration/event-bridge.js";
 import { notifySupervisorDisposed, notifySupervisorIdle } from "./orchestration/inbox.js";
+import { archiveSessionFiles } from "./session-archive.js";
 
 /**
  * Minimal SSE client contract used by the registry to fan out events.
@@ -871,10 +872,10 @@ export async function resumeSession(
 }
 
 /**
- * Delete a cold (on-disk-only) session's JSONL file from disk. Refuses
- * if the session is currently live in the registry — the caller should
- * dispose first. Returns:
- *   - "deleted" when the file was found and removed.
+ * Soft-delete a cold (on-disk-only) session by moving its JSONL into the
+ * 7-day archive. Refuses if the session is currently live in the registry —
+ * the caller should dispose first. Returns:
+ *   - "deleted" when the file was found and archived.
  *   - "live" when the session is in the registry (caller must dispose
  *      first; we don't auto-dispose because that would race the SSE
  *      clients with no chance to close cleanly).
@@ -902,59 +903,39 @@ export async function deleteColdSession(
     }
     const match = infos.find((s) => s.sessionId === sessionId);
     if (match !== undefined) {
-      try {
-        await rm(match.path, { force: true });
-      } catch (err) {
-        // ENOENT (vanished mid-flight) is fine — collapse to
-        // "deleted" since the file is now gone, which is what the
-        // caller asked for. Any other error (permissions, IO) is a
-        // real failure and should NOT silently look like
-        // "not_found" to the operator. Surface via thrown so the
-        // route can map to 500.
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code === "ENOENT") return "deleted";
-        throw err;
-      }
-      // Cascade-delete the pi-subagents sibling directory if this was
-      // a top-level parent session. The plugin's
-      // `getSubagentSessionRoot(parentSessionFile)` lays children at
-      // `<dirname(parentFile)>/<basename(parentFile, ".jsonl")>/...`,
-      // so we mirror that path and `rm -rf` it. Without this, deleting
-      // a parent leaves its child sub-agent JSONLs behind as
-      // sidebar orphans.
-      //
-      // Skipped for sub-agent CHILDREN — they don't have a sibling
-      // dir of their own (they live UNDER one). The project-scoped
-      // `subagent-artifacts/` dir is intentionally untouched: it's
-      // shared across every parent session in the project, not
-      // per-session, so blowing it away on single-session delete
-      // would clobber unrelated sessions' artifacts.
+      let siblingDir: string | undefined;
+      // Archive the pi-subagents sibling directory if this was a top-level
+      // parent session. The plugin's `getSubagentSessionRoot(parentSessionFile)`
+      // lays children at `<dirname(parentFile)>/<basename(parentFile, ".jsonl")>/...`.
+      // Moving the directory with the parent keeps the archive self-contained and
+      // removes child sessions from live discovery immediately.
       if (match.parentSessionId === undefined) {
         const stem = basename(match.path, ".jsonl");
-        const siblingDir = join(dirname(match.path), stem);
-        // Dispose any LIVE children before removing their JSONLs.
-        // `discoverSessionsOnDisk` populated `infos` with every child
-        // under this parent (their `parentSessionId` matches our
-        // `sessionId`). If a child was opened in the UI it now has a
-        // LiveSession entry in the registry; rm-ing its JSONL out from
-        // under it leaves a zombie session pointing at a deleted file
-        // and any SSE clients attached to it keep firing events that
-        // can't be persisted. Dispose in parallel — `disposeSession`
-        // awaits a per-session abort with a 5-second ceiling, so a
-        // sequential loop on N live children would block the delete
-        // request for up to 5N seconds.
+        siblingDir = join(dirname(match.path), stem);
+        // Dispose any LIVE children before moving their JSONLs out from under
+        // them. Otherwise they become zombie sessions pointing at archived files.
         const liveChildIds = infos
           .filter((s) => s.parentSessionId === sessionId && registry.has(s.sessionId))
           .map((s) => s.sessionId);
         if (liveChildIds.length > 0) {
           await Promise.all(liveChildIds.map((id) => disposeSession(id)));
         }
-        // force: true makes ENOENT silent; recursive: true clears the
-        // run/runId/run-N tree the plugin nests under there. Failures
-        // for any other reason (perms, EBUSY) are swallowed — the
-        // primary delete already succeeded and the user-facing op is
-        // "session is gone."
-        await rm(siblingDir, { recursive: true, force: true }).catch(() => undefined);
+      }
+      try {
+        await archiveSessionFiles({
+          sessionId,
+          projectId: project.id,
+          sessionPath: match.path,
+          ...(siblingDir !== undefined ? { subagentDir: siblingDir } : {}),
+        });
+      } catch (err) {
+        // ENOENT (vanished mid-flight) is fine — collapse to "deleted" since
+        // the file is now gone from live discovery, which is what the caller
+        // asked for. Any other error (permissions, IO) is a real failure and
+        // should NOT silently look like "not_found" to the operator.
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") return "deleted";
+        throw err;
       }
       return "deleted";
     }
