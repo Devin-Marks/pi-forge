@@ -456,14 +456,15 @@ export function ChatView({ sessionId }: Props) {
               const latestCard =
                 compactions.length > 0 ? compactions[compactions.length - 1] : undefined;
               const keptWindowEnd = latestCard?.insertBeforeIndex ?? 0;
-              messages.forEach((m, i) => {
+              for (let i = 0; i < messages.length; i++) {
+                const m = messages[i]!;
                 renderCardsAt(i);
                 if (
                   m.role === "toolResult" &&
                   typeof m.toolCallId === "string" &&
                   pairedIds.has(m.toolCallId)
                 ) {
-                  return; // rendered inline next to its toolCall
+                  continue; // rendered inline next to its toolCall
                 }
                 // Hide the SDK-synthesized compaction summary message
                 // (role: "compactionSummary"). The same summary text
@@ -471,16 +472,50 @@ export function ChatView({ sessionId }: Props) {
                 // disclosure body, so showing it as a top-of-chat
                 // bubble would just duplicate the content under an
                 // "unknown message" fallback.
-                if (m.role === "compactionSummary") return;
+                if (m.role === "compactionSummary") continue;
                 // Kept-window suppression — see the comment block
                 // above for rationale and index ranges.
-                if (latestCard !== undefined && i >= 1 && i < keptWindowEnd) return;
+                if (latestCard !== undefined && i >= 1 && i < keptWindowEnd) continue;
+
+                const firstBatch = batchableToolEntriesFromMessage(m, toolResultsById);
+                if (firstBatch !== undefined && countToolBatchCalls(firstBatch) === 1) {
+                  const batch = [...firstBatch];
+                  let j = i + 1;
+                  while (j < messages.length && countToolBatchCalls(batch) < MAX_TOOL_BATCH_SIZE) {
+                    const next = messages[j]!;
+                    if (
+                      next.role === "toolResult" &&
+                      typeof next.toolCallId === "string" &&
+                      pairedIds.has(next.toolCallId)
+                    ) {
+                      renderCardsAt(j);
+                      j += 1;
+                      continue;
+                    }
+                    if (next.role === "compactionSummary") break;
+                    if (latestCard !== undefined && j >= 1 && j < keptWindowEnd) break;
+                    const nextBatch = batchableToolEntriesFromMessage(next, toolResultsById);
+                    if (nextBatch === undefined || countToolBatchCalls(nextBatch) !== 1) break;
+                    batch.push(...nextBatch);
+                    j += 1;
+                  }
+                  if (batch.length > 1) {
+                    out.push(
+                      <div key={`tool-batch-${i}`} data-message-index={i}>
+                        <ToolCallBatchCard entries={batch} />
+                      </div>,
+                    );
+                    i = j - 1;
+                    continue;
+                  }
+                }
+
                 out.push(
                   <div key={i} data-message-index={i}>
                     <Message message={m} toolResultsById={toolResultsById} />
                   </div>,
                 );
-              });
+              }
               // Trailing cards (insertBeforeIndex === messages.length)
               // — the entire current context was archived but no
               // messages have been pushed since. Rare; render at the
@@ -993,17 +1028,17 @@ function Message({
 
 /**
  * Render an assistant message's content array, collapsing runs of
- * consecutive `todo` toolCall blocks into a single batched card.
+ * consecutive low-noise toolCall blocks into a single batched card.
  *
- * Motivation: a single planning turn often fires 5+ `todo create`
- * calls back-to-back, and each one would otherwise render as its
- * own bordered card — eating vertical space with redundant info
- * (every todo result carries the full state, so only the last one
- * is informative; the rest are intermediate steps).
+ * Motivation: exploratory turns often fire several `read` / `grep` /
+ * `find` / `ls` / `process` / `todo` calls back-to-back, and each one
+ * would otherwise render as its own bordered card. The collapsed batch
+ * preserves chronology and auditability while making the default chat
+ * timeline much shorter; clicking the batch reveals each full tool card.
  *
- * Non-todo blocks render unchanged via the normal AssistantBlock
- * path. Mixed runs (text + todo + bash) stay in original order
- * because grouping only happens for adjacent todo blocks.
+ * High-signal or potentially destructive tools (`edit`, `write`) render
+ * individually. Mixed runs separated by assistant text stay in original
+ * order because grouping only happens for adjacent batchable tool calls.
  */
 function renderAssistantBlocks(
   content: Record<string, unknown>[],
@@ -1014,24 +1049,35 @@ function renderAssistantBlocks(
   let i = 0;
   while (i < content.length) {
     const block = content[i]!;
-    if (block.type === "toolCall" && block.name === "todo") {
-      // Greedy: pull every adjacent todo toolCall into the same batch.
+    if (isBatchableToolCall(block)) {
+      // Greedy: pull every adjacent batchable toolCall into the same compact card.
       const start = i;
-      const batch: { block: Record<string, unknown>; result: AgentMessageLike | undefined }[] = [];
-      while (i < content.length) {
+      const batch: ToolBatchEntry[] = [];
+      while (i < content.length && countToolBatchCalls(batch) < MAX_TOOL_BATCH_SIZE) {
         const b = content[i];
-        if (b?.type !== "toolCall" || b.name !== "todo") break;
+        if (b === undefined) break;
+        if (isToolBatchThinkingBlock(b)) {
+          batch.push({ kind: "thinking", block: b });
+          i += 1;
+          continue;
+        }
+        if (isToolBatchWhitespaceBlock(b)) {
+          i += 1;
+          continue;
+        }
+        if (!isBatchableToolCall(b)) break;
         const id = typeof b.id === "string" ? b.id : undefined;
         const r = id !== undefined ? toolResultsById?.get(id) : undefined;
-        batch.push({ block: b, result: r });
+        batch.push({ kind: "tool", block: b, result: r });
         i += 1;
       }
-      if (batch.length === 1) {
+      if (countToolBatchCalls(batch) === 1) {
         // Single call — render via the standard ToolCallEntry path.
-        const only = batch[0]!;
-        out.push(<ToolCallEntry key={start} block={only.block} result={only.result} />);
+        const only = batch.find((entry) => entry.kind === "tool");
+        if (only !== undefined)
+          out.push(<ToolCallEntry key={start} block={only.block} result={only.result} />);
       } else {
-        out.push(<TodoBatchCard key={`todo-batch-${start}`} entries={batch} />);
+        out.push(<ToolCallBatchCard key={`tool-batch-${start}`} entries={batch} />);
       }
       continue;
     }
@@ -1047,46 +1093,121 @@ function renderAssistantBlocks(
   return out;
 }
 
-/**
- * Compact single-card rendering for a run of N consecutive `todo`
- * tool calls in one assistant message. Each call's one-line result
- * text becomes a row; the latest result's task count is the
- * headline. Expanded view shows the full output of each call.
- */
-function TodoBatchCard({
-  entries,
-}: {
-  entries: { block: Record<string, unknown>; result: AgentMessageLike | undefined }[];
-}) {
-  const lastWithResult = [...entries].reverse().find((e) => e.result !== undefined);
-  const lastDetails =
-    (lastWithResult?.result?.details as { tasks?: unknown; nextId?: unknown } | undefined) ??
-    undefined;
-  const taskCount = Array.isArray(lastDetails?.tasks) ? lastDetails.tasks.length : 0;
-  const inFlight = entries.filter((e) => e.result === undefined).length;
-  const errored = entries.some((e) => e.result?.isError === true);
-  const lines = entries.map((e) => {
-    const content = Array.isArray(e.result?.content) ? e.result.content : [];
-    const first = content.find((c): c is { type: "text"; text: string } => {
-      const o = c as { type?: unknown; text?: unknown };
-      return o.type === "text" && typeof o.text === "string";
+const MAX_TOOL_BATCH_SIZE = 10;
+const BATCHABLE_TOOL_NAMES = new Set(["read", "grep", "find", "ls", "todo", "process", "bash"]);
+
+type ToolBatchEntry =
+  | { kind: "tool"; block: Record<string, unknown>; result: AgentMessageLike | undefined }
+  | { kind: "thinking"; block: Record<string, unknown> };
+
+function isBatchableToolCall(block: Record<string, unknown> | undefined): boolean {
+  return block?.type === "toolCall" && BATCHABLE_TOOL_NAMES.has(String(block.name ?? ""));
+}
+
+function isToolBatchThinkingBlock(block: Record<string, unknown> | undefined): boolean {
+  return block?.type === "thinking";
+}
+
+function isToolBatchWhitespaceBlock(block: Record<string, unknown> | undefined): boolean {
+  return block?.type === "text" && typeof block.text === "string" && block.text.trim().length === 0;
+}
+
+function countToolBatchCalls(entries: ToolBatchEntry[]): number {
+  return entries.filter((entry) => entry.kind === "tool").length;
+}
+
+function batchableToolEntriesFromMessage(
+  message: AgentMessageLike,
+  toolResultsById: Map<string, AgentMessageLike> | undefined,
+): ToolBatchEntry[] | undefined {
+  if (message.role !== "assistant" || !Array.isArray(message.content)) return undefined;
+  const entries: ToolBatchEntry[] = [];
+  for (const block of message.content as Record<string, unknown>[]) {
+    if (isToolBatchThinkingBlock(block)) {
+      entries.push({ kind: "thinking", block });
+      continue;
+    }
+    if (isToolBatchWhitespaceBlock(block)) continue;
+    if (!isBatchableToolCall(block)) return undefined;
+    const id = typeof block.id === "string" ? block.id : undefined;
+    entries.push({
+      kind: "tool",
+      block,
+      result: id !== undefined ? toolResultsById?.get(id) : undefined,
     });
-    return first?.text ?? "(no output)";
-  });
+  }
+  return countToolBatchCalls(entries) > 0 ? entries : undefined;
+}
+
+function toolPreviewFromArgs(name: string, args: unknown): string | undefined {
+  const argsObj = isObjectShape(args) ? args : undefined;
+  if (name === "bash") {
+    return typeof argsObj?.command === "string" ? argsObj.command : undefined;
+  }
+  if (name === "process") {
+    const action = typeof argsObj?.action === "string" ? argsObj.action : undefined;
+    const procName = typeof argsObj?.name === "string" ? argsObj.name : undefined;
+    const command = typeof argsObj?.command === "string" ? argsObj.command : undefined;
+    return [action, procName ?? command].filter(Boolean).join(" ") || undefined;
+  }
+  if (name === "todo") {
+    const action = typeof argsObj?.action === "string" ? argsObj.action : undefined;
+    const subject = typeof argsObj?.subject === "string" ? argsObj.subject : undefined;
+    return [action, subject].filter(Boolean).join(" ") || undefined;
+  }
+  if (
+    (name === "read" || name === "grep" || name === "find" || name === "ls") &&
+    argsObj !== undefined
+  ) {
+    const path = typeof argsObj.path === "string" ? argsObj.path : undefined;
+    const pattern = typeof argsObj.pattern === "string" ? argsObj.pattern : undefined;
+    return path ?? pattern;
+  }
+  return undefined;
+}
+
+/**
+ * Compact single-card rendering for a run of consecutive low-noise tool calls.
+ * The summary takes one row; expanding reveals each full ToolCallEntry so no
+ * input/output detail is lost.
+ */
+function ToolCallBatchCard({ entries }: { entries: ToolBatchEntry[] }) {
+  const toolEntries = entries.filter((entry) => entry.kind === "tool");
+  const toolCount = toolEntries.length;
+  const inFlight = toolEntries.filter((e) => e.result === undefined).length;
+  const errored = toolEntries.some((e) => e.result?.isError === true);
+  const counts = new Map<string, number>();
+  for (const e of toolEntries) {
+    const name = String(e.block.name ?? "tool");
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  const countSummary = [...counts].map(([name, count]) => `${name} ×${count}`).join(" · ");
+  const previews = toolEntries
+    .map((e) => {
+      const name = String(e.block.name ?? "tool");
+      const args = e.block.input ?? e.block.arguments ?? {};
+      const preview = toolPreviewFromArgs(name, args);
+      return preview === undefined ? name : `${name}: ${preview}`;
+    })
+    .slice(0, 3);
   return (
     <details className="group rounded border border-neutral-800 bg-neutral-950 text-xs">
       <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-neutral-300">
         <span className="flex min-w-0 items-baseline gap-2">
           <span className="text-neutral-500">→</span>
-          <span className="font-mono">todo</span>
+          <span className="font-mono">tools</span>
           <span className="text-neutral-500">
-            ×{entries.length} {entries.length === 1 ? "call" : "calls"}
+            ×{toolCount} {toolCount === 1 ? "call" : "calls"}
           </span>
-          <span className="ml-2 truncate text-neutral-400">
-            {taskCount === 0
-              ? "no tasks"
-              : `${taskCount} ${taskCount === 1 ? "task" : "tasks"} after batch`}
+          <span className="truncate text-neutral-400" title={countSummary}>
+            {countSummary}
           </span>
+          {previews.length > 0 && (
+            <span className="ml-2 truncate font-mono text-[10px] text-neutral-500">
+              {previews.join(" · ")}
+              {toolCount > previews.length ? " · …" : ""}
+            </span>
+          )}
         </span>
         <div className="flex shrink-0 items-center gap-1">
           {inFlight > 0 && (
@@ -1101,13 +1222,14 @@ function TodoBatchCard({
           )}
         </div>
       </summary>
-      <div className="space-y-1 border-t border-neutral-800/60 px-3 py-2 font-mono text-[11px] text-neutral-400">
-        {lines.map((line, j) => (
-          <div key={j} className="flex items-baseline gap-2">
-            <span className="shrink-0 text-neutral-600">#{j + 1}</span>
-            <span className="whitespace-pre-wrap break-words text-neutral-300">{line}</span>
-          </div>
-        ))}
+      <div className="space-y-2 border-t border-neutral-800/60 px-3 py-2">
+        {entries.map((entry, j) =>
+          entry.kind === "thinking" ? (
+            <AssistantBlock key={j} block={entry.block} />
+          ) : (
+            <ToolCallEntry key={j} block={entry.block} result={entry.result} />
+          ),
+        )}
       </div>
     </details>
   );
