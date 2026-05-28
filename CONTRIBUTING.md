@@ -9,6 +9,7 @@ pull request that has a good chance of landing quickly.
 git clone https://github.com/<your-fork>/pi-forge.git
 cd pi-forge
 npm install
+npm rebuild node-pty # rebuild native PTY binding for your local Node/runtime
 npm run dev          # server on :3000, client on :5173
 ```
 
@@ -48,9 +49,13 @@ executable. The shipped npm-install postinstall (`bin/fix-pty-perms.mjs`)
 handles this. If you hit `posix_spawnp failed.` after a manual install,
 run `node bin/fix-pty-perms.mjs` from the repo root.
 
-If your Node major doesn't have a prebuilt, rebuild from source —
-`cd node_modules/node-pty && npx node-gyp rebuild` — needs the system
-C++ toolchain (Xcode CLT on macOS, `build-essential` on Linux). The
+After `npm install`, run `npm rebuild node-pty` once to make sure the
+native PTY binding is compiled for your local Node/runtime. You usually
+only need to rerun it after deleting `node_modules`, changing Node
+versions, or moving between OS/architecture/container environments.
+
+The rebuild needs Python plus a C++ toolchain: Xcode CLT on macOS, or
+`python3`, `make`, `gcc`, and `g++` / `build-essential` on Linux. The
 Docker image avoids both issues — its build stage compiles node-pty
 against the runtime Node automatically.
 
