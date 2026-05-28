@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
@@ -106,11 +106,13 @@ class ProcessManagerRegistry {
       cwd,
       env: scrubbedEnv(),
       stdio: ["pipe", "pipe", "pipe"],
-      // detached=false on purpose — when pi-forge exits, the OS
-      // sends SIGTERM to the process group via the parent's death,
-      // matching the plugin's behavior. detached=true would orphan
-      // processes; we want them tied to our lifetime.
-      detached: false,
+      // Put each managed command in its own process group. The
+      // tracked child is only the `/bin/sh -c` wrapper; npm scripts,
+      // concurrently, Vite, test watchers, etc. commonly spawn
+      // grandchildren that do not reliably receive signals sent to
+      // the shell alone. A dedicated process group lets kill() and
+      // disposeSession() signal the whole tree with `kill(-pid)`.
+      detached: true,
     });
 
     const info: ProcessInfo = {
@@ -288,14 +290,17 @@ class ProcessManagerRegistry {
       m.killSent = "SIGTERM";
       m.info.status = "terminating";
       this.notify({ type: "processes_changed", sessionId });
-      m.child.kill("SIGTERM");
+      const targets = await collectProcessTreeTargets(m.child.pid);
+      signalProcessTree(m.child, "SIGTERM", targets);
       m.killTimer = setTimeout(() => {
         if (!LIVE_STATUSES.has(m.info.status)) return;
         m.info.status = "terminate_timeout";
         m.killSent = "SIGKILL";
         this.notify({ type: "processes_changed", sessionId });
         try {
-          m.child.kill("SIGKILL");
+          void collectProcessTreeTargets(m.child.pid).then((currentTargets) => {
+            signalProcessTree(m.child, "SIGKILL", mergeKillTargets(targets, currentTargets));
+          });
         } catch {
           // ignore
         }
@@ -364,10 +369,13 @@ class ProcessManagerRegistry {
     const s = this.bySession.get(sessionId);
     if (s === undefined) return;
     const live = [...s.processes.values()].filter((m) => LIVE_STATUSES.has(m.info.status));
+    const targetsByPid = new Map<number, KillTargets>();
     for (const m of live) {
       try {
         m.killSent = "SIGTERM";
-        m.child.kill("SIGTERM");
+        const targets = await collectProcessTreeTargets(m.child.pid);
+        if (m.child.pid !== undefined) targetsByPid.set(m.child.pid, targets);
+        signalProcessTree(m.child, "SIGTERM", targets);
       } catch {
         // ignore
       }
@@ -377,7 +385,16 @@ class ProcessManagerRegistry {
       for (const m of live) {
         if (LIVE_STATUSES.has(m.info.status)) {
           try {
-            m.child.kill("SIGKILL");
+            const originalTargets =
+              m.child.pid === undefined
+                ? emptyKillTargets()
+                : (targetsByPid.get(m.child.pid) ?? emptyKillTargets());
+            const currentTargets = await collectProcessTreeTargets(m.child.pid);
+            signalProcessTree(
+              m.child,
+              "SIGKILL",
+              mergeKillTargets(originalTargets, currentTargets),
+            );
           } catch {
             // ignore
           }
@@ -408,6 +425,153 @@ class ProcessManagerRegistry {
   private getManaged(sessionId: string, id: string): ManagedProcess | undefined {
     return this.bySession.get(sessionId)?.processes.get(id);
   }
+}
+
+interface ProcessRow {
+  pid: number;
+  ppid: number;
+  pgid: number;
+  sid: number;
+}
+
+interface KillTargets {
+  pids: number[];
+  pgids: number[];
+}
+
+function signalProcessTree(
+  child: ChildProcessWithoutNullStreams,
+  signal: NodeJS.Signals,
+  targets: KillTargets = emptyKillTargets(),
+): void {
+  const pid = child.pid;
+  const pgids = new Set(targets.pgids);
+  if (pid !== undefined) pgids.add(pid);
+
+  // Signal process groups first, including any descendant-created
+  // groups found by the ps snapshot. Then signal individual PIDs as
+  // a fallback for processes that escaped/reparented between the
+  // snapshot and the group signal.
+  for (const pgid of pgids) {
+    try {
+      process.kill(-pgid, signal);
+    } catch {
+      // ignore
+    }
+  }
+
+  if (pid !== undefined) {
+    try {
+      child.kill(signal);
+    } catch {
+      // ignore
+    }
+  }
+
+  for (const targetPid of new Set(targets.pids)) {
+    if (targetPid === pid) continue;
+    try {
+      process.kill(targetPid, signal);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+async function collectProcessTreeTargets(pid: number | undefined): Promise<KillTargets> {
+  if (pid === undefined) return emptyKillTargets();
+  const rows = await listProcesses();
+  const root = rows.find((row) => row.pid === pid);
+  const childrenByParent = new Map<number, ProcessRow[]>();
+  for (const row of rows) {
+    const siblings = childrenByParent.get(row.ppid) ?? [];
+    siblings.push(row);
+    childrenByParent.set(row.ppid, siblings);
+  }
+
+  const targetRows: ProcessRow[] = [];
+  const seen = new Set<number>();
+  const stack = [...(childrenByParent.get(pid) ?? [])];
+  while (stack.length > 0) {
+    const child = stack.pop();
+    if (child === undefined || seen.has(child.pid)) continue;
+    seen.add(child.pid);
+    targetRows.push(child);
+    stack.push(...(childrenByParent.get(child.pid) ?? []));
+  }
+
+  // detached:true creates a fresh session for the managed shell.
+  // Most npm/concurrently/vite descendants stay in that session even
+  // if an intermediate shell exits and they are reparented to PID 1.
+  // Include the whole session while the root row is still visible.
+  if (root !== undefined) {
+    for (const row of rows) {
+      if (row.pid !== pid && row.sid === root.sid && !seen.has(row.pid)) {
+        seen.add(row.pid);
+        targetRows.push(row);
+      }
+    }
+  }
+
+  return {
+    pids: targetRows.map((row) => row.pid),
+    pgids: [...new Set(targetRows.map((row) => row.pgid))],
+  };
+}
+
+function emptyKillTargets(): KillTargets {
+  return { pids: [], pgids: [] };
+}
+
+function mergeKillTargets(...targets: KillTargets[]): KillTargets {
+  return {
+    pids: [...new Set(targets.flatMap((target) => target.pids))],
+    pgids: [...new Set(targets.flatMap((target) => target.pgids))],
+  };
+}
+
+async function listProcesses(): Promise<ProcessRow[]> {
+  for (const args of [
+    ["-eo", "pid=,ppid=,pgid=,sid="],
+    ["-Ao", "pid=,ppid=,pgid=,sid="],
+  ]) {
+    const stdout = await execFileText("ps", args);
+    if (stdout === "") continue;
+    const rows: ProcessRow[] = [];
+    for (const line of stdout.split("\n")) {
+      const parts = line.trim().split(/\s+/).map(Number);
+      const pid = parts[0];
+      const ppid = parts[1];
+      const pgid = parts[2];
+      const sid = parts[3];
+      if (
+        pid !== undefined &&
+        ppid !== undefined &&
+        pgid !== undefined &&
+        sid !== undefined &&
+        Number.isInteger(pid) &&
+        Number.isInteger(ppid) &&
+        Number.isInteger(pgid) &&
+        Number.isInteger(sid)
+      ) {
+        rows.push({ pid, ppid, pgid, sid });
+      }
+    }
+    return rows;
+  }
+  return [];
+}
+
+function execFileText(file: string, args: string[]): Promise<string> {
+  return new Promise((resolve) => {
+    execFile(file, args, { encoding: "utf8" }, (error, stdout) => {
+      if (error !== null) {
+        resolve("");
+        return;
+      }
+      resolve(stdout);
+    });
+  });
 }
 
 function cloneInfo(info: ProcessInfo): ProcessInfo {
