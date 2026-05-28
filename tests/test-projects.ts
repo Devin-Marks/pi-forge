@@ -134,7 +134,7 @@ async function jget(url: string): Promise<{ status: number; body: unknown }> {
 }
 
 async function jsend(
-  method: "POST" | "PATCH" | "DELETE",
+  method: "POST" | "PUT" | "PATCH" | "DELETE",
   url: string,
   body?: unknown,
 ): Promise<{ status: number; body: unknown }> {
@@ -159,9 +159,13 @@ async function main(): Promise<void> {
     // (which should be filtered out by the browser).
     const repoFolder = join(workspacePath, "my-repo");
     const otherFolder = join(workspacePath, "other");
+    const reorderOneFolder = join(workspacePath, "reorder-one");
+    const reorderTwoFolder = join(workspacePath, "reorder-two");
     const hiddenFolder = join(workspacePath, ".hidden");
     await mkdir(repoFolder, { recursive: true });
     await mkdir(otherFolder, { recursive: true });
+    await mkdir(reorderOneFolder, { recursive: true });
+    await mkdir(reorderTwoFolder, { recursive: true });
     await mkdir(hiddenFolder, { recursive: true });
     await mkdir(join(repoFolder, ".git"));
     await writeFile(join(repoFolder, ".git", "HEAD"), "ref: refs/heads/main\n");
@@ -255,8 +259,9 @@ async function main(): Promise<void> {
       assert("  browse at root returns parentPath=null", r.parentPath === null);
       const names = r.entries.map((e) => e.name).sort();
       assert(
-        "  entries are [my-repo, other] (hidden filtered out)",
-        JSON.stringify(names) === JSON.stringify(["my-repo", "other"]),
+        "  entries include visible folders and filter hidden dirs",
+        JSON.stringify(names) ===
+          JSON.stringify(["my-repo", "other", "reorder-one", "reorder-two"]),
         JSON.stringify(names),
       );
       const repo = r.entries.find((e) => e.name === "my-repo");
@@ -290,6 +295,45 @@ async function main(): Promise<void> {
         "  error code is duplicate_path",
         (body as { error: string }).error === "duplicate_path",
       );
+    }
+
+    // 7d. Persist explicit project order.
+    {
+      const { body: b } = await jsend("POST", `${base}/api/v1/projects`, {
+        name: "reorder-one",
+        path: reorderOneFolder,
+      });
+      const one = b as Project;
+      const { body: c } = await jsend("POST", `${base}/api/v1/projects`, {
+        name: "reorder-two",
+        path: reorderTwoFolder,
+      });
+      const two = c as Project;
+      const wanted = [two.id, created.id, one.id];
+      const { status, body } = await jsend("PUT", `${base}/api/v1/projects/order`, {
+        ids: wanted,
+      });
+      const projects = (body as { projects: Project[] }).projects;
+      assert("PUT /projects/order → 200", status === 200, `status=${status}`);
+      assert(
+        "  list order follows requested ids",
+        JSON.stringify(projects.map((p) => p.id)) === JSON.stringify(wanted),
+        JSON.stringify(projects.map((p) => p.id)),
+      );
+      const { body: listed } = await jget(`${base}/api/v1/projects`);
+      assert(
+        "  reordered list persists to GET /projects",
+        JSON.stringify((listed as { projects: Project[] }).projects.map((p) => p.id)) ===
+          JSON.stringify(wanted),
+      );
+      const invalid = await jsend("PUT", `${base}/api/v1/projects/order`, { ids: [created.id] });
+      assert("PUT /projects/order missing ids → 400", invalid.status === 400);
+      assert(
+        "  invalid order returns invalid_project_order",
+        (invalid.body as { error: string }).error === "invalid_project_order",
+      );
+      await jsend("DELETE", `${base}/api/v1/projects/${one.id}`);
+      await jsend("DELETE", `${base}/api/v1/projects/${two.id}`);
     }
 
     // 8. browse outside workspace → 403

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, X, ChevronDown, ChevronRight } from "lucide-react";
+import { Plus, X, ChevronDown, ChevronRight, GripVertical } from "lucide-react";
 import { useProjectStore } from "../store/project-store";
 import { useSessionStore } from "../store/session-store";
 import { ProjectPicker } from "./ProjectPicker";
@@ -21,6 +21,7 @@ export function ProjectSidebar({ className = "" }: ProjectSidebarProps = {}) {
   const toggleCollapsed = useProjectStore((s) => s.toggleCollapsed);
   const remove = useProjectStore((s) => s.remove);
   const rename = useProjectStore((s) => s.rename);
+  const reorder = useProjectStore((s) => s.reorder);
   const sessionsByProject = useSessionStore((s) => s.byProject);
   const createSession = useSessionStore((s) => s.createSession);
   const disposeSession = useSessionStore((s) => s.disposeSession);
@@ -42,6 +43,8 @@ export function ProjectSidebar({ className = "" }: ProjectSidebarProps = {}) {
   const [showPicker, setShowPicker] = useState(false);
   const [renamingId, setRenamingId] = useState<string | undefined>();
   const [renameValue, setRenameValue] = useState("");
+  const [draggingProjectId, setDraggingProjectId] = useState<string | undefined>();
+  const [dragOverProjectId, setDragOverProjectId] = useState<string | undefined>();
 
   /**
    * Delete-project modal state. `liveCount` and `onDiskCount` are
@@ -110,6 +113,29 @@ export function ProjectSidebar({ className = "" }: ProjectSidebarProps = {}) {
     }
   };
 
+  const resetDragState = (): void => {
+    setDraggingProjectId(undefined);
+    setDragOverProjectId(undefined);
+  };
+
+  const handleDrop = async (targetId: string): Promise<void> => {
+    const sourceId = draggingProjectId;
+    resetDragState();
+    if (sourceId === undefined || sourceId === targetId) return;
+    const sourceIndex = projects.findIndex((p) => p.id === sourceId);
+    const targetIndex = projects.findIndex((p) => p.id === targetId);
+    if (sourceIndex === -1 || targetIndex === -1) return;
+    const ids = projects.map((p) => p.id);
+    const [moved] = ids.splice(sourceIndex, 1);
+    if (moved === undefined) return;
+    ids.splice(targetIndex, 0, moved);
+    try {
+      await reorder(ids);
+    } catch {
+      // store.error surfaces; optimistic ordering rolls back in the store.
+    }
+  };
+
   return (
     <aside
       className={`flex h-full w-64 flex-col border-r border-neutral-800 bg-neutral-950 ${className}`}
@@ -143,14 +169,51 @@ export function ProjectSidebar({ className = "" }: ProjectSidebarProps = {}) {
           const isActive = p.id === activeProjectId;
           const isCollapsed = collapsed[p.id] ?? false;
           return (
-            <div key={p.id} className="mt-1 px-1">
+            <div
+              key={p.id}
+              className={`mt-1 px-1 ${draggingProjectId === p.id ? "opacity-60" : ""}`}
+              draggable={renamingId !== p.id}
+              onDragStart={(e) => {
+                if (renamingId === p.id) {
+                  e.preventDefault();
+                  return;
+                }
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", p.id);
+                setDraggingProjectId(p.id);
+              }}
+              onDragEnter={(e) => {
+                e.preventDefault();
+                if (draggingProjectId !== undefined && draggingProjectId !== p.id) {
+                  setDragOverProjectId(p.id);
+                }
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+              }}
+              onDragEnd={resetDragState}
+              onDrop={(e) => {
+                e.preventDefault();
+                void handleDrop(p.id);
+              }}
+            >
               <div
-                className={`group flex items-center gap-1 rounded-md px-2 py-1 text-sm ${
-                  isActive
-                    ? "bg-neutral-800 text-neutral-100"
-                    : "text-neutral-300 hover:bg-neutral-900"
+                className={`group flex items-center gap-1 rounded-md px-2 py-1 text-sm ring-inset transition-colors ${
+                  dragOverProjectId === p.id
+                    ? "ring-1 ring-cyan-500/70"
+                    : isActive
+                      ? "bg-neutral-800 text-neutral-100"
+                      : "text-neutral-300 hover:bg-neutral-900"
                 }`}
               >
+                <span
+                  className="flex cursor-grab items-center text-neutral-600 group-hover:text-neutral-400"
+                  title="Drag to reorder projects"
+                  aria-hidden="true"
+                >
+                  <GripVertical size={14} />
+                </span>
                 <button
                   onClick={() => toggleCollapsed(p.id)}
                   className="flex items-center text-neutral-500 hover:text-neutral-300"

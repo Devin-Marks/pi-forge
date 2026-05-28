@@ -17,11 +17,13 @@ import {
   getProject,
   InvalidDirectoryNameError,
   InvalidNameError,
+  InvalidProjectOrderError,
   NotADirectoryError,
   PathOutsideWorkspaceError,
   ProjectNotFoundError,
   readProjects,
   renameProject,
+  reorderProjects,
 } from "../project-manager.js";
 import {
   getProjectSystemPromptAddendum,
@@ -76,6 +78,9 @@ function handleError(reply: FastifyReply, err: unknown): FastifyReply {
   }
   if (err instanceof DuplicatePathError) {
     return reply.code(409).send({ error: "duplicate_path" });
+  }
+  if (err instanceof InvalidProjectOrderError) {
+    return reply.code(400).send({ error: "invalid_project_order" });
   }
   if ((err as NodeJS.ErrnoException).code === "EEXIST") {
     return reply.code(409).send({ error: "already_exists" });
@@ -135,6 +140,41 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         const project = await createProject(req.body.name, req.body.path);
         return reply.code(201).send(project);
+      } catch (err) {
+        return handleError(reply, err);
+      }
+    },
+  );
+
+  fastify.put<{ Body: { ids: string[] } }>(
+    "/projects/order",
+    {
+      schema: {
+        description: "Persist the display order of projects in the projects pane.",
+        tags: ["projects"],
+        body: {
+          type: "object",
+          required: ["ids"],
+          additionalProperties: false,
+          properties: {
+            ids: { type: "array", items: { type: "string" }, minItems: 0 },
+          },
+        },
+        response: {
+          200: {
+            type: "object",
+            required: ["projects"],
+            properties: {
+              projects: { type: "array", items: projectSchema },
+            },
+          },
+          400: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        return { projects: await reorderProjects(req.body.ids) };
       } catch (err) {
         return handleError(reply, err);
       }

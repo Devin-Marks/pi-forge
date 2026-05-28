@@ -32,6 +32,7 @@ interface ProjectState {
   load: () => Promise<void>;
   create: (name: string, path: string) => Promise<Project>;
   rename: (id: string, name: string) => Promise<void>;
+  reorder: (ids: string[]) => Promise<void>;
   remove: (id: string) => Promise<void>;
   setActive: (id: string | undefined) => void;
   toggleCollapsed: (id: string) => void;
@@ -80,6 +81,23 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       set((s) => ({ projects: s.projects.map((p) => (p.id === id ? updated : p)) }));
     } catch (err) {
       set({ error: err instanceof ApiError ? err.code : (err as Error).message });
+      throw err;
+    }
+  },
+  reorder: async (ids) => {
+    const previous = get().projects;
+    const byId = new Map(previous.map((p) => [p.id, p] as const));
+    const next = ids.map((id) => byId.get(id)).filter((p): p is Project => p !== undefined);
+    if (next.length !== previous.length) return;
+    set({ projects: next, error: undefined });
+    try {
+      const { projects } = await api.reorderProjects(ids);
+      set({ projects });
+    } catch (err) {
+      set({
+        projects: previous,
+        error: err instanceof ApiError ? err.code : (err as Error).message,
+      });
       throw err;
     }
   },
