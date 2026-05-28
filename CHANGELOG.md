@@ -47,6 +47,34 @@ section. See the "Versions" section of the README for the support window policy.
   no-override fallback instead of `settings.json`, so the picker
   reflects the actual live model the SDK has loaded — reasoning or
   not — regardless of settings-file state.
+- **Random garbage characters in the integrated terminal when
+  accessed through a reverse proxy.** Symptom was bare ANSI
+  parameter bodies leaking into the xterm view — e.g.
+  `11;rgb:0a0a/0a0a/0a0a` (the body of an OSC 11 background-color
+  response xterm.js queries on init) or `1R;222R;...` (the body of
+  CSI cursor-position reports). Root cause: the terminal WS route
+  sent PTY output as WebSocket *text* frames, which some proxies
+  (charset normalisation, WAF control-char filters, anything doing
+  UTF-8 re-encoding) mangle by eating the `0x1B` ESC prefix from
+  the middle of multi-byte sequences. Switched the server to send
+  binary frames (`Buffer` rather than `string`); the client already
+  set `binaryType="arraybuffer"` and had the `term.write(new
+  Uint8Array(...))` branch wired up, so no client change needed.
+  `pty-manager.ts:attachSink` signature changed from
+  `(chunk: string) => void` to `(chunk: Buffer) => void`; the
+  single string→Buffer hop happens once at the node-pty boundary,
+  the rolling replay buffer was already `Buffer[]` so the replay
+  path is unchanged.
+- **Terminal occasionally drops into the "reconnecting" state
+  behind a reverse proxy.** Reverse proxies idle-time-out quiet
+  WebSocket connections (nginx defaults `proxy_read_timeout` to
+  60s, Cloudflare to 100s, etc.). Terminal WS had no keepalive —
+  SSE has `HEARTBEAT_CADENCE_MS` in `sse-bridge.ts` for exactly
+  this reason, the terminal route hadn't acquired an equivalent.
+  Added a 30s server-side `socket.ping()` interval in
+  `routes/terminal.ts`, cleared on close. RFC-standard ping/pong
+  is invisible to xterm; chosen interval comfortably under the
+  common proxy defaults.
 
 ## [1.3.2] — 2026-05-27
 

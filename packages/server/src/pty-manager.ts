@@ -165,10 +165,16 @@ export function spawnPty(opts: SpawnOptions): ManagedPty {
  * `replayBytes` lets the caller request only the tail of the
  * buffer (e.g. xterm already has prior scrollback locally and only
  * wants the last ~16 KB). Pass `Infinity` (default) to replay all.
+ *
+ * `onData` receives raw bytes as `Buffer` — callers should forward
+ * them through whatever transport they own without re-encoding. The
+ * terminal WS route sends them as binary frames so reverse proxies
+ * can't mangle ANSI escape sequences (see the comment on the
+ * `socket.send(chunk)` call in `routes/terminal.ts`).
  */
 export function attachSink(
   ptyId: string,
-  onData: (chunk: string) => void,
+  onData: (chunk: Buffer) => void,
   replayBytes: number = OUTPUT_BUFFER_BYTES,
   closeActiveSocket?: () => void,
 ): (() => void) | undefined {
@@ -217,10 +223,17 @@ export function attachSink(
         remaining = 0;
       }
     }
-    for (const chunk of tail) onData(chunk.toString("utf8"));
+    for (const chunk of tail) onData(chunk);
   }
+  // node-pty's onData callback delivers strings (UTF-8 decoded
+  // already, with `\u{FFFD}` substitution on invalid bytes). Convert
+  // back to a Buffer once here so downstream sinks get the raw byte
+  // stream that proxies / xterm.js parse natively. The replay loop
+  // above already operates on Buffer (the rolling buffer stores
+  // Buffers directly), so this is the only re-encoding hop in the
+  // pipeline.
   const live = entry.managed.process.onData((chunk: string) => {
-    onData(chunk);
+    onData(Buffer.from(chunk, "utf8"));
   });
   entry.dataDisposable = live;
   return () => {
