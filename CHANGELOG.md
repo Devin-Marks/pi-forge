@@ -17,6 +17,19 @@ section. See the "Versions" section of the README for the support window policy.
 
 ### Added
 
+- **Dismiss (×) button on the chat session banner.** The amber strip
+  that pins above the message list (carries reconnect notices,
+  compaction in-progress messages, auto-retry status, stream errors)
+  now has an inline close button that clears it for the current
+  session. New `clearBanner(sessionId)` action on the session store
+  just sets `bannerBySession[sessionId]` to undefined — the next
+  agent event (auto-retry, compaction, stream error) is free to set
+  a new value. Intentional "acknowledge, not fix" semantics: if the
+  underlying condition is still active, the banner reappears on the
+  next event. The smaller composer-footer error spans (model error,
+  thinking-level error, attachment error, global API error) are
+  intentionally left without close buttons — they auto-clear on the
+  next successful operation.
 - **Per-session thinking-level picker, inline next to the chat-input
   model picker.** Shown only for models whose
   `supportedThinkingLevels` array (computed server-side via the SDK's
