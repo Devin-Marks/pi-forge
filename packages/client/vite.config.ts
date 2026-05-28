@@ -21,6 +21,12 @@ function parseAllowedHosts(raw: string | undefined): true | string[] | undefined
   return entries.length > 0 ? entries : undefined;
 }
 
+function devApiTarget(): string {
+  const port = process.env.VITE_API_PORT ?? process.env.PORT ?? "3100";
+  const host = process.env.VITE_API_HOST ?? "localhost";
+  return `http://${host}:${port}`;
+}
+
 export default defineConfig({
   plugins: [
     react(),
@@ -171,7 +177,12 @@ export default defineConfig({
     allowedHosts: parseAllowedHosts(process.env.VITE_DEV_ALLOWED_HOSTS),
     proxy: {
       "/api": {
-        target: "http://localhost:3000",
+        // Root `npm run dev` / `dev:remote` pass the API server port through
+        // PORT (default 3100). Mirror that default here instead of hardcoding
+        // 3000, otherwise direct `npm run dev -w packages/client` proxies API/SSE/WS traffic to the
+        // wrong backend. VITE_API_PORT / VITE_API_HOST let unusual local setups
+        // override the target without changing the server's own PORT/HOST.
+        target: devApiTarget(),
         changeOrigin: true,
         // Forward WebSocket upgrades for `/api/v1/terminal` (Phase 11).
         // Without `ws: true`, Vite falls through to its own ws server
