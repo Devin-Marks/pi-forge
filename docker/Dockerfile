@@ -88,12 +88,17 @@ ARG PGID=1000
 #     hygiene. curl for fetching, ca-certificates so HTTPS works, less
 #     so `git log` and similar pagers don't bomb, procps so `ps`/`top`
 #     are present for users debugging long-running tool processes.
+#   - python3, make, g++: native-module rebuild toolchain for people
+#     using the container as a development environment. `npm install`
+#     can rebuild node-pty when the mounted checkout's lockfile / Node
+#     ABI differs from the baked image; without Python node-gyp fails
+#     before it can compile the binding.
 #   - gnupg: needed only to verify the GitHub CLI apt-source signing
 #     key during install — kept in the same RUN so the keyring is
 #     present when `apt-get install gh` runs.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      tini git ripgrep bash curl ca-certificates less procps gnupg \
+      tini git ripgrep bash curl ca-certificates less procps python3 make g++ gnupg \
  && install -dm 0755 /etc/apt/keyrings \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
