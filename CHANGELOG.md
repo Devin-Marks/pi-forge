@@ -15,6 +15,8 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.3.3] — 2026-05-28
+
 ### Added
 
 - **`VITE_DEV_ALLOWED_HOSTS` env to unblock `npm run dev:remote`
