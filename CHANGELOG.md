@@ -15,6 +15,8 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.3.2] — 2026-05-27
+
 ### Added
 
 - **Dismiss (×) button on the chat session banner.** The amber strip
