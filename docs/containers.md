@@ -20,7 +20,7 @@ runtime (Node + native bindings), and makes deploys reproducible.
 | Stage | Base | Purpose |
 |---|---|---|
 | `builder` | `node:22-bookworm-slim` | Installs all deps including devDeps, compiles native bindings (`node-pty`), runs `npm run build` for both packages |
-| `runtime` | `node:22-bookworm-slim` | Production deps + built artifacts only. Adds `git`, `ripgrep`, `bash`, `curl`, `less`, `procps`. Runs as non-root `pi`; `SHELL=/bin/bash` so xterm sessions land in bash, not dash |
+| `runtime` | `node:22-bookworm-slim` | Production deps + built artifacts only. Adds `git`, `ripgrep`, `bash`, `curl`, `less`, `procps`, and the Python/C++ toolchain needed for native-module rebuilds during in-container development. Runs as non-root `pi`; `SHELL=/bin/bash` so xterm sessions land in bash, not dash |
 
 Final image is ~330 MB. Debian-based (not Alpine) because the Node
 native-module ecosystem ships glibc prebuilds; on musl, those packages
@@ -33,6 +33,9 @@ Installed at runtime:
 - **`git`** — required by the agent's `bash` tool and the GitPanel routes
 - **`ripgrep`** — pi's `grep` tool delegates to `rg` when present;
   silently degrades to a Node walker without it
+- **`python3`, `make`, `g++`** — keeps `npm install` / `npm rebuild`
+  working inside the running container when native modules such as
+  `node-pty` need to compile against the container's Node ABI
 
 ### User and permissions
 
@@ -200,9 +203,10 @@ either:
 ### Terminal fails to spawn (`posix_spawnp failed`)
 
 The native `node-pty` binding doesn't match the runtime Node version.
-This is a host-only issue (the Docker image rebuilds the binding during
-its build stage). If you somehow hit it inside the container, your
-local image is stale — `docker compose up -d --build` (note `--build`).
+Rebuild the image first: `docker compose up -d --build` (note `--build`).
+If you're using the running container as a development shell and running
+`npm install` against a bind-mounted checkout, the runtime image includes
+`python3`, `make`, and `g++` so node-gyp can rebuild `node-pty` in place.
 
 ### Health check failing on first start
 

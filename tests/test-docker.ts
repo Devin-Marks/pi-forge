@@ -6,6 +6,7 @@
  * - Brings the stack up on a unique container name + port to avoid clashing
  *   with whatever the developer might already have running.
  * - Polls `GET /api/v1/health` until 200, then asserts:
+ *     - runtime image can rebuild `node-pty` from source (dev-container npm install path)
  *     - `/manifest.webmanifest` returns 200 with `display: "standalone"`
  *     - `/sw.js` returns 200 (service worker present)
  *     - `/icons/icon.svg` returns 200
@@ -155,6 +156,29 @@ services:
     assert("GET /api/v1/health returns 200", health.status === 200);
     const healthBody = (await health.json()) as Record<string, unknown>;
     assert("health body.status === 'ok'", healthBody.status === "ok");
+
+    // ---- Dev-container native rebuild support ----
+    // The production image is often used as a development shell against a
+    // bind-mounted checkout. Fresh `npm install` / `npm rebuild` can force
+    // node-pty through node-gyp, so the runtime layer must include Python
+    // and the C++ build toolchain instead of only the builder stage having it.
+    const rebuild = compose(
+      [
+        "exec",
+        "-T",
+        "pi-forge",
+        "sh",
+        "-lc",
+        "python3 --version && make --version && g++ --version && npm rebuild node-pty --build-from-source",
+      ],
+      { composeFile, projectName },
+      true,
+    );
+    assert(
+      "runtime image can rebuild node-pty from source",
+      rebuild.status === 0,
+      `exit=${rebuild.status}; stdout=${rebuild.stdout.slice(-1000)}; stderr=${rebuild.stderr.slice(-1000)}`,
+    );
 
     // ---- PWA assets ----
     const manifestRes = await fetch(`${base}/manifest.webmanifest`);
