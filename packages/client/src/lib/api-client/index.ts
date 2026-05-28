@@ -1488,6 +1488,8 @@ export const api = {
       method: "PATCH",
       body: { name },
     }),
+  reorderProjects: (ids: string[]) =>
+    request("/api/v1/projects/order", vProjectList, { method: "PUT", body: { ids } }),
   deleteProject: (id: string) =>
     request(
       `/api/v1/projects/${encodeURIComponent(id)}`,
