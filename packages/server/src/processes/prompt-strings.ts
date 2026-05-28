@@ -40,6 +40,6 @@ export const TOOL_DESCRIPTION = `Manage background processes. Actions:
 - clear: Remove all finished processes from the list
 - write: Write to process stdin (requires 'id' and 'input', optional 'end' to close stdin)
 
-Important: You DON'T need to poll or wait for processes. Do not repeatedly call list/output after start just to check whether the process has completed. Notifications arrive automatically based on your preferences; start processes and continue with other work — you'll be informed if something requires attention.
+Important: You DON'T need to poll or wait for processes. Do not repeatedly call list/output after start just to check whether the process has completed. Repeated list/output calls while live process state/output is unchanged are suppressed; notifications arrive automatically based on your preferences. Start processes and continue with other work — you'll be informed if something requires attention.
 
 Note: User always sees process updates in the UI. The notify flags control whether YOU (the agent) get a turn to react (e.g. check results, fix code, restart).`;
