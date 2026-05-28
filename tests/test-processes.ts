@@ -16,7 +16,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -181,6 +181,36 @@ async function bootSubprocess(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForPidExit(pid: number, timeoutMs = 8_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) return true;
+    await sleep(100);
+  }
+  return !isPidAlive(pid);
+}
+
+async function waitForFile(path: string, timeoutMs = 4_000): Promise<string | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      return await readFile(path, "utf8");
+    } catch {
+      await sleep(50);
+    }
+  }
+  return undefined;
 }
 
 async function main(): Promise<void> {
@@ -458,6 +488,33 @@ async function main(): Promise<void> {
       );
     }
 
+    // -------- kill reaches shell-spawned child processes --------
+    {
+      const pidFile = join(projectPath, "nested-child.pid");
+      const r = await call({
+        action: "start",
+        name: "nested-child",
+        // This intentionally does NOT use `exec`. The managed shell
+        // starts a child sleep and waits for it, matching npm/dev
+        // server wrappers where the long-lived work is below the
+        // tracked shell process. Killing the managed process must
+        // kill the child too.
+        command: "sleep 30 & echo $! > nested-child.pid; wait",
+      });
+      const info = r.details.process as { id: string; status: string } | undefined;
+      const nestedId = info?.id ?? "";
+      assert("start nested child → running", info?.status === "running");
+
+      const pidText = await waitForFile(pidFile);
+      const childPid = Number(pidText?.trim());
+      assert("  nested child pid captured", Number.isInteger(childPid) && childPid > 0);
+      assert("  nested child initially alive", isPidAlive(childPid));
+
+      await call({ action: "kill", id: nestedId });
+      const exited = await waitForPidExit(childPid);
+      assert("  process kill terminates nested child", exited, `pid=${childPid}`);
+    }
+
     // -------- agent alerts on process completion --------
     // alertOnSuccess, alertOnFailure, alertOnKill fire `process_alert`
     // events on the manager; the SSE bridge translates those into
@@ -596,12 +653,20 @@ async function main(): Promise<void> {
       // Start a long-lived process, then dispose the session.
       // After dispose, the in-process manager should have no
       // entries for this session.
+      const disposePidFile = join(projectPath, "dispose-child.pid");
       const startR = await call({
         action: "start",
         name: "to-be-killed",
-        command: "sleep 30",
+        command: "sleep 30 & echo $! > dispose-child.pid; wait",
       });
       assert("pre-dispose start → success", startR.details.success === true);
+      const disposePidText = await waitForFile(disposePidFile);
+      const disposeChildPid = Number(disposePidText?.trim());
+      assert(
+        "pre-dispose: child pid captured",
+        Number.isInteger(disposeChildPid) && disposeChildPid > 0,
+      );
+      assert("pre-dispose: child alive", isPidAlive(disposeChildPid));
       const liveCount = managerMod.processManager.list(sessionId).length;
       assert("pre-dispose: at least one tracked", liveCount >= 1);
 
@@ -610,6 +675,7 @@ async function main(): Promise<void> {
       // SIGTERMs + grace + SIGKILLs + clears state.
       const after = managerMod.processManager.list(sessionId);
       assert("post-dispose: manager state cleared", after.length === 0, `len=${after.length}`);
+      assert("post-dispose: child terminated", await waitForPidExit(disposeChildPid));
     }
     sseHandle.abort();
   } finally {

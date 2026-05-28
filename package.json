@@ -8,8 +8,8 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "dev": "concurrently \"npm run dev -w packages/server\" \"npm run dev -w packages/client\"",
-    "dev:remote": "HOST=0.0.0.0 concurrently \"npm run dev -w packages/server\" \"npm run dev -w packages/client -- --host\"",
+    "dev": "concurrently \"PORT=${PORT:-3100} npm run dev -w packages/server\" \"PORT=${PORT:-3100} npm run dev -w packages/client\"",
+    "dev:remote": "concurrently \"HOST=${HOST:-0.0.0.0} PORT=${PORT:-3100} npm run dev -w packages/server\" \"PORT=${PORT:-3100} npm run dev -w packages/client -- --host\"",
     "typecheck": "npm run check --workspaces --if-present && tsc -p tests/tsconfig.json",
     "lint": "eslint .",
     "format": "prettier --write .",
