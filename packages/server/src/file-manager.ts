@@ -323,12 +323,30 @@ async function walk(
         path: childRel,
         type: "file",
       });
+    } else if (ent.isSymbolicLink()) {
+      const linked = await safeLinkedStat(childAbs, root).catch(() => undefined);
+      if (linked?.isDirectory()) {
+        if (TREE_SKIP_DIRS.has(ent.name)) continue;
+        const sub = await walk(childAbs, root, childRel, depth + 1, maxDepth);
+        node.children?.push(sub);
+      } else if (linked?.isFile()) {
+        node.children?.push({
+          name: ent.name,
+          path: childRel,
+          type: "file",
+        });
+      }
     }
-    // Symlinks, sockets, fifos: skip silently. We don't follow symlinks —
-    // that's how a malicious project would escape its own root via a
-    // symlink to /etc.
+    // Sockets, fifos, devices, and symlinks that resolve outside the
+    // project root are skipped silently. Safe in-root symlinks are
+    // listed as their target kind so the editor can open linked files.
   }
   return node;
+}
+
+async function safeLinkedStat(path: string, root: string) {
+  await verifyPathSafe(path, root);
+  return stat(path);
 }
 
 /* ----------------------------- read ----------------------------- */

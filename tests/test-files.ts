@@ -22,7 +22,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile as fsWrite } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile as fsWrite } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -131,6 +131,7 @@ async function main(): Promise<void> {
   await mkdir(join(projectPath, "dist"), { recursive: true });
   await fsWrite(join(projectPath, "src", "index.ts"), "export const x = 1;\n", "utf8");
   await fsWrite(join(projectPath, "src", "deep", "nested.txt"), "deep content\n", "utf8");
+  await symlink(join("src", "index.ts"), join(projectPath, "linked-index.ts"));
   await fsWrite(join(projectPath, "node_modules", "fake-pkg", "index.js"), "module.exports={};\n");
   await fsWrite(join(projectPath, ".git", "HEAD"), "ref: refs/heads/main\n");
   // A binary fixture (NUL-byte triggers binary detection).
@@ -204,6 +205,7 @@ async function main(): Promise<void> {
         "tree includes nested src/deep/nested.txt",
         paths.includes("file:src/deep/nested.txt"),
       );
+      assert("tree includes in-root linked files", paths.includes("file:linked-index.ts"));
       assert(
         "tree EXCLUDES node_modules",
         !paths.some((p) => p.startsWith("directory:node_modules")),

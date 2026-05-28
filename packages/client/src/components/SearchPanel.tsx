@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, FileSearch, Loader2, Search } from "lucide-r
 import { api, ApiError, type SearchMatch, type SearchResponse } from "../lib/api-client";
 import { useFileStore } from "../store/file-store";
 import { useActiveProject } from "../store/project-store";
+import { useUiStore } from "../store/ui-store";
 
 const DEBOUNCE_MS = 250;
 const MIN_QUERY_LEN = 2;
@@ -17,6 +18,7 @@ const RESULT_LIMIT = 200;
 export function SearchPanel() {
   const project = useActiveProject();
   const openFile = useFileStore((s) => s.openFile);
+  const openEditorPane = useUiStore((s) => s.openEditorPane);
 
   const [query, setQuery] = useState("");
   const [regex, setRegex] = useState(false);
@@ -177,12 +179,13 @@ export function SearchPanel() {
               key={path}
               path={path}
               matches={matches}
-              onPick={(m) =>
+              onPick={(m) => {
                 void openFile(project.id, joinProjectPath(project.path, path), {
                   line: m.line,
                   column: m.column,
-                })
-              }
+                });
+                openEditorPane();
+              }}
             />
           ))}
         </ul>

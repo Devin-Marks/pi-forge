@@ -109,6 +109,11 @@ interface UiState {
    */
   openProcessesTabSeq: number;
   openProcessesTab: () => void;
+
+  /** Bumped when another component opens a file and needs the editor
+   *  pane made visible, even if the user previously toggled it off. */
+  openEditorPaneSeq: number;
+  openEditorPane: () => void;
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
@@ -153,4 +158,6 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
   openProcessesTabSeq: 0,
   openProcessesTab: () => set((s) => ({ openProcessesTabSeq: s.openProcessesTabSeq + 1 })),
+  openEditorPaneSeq: 0,
+  openEditorPane: () => set((s) => ({ openEditorPaneSeq: s.openEditorPaneSeq + 1 })),
 }));

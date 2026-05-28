@@ -1,4 +1,5 @@
-import { stat, readFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { runGitRaw } from "./git-runner.js";
@@ -55,16 +56,23 @@ export interface TurnDiffEntry {
   isPureAddition: boolean;
 }
 
+interface EditOperation {
+  oldText: string;
+  newText: string;
+}
+
 interface ToolCallInfo {
   toolCallId: string;
   toolName: "write" | "edit";
   path: string;
+  edits?: EditOperation[];
 }
 
 interface ToolCallResultPair {
   call: ToolCallInfo;
   result: {
     diff?: string;
+    patch?: string;
     isError: boolean;
   };
 }
@@ -123,10 +131,22 @@ export function collectTurnTouches(
       const name = b.name;
       if (name !== "write" && name !== "edit") continue;
       const id = typeof b.id === "string" ? b.id : undefined;
-      const args = (b.arguments ?? b.input) as { path?: unknown } | undefined;
+      const args = (b.arguments ?? b.input) as { path?: unknown; edits?: unknown } | undefined;
       const path = typeof args?.path === "string" ? args.path : undefined;
       if (id === undefined || path === undefined) continue;
-      callsById.set(id, { toolCallId: id, toolName: name, path });
+      const info: ToolCallInfo = { toolCallId: id, toolName: name, path };
+      if (name === "edit" && Array.isArray(args?.edits)) {
+        const edits = args.edits
+          .map((e) => {
+            const edit = e as { oldText?: unknown; newText?: unknown };
+            return typeof edit.oldText === "string" && typeof edit.newText === "string"
+              ? { oldText: edit.oldText, newText: edit.newText }
+              : undefined;
+          })
+          .filter((e): e is EditOperation => e !== undefined);
+        if (edits.length > 0) info.edits = edits;
+      }
+      callsById.set(id, info);
     }
   }
 
@@ -146,10 +166,12 @@ export function collectTurnTouches(
     if (typeof m.toolCallId !== "string") continue;
     const call = callsById.get(m.toolCallId);
     if (call === undefined) continue;
-    const details = m.details as { diff?: unknown } | undefined;
+    const details = m.details as { diff?: unknown; patch?: unknown } | undefined;
     const diffStr = typeof details?.diff === "string" ? details.diff : undefined;
+    const patchStr = typeof details?.patch === "string" ? details.patch : undefined;
     const result: ToolCallResultPair["result"] = { isError: m.isError === true };
     if (diffStr !== undefined) result.diff = diffStr;
+    if (patchStr !== undefined) result.patch = patchStr;
     out.push({ call, result });
   }
   return out;
@@ -200,29 +222,36 @@ export async function buildTurnDiff(
     let diff: string | undefined;
     let isPureAddition = false;
 
-    if (isGitRepo) {
+    // Prefer the edit tool's own per-operation patch when available.
+    // It is scoped to this turn, while `git diff HEAD` also includes
+    // any pre-existing dirty worktree changes and can make the
+    // last-turn panel look like entire files changed. Multiple
+    // edit/write calls for the same file are kept in chronological
+    // order as separate chunks in one accordion entry. If an older SDK
+    // only has `details.diff`, trim its display-oriented context.
+    diff = combineToolDiffs(pairs);
+
+    if ((diff === undefined || diff.length === 0) && isGitRepo) {
       diff = gitDiffs.get(absPath);
     }
 
     if (diff === undefined || diff.length === 0) {
-      // No git diff available (untracked, no repo, file went missing).
-      // Try pure-addition from current disk contents.
+      // If an edit result did not persist details.patch/details.diff
+      // (or the file is untracked so git has no baseline), reconstruct
+      // a scoped patch from the edit arguments. This prevents edited
+      // pre-existing untracked files from rendering as whole-file
+      // additions.
+      diff = await tryEditArgumentPatch(projectPath, absPath, pairs);
+    }
+
+    if (diff === undefined || diff.length === 0) {
+      // No operation diff, argument patch, or git diff available
+      // (brand-new write, no repo, file went missing). Try
+      // pure-addition from current disk contents.
       const pure = await tryPureAddition(projectPath, absPath);
       if (pure !== undefined) {
         diff = pure;
         isPureAddition = true;
-      }
-    }
-
-    if (diff === undefined || diff.length === 0) {
-      // Last-resort fallback: the LATEST edit's per-edit diff. Better
-      // than dropping the file entirely.
-      for (let i = pairs.length - 1; i >= 0; i--) {
-        const candidate = pairs[i]?.result.diff;
-        if (candidate !== undefined && candidate.length > 0) {
-          diff = candidate;
-          break;
-        }
       }
     }
 
@@ -253,8 +282,145 @@ function preferredTool(pairs: ToolCallResultPair[]): "write" | "edit" {
   return pairs.some((p) => p.call.toolName === "write") ? "write" : "edit";
 }
 
+function combineToolDiffs(pairs: ToolCallResultPair[]): string | undefined {
+  const patchChunks = pairs
+    .map((p) => p.result.patch)
+    .filter((d): d is string => d !== undefined && d.length > 0);
+  if (patchChunks.length > 0) {
+    return patchChunks
+      .map((d) => d.trimEnd())
+      .join("\n")
+      .concat("\n");
+  }
+
+  const displayChunks = pairs
+    .map((p) => p.result.diff)
+    .filter((d): d is string => d !== undefined && d.length > 0);
+  if (displayChunks.length === 0) return undefined;
+  return displayChunks
+    .map((d) => trimPiDiffContext(d).trimEnd())
+    .join("\n")
+    .concat("\n");
+}
+
+const TURN_DIFF_CONTEXT_LINES = 3;
+
+function trimPiDiffContext(diff: string): string {
+  const rawLines = diff.split("\n");
+  const hadTrailingNewline = rawLines.length > 0 && rawLines[rawLines.length - 1] === "";
+  const lines = hadTrailingNewline ? rawLines.slice(0, -1) : rawLines;
+  if (lines.length === 0) return diff;
+
+  const lineRe = /^([+\- ]) *(\d+)(?: (.*))?$/;
+  const skipRe = /^ +\.\.\.$/;
+  const parsed = lines.map((line) => {
+    if (skipRe.test(line)) return { line, changed: false, skip: true };
+    const m = lineRe.exec(line);
+    if (m === null) return undefined;
+    const marker = m[1];
+    return { line, changed: marker === "+" || marker === "-", skip: false };
+  });
+
+  if (parsed.some((p) => p === undefined)) return diff;
+  const changedIndexes = parsed.map((p, i) => (p?.changed === true ? i : -1)).filter((i) => i >= 0);
+  if (changedIndexes.length === 0) return diff;
+
+  const keep = new Set<number>();
+  for (const idx of changedIndexes) {
+    const start = Math.max(0, idx - TURN_DIFF_CONTEXT_LINES);
+    const end = Math.min(parsed.length - 1, idx + TURN_DIFF_CONTEXT_LINES);
+    for (let i = start; i <= end; i++) keep.add(i);
+  }
+
+  const out: string[] = [];
+  let skipped = false;
+  for (let i = 0; i < lines.length; i++) {
+    const p = parsed[i];
+    if (p?.skip === true) {
+      if (out.length > 0 && out[out.length - 1] !== "   ...") out.push("   ...");
+      skipped = false;
+      continue;
+    }
+    if (!keep.has(i)) {
+      skipped = true;
+      continue;
+    }
+    if (skipped && out.length > 0 && out[out.length - 1] !== "   ...") out.push("   ...");
+    out.push(lines[i] ?? "");
+    skipped = false;
+  }
+  return out.join("\n") + (hadTrailingNewline ? "\n" : "");
+}
+
 function absolutize(path: string, projectPath: string): string {
   return isAbsolute(path) ? resolve(path) : resolve(join(projectPath, path));
+}
+
+function relabelNoIndexDiff(diff: string, oldFile: string, newFile: string, rel: string): string {
+  return diff
+    .split("\n")
+    .map((line) => {
+      if (line === `diff --git a/${oldFile} b/${newFile}`) return `diff --git a/${rel} b/${rel}`;
+      if (line.startsWith(`--- ${oldFile}`)) return `--- a/${rel}`;
+      if (line.startsWith(`+++ ${newFile}`)) return `+++ b/${rel}`;
+      return line;
+    })
+    .join("\n");
+}
+
+async function tryEditArgumentPatch(
+  projectPath: string,
+  absPath: string,
+  pairs: ToolCallResultPair[],
+): Promise<string | undefined> {
+  const editPairs = pairs.filter((p) => p.call.toolName === "edit" && p.call.edits !== undefined);
+  if (editPairs.length === 0) return undefined;
+
+  let after: string;
+  try {
+    after = await readFile(absPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  let before = after;
+  for (let i = editPairs.length - 1; i >= 0; i--) {
+    const edits = editPairs[i]?.call.edits ?? [];
+    for (let j = edits.length - 1; j >= 0; j--) {
+      const edit = edits[j];
+      if (edit === undefined) continue;
+      const idx = before.lastIndexOf(edit.newText);
+      if (idx === -1) return undefined;
+      before = before.slice(0, idx) + edit.oldText + before.slice(idx + edit.newText.length);
+    }
+  }
+
+  if (before === after) return undefined;
+  const rel = relative(projectPath, absPath);
+  if (rel.startsWith("..")) return undefined;
+
+  const dir = await mkdtemp(join(tmpdir(), "pi-turn-diff-"));
+  try {
+    const oldFile = join(dir, "old");
+    const newFile = join(dir, "new");
+    await writeFile(oldFile, before, "utf8");
+    await writeFile(newFile, after, "utf8");
+    const r = await runGitRaw(
+      projectPath,
+      ["diff", "--no-color", "--no-ext-diff", "--no-index", oldFile, newFile],
+      { maxBuffer: 16 * 1024 * 1024 },
+    ).catch((err: unknown) => {
+      const e = err as { stdout?: unknown };
+      if (typeof e.stdout === "string" && e.stdout.length > 0) return { stdout: e.stdout };
+      if (Buffer.isBuffer(e.stdout) && e.stdout.length > 0) return { stdout: e.stdout.toString() };
+      throw err;
+    });
+    return relabelNoIndexDiff(r.stdout, oldFile, newFile, rel);
+  } catch {
+    return undefined;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 /**
