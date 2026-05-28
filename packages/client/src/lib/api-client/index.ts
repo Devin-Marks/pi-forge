@@ -302,6 +302,8 @@ function vSessionSummary(value: unknown, status: number): SessionSummary {
   };
   if (typeof value.name === "string") out.name = value.name;
   if (typeof value.thinkingLevel === "string") out.thinkingLevel = value.thinkingLevel;
+  if (typeof value.modelProvider === "string") out.modelProvider = value.modelProvider;
+  if (typeof value.modelId === "string") out.modelId = value.modelId;
   return out;
 }
 
