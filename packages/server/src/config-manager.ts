@@ -11,7 +11,12 @@ import {
   type Skill,
   loadSkills,
 } from "@earendil-works/pi-coding-agent";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import {
+  getSupportedThinkingLevels,
+  type Api,
+  type Model,
+  type ModelThinkingLevel,
+} from "@earendil-works/pi-ai";
 import { config } from "./config.js";
 import { makeLock } from "./concurrency.js";
 import { discoverExtensionResources } from "./extensions-discovery.js";
@@ -96,6 +101,18 @@ export interface ProvidersListing {
       reasoning: boolean;
       input: ("text" | "image")[];
       hasAuth: boolean;
+      /**
+       * Levels this specific model supports, computed via the SDK's
+       * `getSupportedThinkingLevels(model)` helper. Always at least
+       * `["off"]`; non-reasoning models return only that. Reasoning
+       * models include any of `minimal` / `low` / `medium` / `high`
+       * not explicitly mapped to `null` in `thinkingLevelMap`, plus
+       * `xhigh` ONLY if the model has an explicit mapping for it (most
+       * don't — GPT-5-class models that exposes a "max" tier do). The
+       * inline chat-input thinking-level picker reads this directly
+       * instead of hardcoding a per-model list.
+       */
+      supportedThinkingLevels: ModelThinkingLevel[];
     }[];
   }[];
 }
@@ -392,6 +409,7 @@ export async function liveProvidersListing(): Promise<ProvidersListing> {
       reasoning: m.reasoning,
       input: m.input,
       hasAuth: registry.hasConfiguredAuth(m),
+      supportedThinkingLevels: getSupportedThinkingLevels(m),
     });
   }
   return { providers: Array.from(grouped.values()) };

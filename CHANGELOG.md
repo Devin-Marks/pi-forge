@@ -15,6 +15,43 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Added
+
+- **Per-session thinking-level picker, inline next to the chat-input
+  model picker.** Shown only for models whose
+  `supportedThinkingLevels` array (computed server-side via the SDK's
+  `getSupportedThinkingLevels(model)` helper) has more than just
+  `["off"]` — non-reasoning models hide the control entirely so users
+  don't see a knob that the SDK would silently clamp to `"off"`. The
+  option list is per-model dynamic: GPT-5-class models that expose
+  `xhigh` get it; models that explicitly opt out of a standard level
+  (`null` entry in their `thinkingLevelMap`) hide it. Each
+  `ProviderModelEntry` on the `GET /config/providers` wire now
+  carries `supportedThinkingLevels: ModelThinkingLevel[]` so the
+  client doesn't have to hardcode the list. The Settings → Agent
+  `defaultThinkingLevel` stays as the new-session default; the
+  inline picker overrides it for one session.
+
+  Persistence is pi-SDK-owned: `session.setThinkingLevel` appends
+  a `thinkingLevel` entry to the session JSONL, and pi's
+  session-manager reconstructs the value on resume — no pi-forge
+  localStorage mirror needed (unlike the model picker, which
+  keeps one because `setModel` has settings.json side effects we
+  have to snapshot-restore around). New server endpoint `POST
+  /api/v1/sessions/:id/thinking-level` is a thin pass-through that
+  reuses the same `withSettingsLock` snapshot-restore pattern as
+  `setModel` to keep the same per-session-change-pollutes-global
+  trap from biting `defaultThinkingLevel`. Live session summary
+  (`GET /sessions/:id`, `POST /sessions`, `POST /fork`, PATCH
+  rename) now also emits `thinkingLevel` so the picker reflects
+  the current value on session switch.
+
+  The SDK auto-clamps the active level when the model changes
+  (e.g. switching from a reasoning model on `"high"` to a non-
+  reasoning model forces `"off"`). The client refetches the
+  summary after `setModel` lands so the picker reflects whatever
+  the SDK landed on instead of stale state.
+
 ### Removed
 
 - **Settings → Agent: dropped the "Steering mode" and "Follow-up

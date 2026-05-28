@@ -309,6 +309,8 @@ export interface UnifiedSession {
   path?: string;
 }
 
+export type ModelThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
 export interface SessionSummary {
   sessionId: string;
   projectId: string;
@@ -319,6 +321,14 @@ export interface SessionSummary {
   name?: string;
   messageCount: number;
   isStreaming: boolean;
+  /**
+   * Active thinking level on the live AgentSession. Only set for live
+   * sessions — disk-only entries omit it because the SDK only surfaces
+   * the active value on a loaded session. Loose `string` typing matches
+   * the wire shape (server validates against the enum); callers that
+   * want the discriminated union should narrow at use site.
+   */
+  thinkingLevel?: string;
 }
 
 export type SkillOverrideState = "enabled" | "disabled";
@@ -482,6 +492,15 @@ export interface ProviderModelEntry {
   reasoning: boolean;
   input: ("text" | "image")[];
   hasAuth: boolean;
+  /**
+   * Per-model list of thinking levels the SDK reports as supported
+   * (via `getSupportedThinkingLevels(model)` on the server). Always at
+   * least `["off"]`; non-reasoning models return only that. Picker
+   * reads this directly — no hardcoded list — so models with `xhigh`
+   * surface it and models that explicitly opt out of `low` (or any
+   * other level) hide it.
+   */
+  supportedThinkingLevels: ModelThinkingLevel[];
 }
 
 export interface ProvidersListing {
