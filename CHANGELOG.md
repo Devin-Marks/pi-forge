@@ -15,6 +15,24 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Removed
+
+- **Settings → Agent: dropped the "Steering mode" and "Follow-up
+  mode" form fields.** Both wrote to `settings.json` keys
+  (`steeringMode`, `followUpMode`) that no code path ever read —
+  steering behaviour is and has been driven entirely per-request
+  via the `streamingBehavior` field on `POST
+  /api/v1/sessions/:id/prompt` and the `mode` field on `POST
+  /api/v1/sessions/:id/steer`, plus the `mode` parameter on
+  `orchestrate_send_to_worker`. The corresponding members on the
+  `SettingsJson` interface and the JSON-schema validators on
+  `PUT /api/v1/config/settings` are also gone. The route schema
+  keeps `additionalProperties: true` and the type keeps its
+  `[k: string]: unknown` index signature, so existing
+  `settings.json` files containing these keys keep validating
+  and persisting through GET/PUT — they're just untyped extras
+  now until you clear them.
+
 ### Fixed
 
 - **`set_model_failed` when picking a model from a provider that

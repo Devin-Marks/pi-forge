@@ -148,9 +148,7 @@ Defaults applied to new sessions:
 {
   "defaultProvider": "anthropic",
   "defaultModel": "claude-sonnet-4-5-20250929",
-  "defaultThinkingLevel": "medium",
-  "steeringMode": "all",
-  "followUpMode": "all"
+  "defaultThinkingLevel": "medium"
 }
 ```
 
@@ -159,8 +157,6 @@ Defaults applied to new sessions:
 | `defaultProvider` | provider key | Picked by new sessions when no per-session model is set |
 | `defaultModel` | model id from the chosen provider | Same |
 | `defaultThinkingLevel` | `minimal` / `low` / `medium` / `high` / `xhigh` | Reasoning-capable models only |
-| `steeringMode` | `all` / `one-at-a-time` | How the SDK delivers queued steering messages — flush-all vs wait-between |
-| `followUpMode` | `all` / `one-at-a-time` | Same, for follow-up (post-idle) delivery |
 
 Other SDK keys are accepted by `PUT /api/v1/config/settings` and persist
 verbatim. Pi-forge's typed form covers the common ones; an "Edit as

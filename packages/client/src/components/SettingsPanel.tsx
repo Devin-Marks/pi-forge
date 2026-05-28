@@ -56,8 +56,7 @@ interface Props {
  *     JSON editor — typed schema editing is deferred (DEFERRED.md Pol5).
  *
  *   - Agent — `settings.json` knobs: defaultProvider, defaultModel,
- *     defaultThinkingLevel, steeringMode, followUpMode. Sending `null`
- *     clears a key.
+ *     defaultThinkingLevel. Sending `null` clears a key.
  *
  *   - Skills — per-project skill list from `GET /config/skills` with
  *     toggle. Requires an active project; surfaces a hint otherwise.
@@ -639,24 +638,6 @@ function AgentTab({ onError }: { onError: (msg: string | undefined) => void }) {
           value={get("defaultThinkingLevel")}
           options={["", "off", "low", "medium", "high"]}
           onSave={(v) => update({ defaultThinkingLevel: v.length === 0 ? null : v })}
-          disabled={busy}
-        />
-      </Field>
-
-      <Field label="Steering mode" hint="how interruptions during streaming are queued">
-        <SelectSetting
-          value={get("steeringMode")}
-          options={["", "steer", "followUp"]}
-          onSave={(v) => update({ steeringMode: v.length === 0 ? null : v })}
-          disabled={busy}
-        />
-      </Field>
-
-      <Field label="Follow-up mode" hint="how queued messages are delivered after agent_end">
-        <SelectSetting
-          value={get("followUpMode")}
-          options={["", "steer", "followUp"]}
-          onSave={(v) => update({ followUpMode: v.length === 0 ? null : v })}
           disabled={busy}
         />
       </Field>
