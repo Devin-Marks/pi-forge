@@ -19,23 +19,26 @@ runtime (Node + native bindings), and makes deploys reproducible.
 
 | Stage | Base | Purpose |
 |---|---|---|
-| `builder` | `node:22-bookworm-slim` | Installs all deps including devDeps, compiles native bindings (`node-pty`), runs `npm run build` for both packages |
-| `runtime` | `node:22-bookworm-slim` | Production deps + built artifacts only. Adds `git`, `ripgrep`, `bash`, `curl`, `less`, `procps`, and the Python/C++ toolchain needed for native-module rebuilds during in-container development. Runs as non-root `pi`; `SHELL=/bin/bash` so xterm sessions land in bash, not dash |
+| `python-base` | `python:3.14-slim-bookworm` | Source for the Python 3.14 + pip runtime copied into the shared Node base |
+| `node-python-base` | `node:22-bookworm-slim` | Shared Debian slim base with Node.js 22 plus Python 3.14 + pip |
+| `builder` | `node-python-base` | Installs all deps including devDeps, compiles native bindings (`node-pty`), runs `npm run build` for both packages |
+| `runtime` | `node-python-base` | Production deps + built artifacts only. Adds `git`, `ripgrep`, `bash`, `curl`, `less`, `procps`, and the C++ toolchain needed for native-module rebuilds during in-container development. Runs as non-root `pi`; `SHELL=/bin/bash` so xterm sessions land in bash, not dash |
 
-Final image is ~330 MB. Debian-based (not Alpine) because the Node
-native-module ecosystem ships glibc prebuilds; on musl, those packages
-fall back to source builds.
+Final image size varies by architecture and cache state. Debian-based
+(not Alpine) because the Node native-module ecosystem ships glibc
+prebuilds; on musl, those packages fall back to source builds.
 
 Installed at runtime:
 
 - **Node.js 22**
+- **Python 3.14 + pip** — callable as `python3`, `python`, or `py`
 - **`tini`** — init for signal forwarding + zombie reaping
 - **`git`** — required by the agent's `bash` tool and the GitPanel routes
 - **`ripgrep`** — pi's `grep` tool delegates to `rg` when present;
   silently degrades to a Node walker without it
-- **`python3`, `make`, `g++`** — keeps `npm install` / `npm rebuild`
-  working inside the running container when native modules such as
-  `node-pty` need to compile against the container's Node ABI
+- **`make`, `g++`** — keeps `npm install` / `npm rebuild` working
+  inside the running container when native modules such as `node-pty`
+  need to compile against the container's Node ABI
 
 ### User and permissions
 
@@ -64,6 +67,39 @@ Session JSONLs default to `${WORKSPACE_PATH}/.pi/sessions/` so they
 live on the workspace bind mount — backing up the workspace backs up
 conversation history. Override with `SESSION_DIR` to relocate.
 
+### Persistent Python packages outside this project
+
+The image includes Python 3.14 and pip. Python is callable as `python3`,
+`python`, or `py`. The shipped compose file does not persist Python
+package installs by default. If you want package installs
+to survive image rebuilds/container replacement without storing them in
+the pi-forge checkout or workspace, mount an external host directory or
+named volume at `/home/pi/.local` from your own Docker Compose override
+or deployment wrapper:
+
+```yaml
+services:
+  pi-forge:
+    volumes:
+      - ~/.pi-forge-python:/home/pi/.local
+```
+
+Then install with:
+
+```bash
+python3 -m pip install --user <package>
+```
+
+The image sets `PYTHONUSERBASE=/home/pi/.local` and prepends
+`/home/pi/.local/bin` to `PATH`, so console scripts installed by pip are
+available automatically. On Linux, pre-create the host directory with the
+same owner as `PUID` / `PGID` if Docker would otherwise create it as
+root.
+
+For per-project isolation, create virtual environments inside
+`/workspace/<project>` instead; those persist because `/workspace` is a
+bind mount.
+
 ## Environment variables
 
 The full env-var reference lives in
@@ -78,6 +114,7 @@ in `docker/.env`:
 | `WORKSPACE_PATH` | `/workspace` |
 | `PI_CONFIG_DIR` | `/home/pi/.pi/agent` |
 | `FORGE_DATA_DIR` | `/home/pi/.pi-forge` |
+| `PYTHONUSERBASE` | `/home/pi/.local` |
 
 Set `UI_PASSWORD` and / or `API_KEY` in `.env` for any non-loopback
 deploy — without them, auth is disabled.
@@ -206,7 +243,8 @@ The native `node-pty` binding doesn't match the runtime Node version.
 Rebuild the image first: `docker compose up -d --build` (note `--build`).
 If you're using the running container as a development shell and running
 `npm install` against a bind-mounted checkout, the runtime image includes
-`python3`, `make`, and `g++` so node-gyp can rebuild `node-pty` in place.
+Python 3.14, `pip`, `make`, and `g++` so node-gyp can rebuild `node-pty`
+in place.
 
 ### Health check failing on first start
 
