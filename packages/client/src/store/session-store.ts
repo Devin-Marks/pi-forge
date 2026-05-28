@@ -328,6 +328,15 @@ interface SessionState {
   sendSteer: (sessionId: string, text: string, mode?: "steer" | "followUp") => Promise<void>;
   abortSession: (sessionId: string) => Promise<void>;
   disposeSession: (sessionId: string) => Promise<void>;
+  /**
+   * User-initiated dismiss of the per-session amber banner. Just sets
+   * `bannerBySession[sessionId]` to undefined — the next agent event
+   * (auto-retry, compaction, stream error) is free to set a new value,
+   * which is the intended behaviour: dismissing acknowledges THIS
+   * banner, not the underlying state. If the cause is still active
+   * the banner reappears on the next event.
+   */
+  clearBanner: (sessionId: string) => void;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -701,6 +710,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } catch (err) {
       set({ error: err instanceof ApiError ? err.code : (err as Error).message });
     }
+  },
+  clearBanner: (sessionId) => {
+    set((s) => ({
+      bannerBySession: { ...s.bannerBySession, [sessionId]: undefined },
+    }));
   },
 }));
 

@@ -12,6 +12,7 @@ import {
   GitBranch,
   Rows2,
   Users,
+  X,
 } from "lucide-react";
 import {
   EMPTY_COMPACTIONS,
@@ -95,6 +96,7 @@ export function ChatView({ sessionId }: Props) {
   const isStreaming = useSessionStore((s) => s.streamingBySession[sessionId] ?? false);
   const activeTool = useSessionStore((s) => s.activeToolBySession[sessionId]);
   const banner = useSessionStore((s) => s.bannerBySession[sessionId]);
+  const clearBanner = useSessionStore((s) => s.clearBanner);
   const queued = useSessionStore((s) => s.queuedBySession[sessionId]);
   const openStream = useSessionStore((s) => s.openStream);
   const closeStream = useSessionStore((s) => s.closeStream);
@@ -347,8 +349,17 @@ export function ChatView({ sessionId }: Props) {
             which meant a long-running streaming session pushed the
             "Reconnecting…" / compaction banners off-screen. */}
         {banner !== undefined && (
-          <div className="border-b border-amber-700/40 bg-amber-900/20 px-6 py-2 text-xs text-amber-200 light:border-amber-300 light:bg-amber-50 light:text-amber-800">
-            {banner}
+          <div className="flex items-start gap-2 border-b border-amber-700/40 bg-amber-900/20 px-6 py-2 text-xs text-amber-200 light:border-amber-300 light:bg-amber-50 light:text-amber-800">
+            <div className="flex-1">{banner}</div>
+            <button
+              type="button"
+              onClick={() => clearBanner(sessionId)}
+              className="-mr-1 shrink-0 rounded p-0.5 text-amber-300 hover:bg-amber-900/40 hover:text-amber-100 light:text-amber-700 light:hover:bg-amber-100 light:hover:text-amber-900"
+              title="Dismiss"
+              aria-label="Dismiss banner"
+            >
+              <X size={14} />
+            </button>
           </div>
         )}
         <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-6 py-4">
