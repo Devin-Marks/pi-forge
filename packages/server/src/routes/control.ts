@@ -236,6 +236,7 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
             createdAt: forked.createdAt,
             lastActivityAt: forked.lastActivityAt,
             name: forked.session.sessionName,
+            thinkingLevel: forked.session.thinkingLevel,
             messageCount: forked.session.messages.length,
             isStreaming: forked.session.isStreaming,
           }),
@@ -576,6 +577,119 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!result.ok) return reply.code(result.status).send(result.body);
       return { provider: req.body.provider, modelId: req.body.modelId };
+    },
+  );
+
+  // Per-session thinking-level override. The SDK persists thinkingLevel as
+  // first-class session state — it appends a thinkingLevel entry to the
+  // JSONL and reconstructs the value on replay/resume — so this route is
+  // a thin pass-through, no pi-forge-side storage.
+  //
+  // BUT setThinkingLevel has the same settings.json side effect as
+  // setModel: it calls settingsManager.setDefaultThinkingLevel(...), which
+  // would mutate the GLOBAL default on every per-session change. Same
+  // snapshot-and-restore-under-lock pattern as setModel below — without
+  // it, two users on the same instance switching thinking levels would
+  // overwrite each other's "default for new sessions" repeatedly.
+  fastify.post<{ Params: { id: string }; Body: { level: string } }>(
+    "/sessions/:id/thinking-level",
+    {
+      schema: {
+        description:
+          "Set the active thinking level for the session. Body: `{ level }` " +
+          "where level is one of pi's ModelThinkingLevel union " +
+          '("off" | "minimal" | "low" | "medium" | "high" | "xhigh"). The ' +
+          "SDK clamps to the current model's supported levels — picking a " +
+          "level the model doesn't support is not an error, it just gets " +
+          'downgraded. Returns `error: "set_thinking_level_failed"` on ' +
+          "underlying SDK throw.",
+        tags: ["sessions"],
+        params: {
+          type: "object",
+          required: ["id"],
+          properties: { id: { type: "string" } },
+        },
+        body: {
+          type: "object",
+          required: ["level"],
+          additionalProperties: false,
+          properties: {
+            level: {
+              type: "string",
+              enum: ["off", "minimal", "low", "medium", "high", "xhigh"],
+            },
+          },
+        },
+        response: {
+          200: {
+            type: "object",
+            required: ["level"],
+            properties: { level: { type: "string" } },
+          },
+          400: errorSchema,
+          404: errorSchema,
+          504: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const live = getSession(req.params.id);
+      if (live === undefined) return notFound(reply);
+      type SetThinkingResult =
+        | { ok: true; level: string }
+        | { ok: false; status: number; body: { error: string; message?: string } };
+      const result = await withSettingsLock<SetThinkingResult>(async () => {
+        let priorSettings: Awaited<ReturnType<typeof readSettings>> | undefined;
+        try {
+          priorSettings = await readSettings();
+        } catch {
+          // settings.json missing / unreadable — leave priorSettings
+          // undefined so we don't try to restore a phantom snapshot.
+        }
+        try {
+          await withTimeout(
+            Promise.resolve(
+              live.session.setThinkingLevel(
+                req.body.level as Parameters<typeof live.session.setThinkingLevel>[0],
+              ),
+            ),
+            30_000,
+            "setThinkingLevel",
+          );
+        } catch (err) {
+          if (err instanceof TimeoutError) {
+            req.log.warn({ err, sessionId: req.params.id }, "setThinkingLevel timed out");
+            return {
+              ok: false,
+              status: 504,
+              body: { error: "set_thinking_level_timeout", message: err.message },
+            };
+          }
+          return {
+            ok: false,
+            status: 400,
+            body: {
+              error: "set_thinking_level_failed",
+              message: err instanceof Error ? err.message : String(err),
+            },
+          };
+        }
+        if (priorSettings !== undefined) {
+          try {
+            await writeSettings(priorSettings);
+          } catch (err) {
+            req.log.warn(
+              { err },
+              "failed to restore prior settings after per-session setThinkingLevel",
+            );
+          }
+        }
+        // SDK clamps; surface the effective value so the client can
+        // reflect any downgrade in the picker without a follow-up GET.
+        return { ok: true, level: live.session.thinkingLevel };
+      });
+      if (!result.ok) return reply.code(result.status).send(result.body);
+      return { level: result.level };
     },
   );
 };

@@ -47,6 +47,13 @@ export const liveSummarySchema = {
     name: { type: "string" },
     messageCount: { type: "integer", minimum: 0 },
     isStreaming: { type: "boolean" },
+    // Pi's ModelThinkingLevel union: "off" | "minimal" | "low" | "medium" |
+    // "high" | "xhigh". Only present for live sessions — disk-only entries
+    // omit it because the SDK only surfaces the active state on a loaded
+    // AgentSession (the JSONL contains the transitions but reconstructing
+    // the current value requires the replay logic, which is what
+    // session-manager does on resume).
+    thinkingLevel: { type: "string" },
   },
 } as const;
 
@@ -68,6 +75,7 @@ export function liveSummaryBody(args: {
   messageCount: number;
   isStreaming: boolean;
   isLive?: boolean;
+  thinkingLevel?: string;
 }): Record<string, unknown> {
   const out: Record<string, unknown> = {
     sessionId: args.sessionId,
@@ -80,5 +88,6 @@ export function liveSummaryBody(args: {
     isStreaming: args.isStreaming,
   };
   if (args.name !== undefined) out.name = args.name;
+  if (args.thinkingLevel !== undefined) out.thinkingLevel = args.thinkingLevel;
   return out;
 }

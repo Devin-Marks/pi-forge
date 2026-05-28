@@ -301,6 +301,7 @@ function vSessionSummary(value: unknown, status: number): SessionSummary {
     isStreaming: value.isStreaming,
   };
   if (typeof value.name === "string") out.name = value.name;
+  if (typeof value.thinkingLevel === "string") out.thinkingLevel = value.thinkingLevel;
   return out;
 }
 
@@ -1770,6 +1771,21 @@ export const api = {
         return { provider: v.provider, modelId: v.modelId };
       },
       { method: "POST", body: { provider, modelId } },
+    ),
+  // Per-session thinking-level override. Server clamps to the active
+  // model's supported levels and returns the effective value — callers
+  // should use the response, not the request, to update local UI state
+  // so a "high" pick on a model that caps at "low" reflects accurately.
+  setThinkingLevel: (id: string, level: string) =>
+    request(
+      `/api/v1/sessions/${encodeURIComponent(id)}/thinking-level`,
+      (v, s) => {
+        if (!isObject(v) || typeof v.level !== "string") {
+          fail(s, "expected { level }");
+        }
+        return { level: v.level };
+      },
+      { method: "POST", body: { level } },
     ),
 
   // ---------------- config ----------------

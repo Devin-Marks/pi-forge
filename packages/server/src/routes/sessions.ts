@@ -205,6 +205,7 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
           name: live.session.sessionName,
           messageCount: live.session.messages.length,
           isStreaming: live.session.isStreaming,
+          thinkingLevel: live.session.thinkingLevel,
         }),
       );
     },
@@ -241,6 +242,7 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
           name: live.session.sessionName,
           messageCount: live.session.messages.length,
           isStreaming: live.session.isStreaming,
+          thinkingLevel: live.session.thinkingLevel,
         });
       }
       const loc = await findSessionLocation(req.params.id);
@@ -755,6 +757,7 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
         name: live.session.sessionName,
         messageCount: live.session.messages.length,
         isStreaming: live.session.isStreaming,
+        thinkingLevel: live.session.thinkingLevel,
       });
     },
   );

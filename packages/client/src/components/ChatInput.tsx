@@ -934,6 +934,13 @@ export function ChatInput({ sessionId }: Props) {
     () => localStorage.getItem(MODEL_KEY_PREFIX + sessionId) ?? "",
   );
   const [modelError, setModelError] = useState<string | undefined>(undefined);
+  // Per-session thinking-level mirror, sourced from the server (SDK
+  // persists this as first-class session state in the JSONL, so we
+  // don't keep a localStorage copy like we do for the model picker).
+  // Undefined while the initial GET /sessions/:id is in flight or if
+  // the call failed; the picker hides itself in that case.
+  const [thinkingLevel, setThinkingLevel] = useState<string | undefined>(undefined);
+  const [thinkingError, setThinkingError] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     void api
@@ -965,10 +972,31 @@ export function ChatInput({ sessionId }: Props) {
   // would keep showing the previously-active session's model and the new
   // session would silently inherit its default. Skips the setModel call
   // when storage is empty (= "use whatever the session already has").
+  // Also fetches the live session summary to pull the active thinking
+  // level so the picker reflects on session switch.
   useEffect(() => {
     const stored = localStorage.getItem(MODEL_KEY_PREFIX + sessionId) ?? "";
     setModelChoice(stored);
     setModelError(undefined);
+    setThinkingError(undefined);
+    setThinkingLevel(undefined);
+    // Pull the SDK-persisted thinking level for this session. Same
+    // captured-id pattern as the setModel call below — a slow GET for
+    // session A that resolves after the user switched to B mustn't
+    // overwrite B's thinkingLevel state with A's value.
+    {
+      const callSessionId = sessionId;
+      void api
+        .getSession(callSessionId)
+        .then((summary) => {
+          if (callSessionId !== sessionId) return;
+          setThinkingLevel(summary.thinkingLevel);
+        })
+        .catch(() => {
+          // Disk-only or transient — leave thinkingLevel undefined so
+          // the picker stays hidden until next switch / change.
+        });
+    }
     if (stored === "") return;
     const [provider, ...rest] = stored.split(":");
     const modelId = rest.join(":");
@@ -1035,9 +1063,70 @@ export function ChatInput({ sessionId }: Props) {
       await api.setModel(sessionId, provider, modelId);
       localStorage.setItem(storageKey, value);
       setModelError(undefined);
+      // The SDK's setModel calls setThinkingLevel internally to clamp
+      // the active level against the new model's capabilities (e.g.
+      // picking a non-reasoning model after running on "high" forces
+      // the level to "off"). Refetch the summary so the picker
+      // reflects whatever the SDK landed on.
+      const callSessionId = sessionId;
+      void api
+        .getSession(callSessionId)
+        .then((summary) => {
+          if (callSessionId !== sessionId) return;
+          setThinkingLevel(summary.thinkingLevel);
+        })
+        .catch(() => {
+          // Non-fatal: a stale picker is recoverable on next session
+          // switch, and the underlying setModel already succeeded.
+        });
     } catch (err) {
       const code = err instanceof ApiError ? err.code : (err as Error).message;
       setModelError(`set model failed: ${code}`);
+    }
+  };
+
+  // Resolve which model is currently active (per-session override if
+  // set, otherwise the settings.json default) and pull its entry from
+  // the providers listing so we can gate the thinking-level picker on
+  // `reasoning`. Returns undefined while providers/defaultModel are
+  // still loading OR when the active model can't be found in the
+  // listing (e.g. settings.json points at a model that's since been
+  // removed from models.json) — in either case the picker stays
+  // hidden.
+  const activeModel = useMemo(() => {
+    if (providers === undefined) return undefined;
+    let provider: string;
+    let modelId: string;
+    if (modelChoice.length > 0) {
+      const [p, ...rest] = modelChoice.split(":");
+      if (p === undefined) return undefined;
+      provider = p;
+      modelId = rest.join(":");
+    } else if (
+      defaultModel !== undefined &&
+      defaultModel.provider.length > 0 &&
+      defaultModel.modelId.length > 0
+    ) {
+      provider = defaultModel.provider;
+      modelId = defaultModel.modelId;
+    } else {
+      return undefined;
+    }
+    const entry = providers.providers.find((p) => p.provider === provider);
+    return entry?.models.find((m) => m.id === modelId);
+  }, [providers, modelChoice, defaultModel]);
+
+  const onThinkingLevelChange = async (level: string): Promise<void> => {
+    // Optimistic — the SDK clamps so the response may differ; we
+    // reconcile from the response body below.
+    setThinkingLevel(level);
+    try {
+      const res = await api.setThinkingLevel(sessionId, level);
+      setThinkingLevel(res.level);
+      setThinkingError(undefined);
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : (err as Error).message;
+      setThinkingError(`set thinking level failed: ${code}`);
     }
   };
 
@@ -1517,6 +1606,15 @@ export function ChatInput({ sessionId }: Props) {
             value={modelChoice}
             onChange={(v) => void onModelChange(v)}
           />
+          {activeModel !== undefined &&
+            activeModel.supportedThinkingLevels.length > 1 &&
+            thinkingLevel !== undefined && (
+              <ThinkingLevelPicker
+                value={thinkingLevel}
+                options={activeModel.supportedThinkingLevels}
+                onChange={(v) => void onThinkingLevelChange(v)}
+              />
+            )}
           {fileRefs.length > 0 && (
             <div className="flex flex-wrap items-center gap-1">
               {fileRefs.map((path, i) => (
@@ -1540,12 +1638,16 @@ export function ChatInput({ sessionId }: Props) {
             </div>
           )}
           {(modelError !== undefined ||
+            thinkingError !== undefined ||
             textareaHeight !== undefined ||
             todoCounts.total > 0 ||
             runningProcesses > 0) && (
             <div className="ml-auto flex items-center gap-2">
               {modelError !== undefined && (
                 <span className="text-[11px] text-red-400">{modelError}</span>
+              )}
+              {thinkingError !== undefined && (
+                <span className="text-[11px] text-red-400">{thinkingError}</span>
               )}
               {/* Reset is paired with the drag handle; hide on
                   mobile since the handle is hidden there too and the
@@ -2188,6 +2290,73 @@ function ModelPicker({
           <div className="border-t border-neutral-800 px-3 py-1.5 text-[10px] text-neutral-600">
             {filtered.length} of {options.length} models — ↑↓ to move, Enter to pick, Esc to close
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Per-session thinking-level picker rendered next to ModelPicker.
+ * Only mounted when the active model has more than just `["off"]` in
+ * its `supportedThinkingLevels` — gating happens at the parent (see
+ * the conditional render in ChatInput), not inside this component,
+ * so the picker doesn't render an "n/a" state for non-reasoning
+ * models. Option list is the per-model array the server computed via
+ * the SDK's `getSupportedThinkingLevels(model)` helper, so models
+ * that expose `xhigh` get it and models that explicitly opt out of a
+ * standard level (via a `null` entry in `thinkingLevelMap`) hide it.
+ */
+function ThinkingLevelPicker({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: readonly string[];
+  onChange: (next: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent): void => {
+      if (wrapperRef.current === null) return;
+      if (!wrapperRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("mousedown", onDocClick);
+    return () => window.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-left text-[11px] text-neutral-200"
+        title="Override the thinking level for this session"
+      >
+        <span className="text-neutral-500">thinking:</span>
+        <span className="truncate">{value}</span>
+        <span className="ml-1 text-neutral-500">▾</span>
+      </button>
+      {open && (
+        <div className="absolute bottom-full left-0 z-10 mb-1 w-[140px] rounded border border-neutral-700 bg-neutral-950 shadow-xl">
+          {options.map((level) => (
+            <button
+              key={level}
+              onClick={() => {
+                onChange(level);
+                setOpen(false);
+              }}
+              className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-xs ${
+                level === value ? "bg-neutral-800 text-neutral-100" : "text-neutral-300"
+              }`}
+            >
+              <span>{level}</span>
+              {level === value && <span className="text-emerald-400">●</span>}
+            </button>
+          ))}
         </div>
       )}
     </div>

@@ -116,6 +116,7 @@ const providersListingSchema = {
                 "reasoning",
                 "input",
                 "hasAuth",
+                "supportedThinkingLevels",
               ],
               properties: {
                 id: { type: "string" },
@@ -125,6 +126,7 @@ const providersListingSchema = {
                 reasoning: { type: "boolean" },
                 input: { type: "array", items: { type: "string" } },
                 hasAuth: { type: "boolean" },
+                supportedThinkingLevels: { type: "array", items: { type: "string" } },
               },
             },
           },
