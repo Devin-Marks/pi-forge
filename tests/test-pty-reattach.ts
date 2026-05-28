@@ -54,7 +54,7 @@ interface PtyManagerModule {
   findPtyByTabId: (tabId: string, projectId: string) => ManagedPty | undefined;
   attachSink: (
     ptyId: string,
-    onData: (chunk: string) => void,
+    onData: (chunk: Buffer) => void,
     replayBytes?: number,
     closeActiveSocket?: () => void,
   ) => (() => void) | undefined;
@@ -86,8 +86,12 @@ async function main(): Promise<void> {
     assert("spawn assigns the projectId", managed.projectId === projectId);
     assert("ptyCount is 1 after first spawn", pty.ptyCount() === 1);
 
-    // 2. attach sink #1 — feed a known prompt + capture echoed output
-    const received1: string[] = [];
+    // 2. attach sink #1 — feed a known prompt + capture echoed output.
+    // Buffers are accumulated (sink now emits binary frames so
+    // proxies can't mangle escape sequences); `Array.prototype.join`
+    // calls Buffer#toString which default-decodes UTF-8, so the
+    // `.includes("hello-1")` ASCII check below still works.
+    const received1: Buffer[] = [];
     const detach1 = pty.attachSink(managed.ptyId, (chunk) => received1.push(chunk));
     assert("attachSink returns a detach function", typeof detach1 === "function");
     if (detach1 === undefined) throw new Error("attachSink failed");
@@ -123,7 +127,7 @@ async function main(): Promise<void> {
     );
 
     // 5. attach sink #2 → replays buffered "while-detached" output
-    const received2: string[] = [];
+    const received2: Buffer[] = [];
     const detach2 = pty.attachSink(managed.ptyId, (chunk) => received2.push(chunk));
     assert("attachSink returns a detach function for sink #2", typeof detach2 === "function");
     await sleep(100);

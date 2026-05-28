@@ -293,6 +293,14 @@ export const terminalRoutes: FastifyPluginAsync = async (fastify) => {
         managed.ptyId,
         (chunk) => {
           if (socket.readyState === socket.OPEN) {
+            // Binary frame (Buffer). Text frames were vulnerable to
+            // reverse-proxy charset normalisation / WAF control-char
+            // stripping, which would eat the ESC byte (0x1B) from the
+            // middle of an ANSI escape sequence and leak the bare
+            // parameter body to the user's xterm (e.g. `11;rgb:...` or
+            // `<n>;<m>R` showing up as visible garbage when xterm.js
+            // queried OSC 11 / cursor position). Binary frames pass
+            // the bytes through unchanged.
             socket.send(chunk);
           }
         },
@@ -304,6 +312,26 @@ export const terminalRoutes: FastifyPluginAsync = async (fastify) => {
         socket.close(CLOSE_INTERNAL_ERROR, "attach_failed");
         return;
       }
+
+      // WebSocket keepalive. Reverse proxies (nginx defaults
+      // `proxy_read_timeout` to 60s, Cloudflare to 100s, many others
+      // similar) silently drop idle connections — a terminal that
+      // wasn't generating output would fall over with no diagnostic,
+      // forcing the client into its reconnect loop. SSE has its own
+      // heartbeat (see sse-bridge.ts:HEARTBEAT_CADENCE_MS); the
+      // terminal WS had nothing equivalent until now. 30s comfortably
+      // under the common proxy default; RFC-standard ping/pong is
+      // not exposed to xterm, so the user sees nothing.
+      const keepAliveTimer = setInterval(() => {
+        if (socket.readyState === socket.OPEN) {
+          try {
+            socket.ping();
+          } catch {
+            // Socket about to close — ignore, the close handler
+            // clears the timer below.
+          }
+        }
+      }, 30_000);
 
       // The shell really exiting (user typed `exit`, kill -9, etc.)
       // is a terminal-state event distinct from a transient WS
@@ -320,6 +348,7 @@ export const terminalRoutes: FastifyPluginAsync = async (fastify) => {
       const cleanup = (reason: string): void => {
         if (disposed) return;
         disposed = true;
+        clearInterval(keepAliveTimer);
         detach();
         exitDisposable.dispose();
         // NB: no killPty here. The PTY is intentionally kept alive
