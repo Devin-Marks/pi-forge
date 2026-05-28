@@ -15,6 +15,22 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Added
+
+- **`VITE_DEV_ALLOWED_HOSTS` env to unblock `npm run dev:remote`
+  behind a reverse proxy.** Vite's `server.allowedHosts` default
+  (localhost + LAN IPs, anti-DNS-rebinding) blocks requests whose
+  `Host:` header is a public/internal hostname like
+  `dev.example.com` with `Blocked request. This host (...) is not
+  allowed.` The new env accepts a comma-separated list
+  (`VITE_DEV_ALLOWED_HOSTS=a.example.com,b.example.com`) or the
+  literal `"all"` to disable the check entirely (dev convenience,
+  accepts the DNS-rebinding risk — only use on trusted networks).
+  Unset = Vite's default behaviour. Production / built bundle is
+  unaffected; this is dev-server only. CONTRIBUTING.md gets a new
+  "Running dev:remote behind a proxy" section walking through the
+  options.
+
 ## [1.3.2] — 2026-05-27
 
 ### Added
