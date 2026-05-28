@@ -382,9 +382,9 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
           "Aggregate every write/edit tool result from the session's most " +
           "recent turn into one reviewable changeset. Returns " +
           "`{ entries: [{ file, tool, diff, additions, deletions, isPureAddition }] }`. " +
-          "Prefers `git diff HEAD -- <path>` for cumulative diffs; falls back " +
-          "to a pure-addition diff when the file is untracked or the project " +
-          "has no `.git`. 404 if the session isn't currently live.",
+          "Prefers the tool result's turn-scoped diff; falls back to " +
+          "`git diff HEAD -- <path>` and then a pure-addition diff when " +
+          "needed. 404 if the session isn't currently live.",
         tags: ["sessions"],
         params: {
           type: "object",

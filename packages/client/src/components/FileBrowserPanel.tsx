@@ -97,6 +97,7 @@ export function FileBrowserPanel() {
     | undefined
   >(undefined);
   const requestChatInsert = useUiStore((s) => s.requestChatInsert);
+  const openEditorPane = useUiStore((s) => s.openEditorPane);
   // Selected paths for the multiselect / bulk-delete affordance.
   // Cmd/Ctrl+click on a row toggles selection; plain click clears and
   // opens/expands as before. Hoisted above the early-return below so
@@ -127,6 +128,7 @@ export function FileBrowserPanel() {
         const path = await createFile(project.id, parentAbsPath, name);
         // Open the new file immediately so the user can start editing.
         await openFile(project.id, path);
+        openEditorPane();
       } else {
         await createFolder(project.id, parentAbsPath, name);
       }
@@ -222,6 +224,7 @@ export function FileBrowserPanel() {
       return;
     }
     await openFile(project.id, joinPath(project.path, node.path));
+    openEditorPane();
   };
 
   // Right-click context menu for file rows. State (`contextMenu`) is

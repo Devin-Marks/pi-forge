@@ -197,6 +197,15 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openProcessesTabSeq]);
 
+  // Opening a file from the file viewer/search should make the editor
+  // visible even if the user previously toggled the editor pane off.
+  const openEditorPaneSeq = useUiStore((s) => s.openEditorPaneSeq);
+  useEffect(() => {
+    if (openEditorPaneSeq === 0) return;
+    setEditorOpenPersisted(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openEditorPaneSeq]);
+
   // Pane widths (px). Persisted on every drag-end via the ref; we keep
   // the live value in state so drags re-render the layout, and mirror
   // it through the ref so the divider can read the start width without

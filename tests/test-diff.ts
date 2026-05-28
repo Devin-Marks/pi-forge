@@ -104,6 +104,7 @@ function makeToolResult(args: {
   toolCallId: string;
   toolName: "write" | "edit";
   diff?: string;
+  patch?: string;
   isError?: boolean;
 }): unknown {
   return {
@@ -111,7 +112,10 @@ function makeToolResult(args: {
     toolCallId: args.toolCallId,
     toolName: args.toolName,
     content: [{ type: "text", text: "ok" }],
-    details: args.diff !== undefined ? { diff: args.diff } : undefined,
+    details:
+      args.diff !== undefined || args.patch !== undefined
+        ? { diff: args.diff, patch: args.patch }
+        : undefined,
     isError: args.isError === true,
     timestamp: Date.now(),
   };
@@ -162,11 +166,20 @@ async function unitTests(): Promise<void> {
     await fsWrite(trackedFile, "line1\nline2\nline3\n", "utf8");
     await execFileAsync("git", ["add", "."], { cwd: trackedDir });
     await execFileAsync("git", ["commit", "-q", "-m", "init"], { cwd: trackedDir });
-    // Now mutate the file (simulating an agent edit).
-    await fsWrite(trackedFile, "line1\nLINE2-CHANGED\nline3\n+ extra\n", "utf8");
+    // Simulate pre-existing user work before the agent turn, then
+    // mutate again for the turn itself. The last-turn diff should use
+    // the tool's scoped details.diff and NOT show the pre-existing
+    // dirty line from `git diff HEAD`.
+    await fsWrite(trackedFile, "line1\npreexisting dirty line\nline2\nline3\n", "utf8");
+    await fsWrite(
+      trackedFile,
+      "line1\npreexisting dirty line\nLINE2-CHANGED\nline3\n+ extra\n",
+      "utf8",
+    );
 
     const callId = randomUUID();
-    const perEditDiff = `--- a/tracked.ts\n+++ b/tracked.ts\n@@ -1,3 +1,4 @@\n line1\n-line2\n+LINE2-CHANGED\n line3\n+ extra\n`;
+    const perEditDiff = `  1 line1\n  2 preexisting dirty line\n- 3 line2\n+ 3 LINE2-CHANGED\n  4 line3\n+ 5 + extra\n`;
+    const perEditPatch = `--- a/tracked.ts\n+++ b/tracked.ts\n@@ -1,3 +1,4 @@\n line1\n-line2\n+LINE2-CHANGED\n line3\n+ extra\n`;
     const messages = [
       makeUserMessage("modify tracked.ts"),
       makeAssistantWithCalls([
@@ -180,7 +193,12 @@ async function unitTests(): Promise<void> {
           },
         },
       ]),
-      makeToolResult({ toolCallId: callId, toolName: "edit", diff: perEditDiff }),
+      makeToolResult({
+        toolCallId: callId,
+        toolName: "edit",
+        diff: perEditDiff,
+        patch: perEditPatch,
+      }),
     ];
     const entries = await buildTurnDiff({ messages: messages as never[] }, trackedDir);
     assert("tracked edit produces 1 entry", entries.length === 1);
@@ -189,8 +207,18 @@ async function unitTests(): Promise<void> {
       assert("entry.tool === 'edit'", e.tool === "edit");
       assert("entry.isPureAddition === false (git diff path)", e.isPureAddition === false);
       assert(
-        "git diff includes the changed line",
+        "turn diff includes the changed line",
         e.diff.includes("LINE2-CHANGED"),
+        `diff: ${e.diff}`,
+      );
+      assert(
+        "turn diff uses details.patch over display diff",
+        !e.diff.includes("  2 preexisting dirty line"),
+        `diff: ${e.diff}`,
+      );
+      assert(
+        "turn diff excludes pre-existing dirty work",
+        !e.diff.includes("preexisting dirty line"),
         `diff: ${e.diff}`,
       );
       assert("additions >= 2", e.additions >= 2, `additions=${e.additions}`);
@@ -199,7 +227,68 @@ async function unitTests(): Promise<void> {
     await rm(trackedDir, { recursive: true, force: true });
   }
 
-  // --- Case C: multi-edit same file in one turn — collapses to one entry. ---
+  // --- Case C: verbose pi-format tool diffs are trimmed around edits. ---
+  {
+    const filePath = join(projectPath, "verbose.ts");
+    await fsWrite(
+      filePath,
+      Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\n"),
+      "utf8",
+    );
+    const callId = randomUUID();
+    const verbosePiDiff = Array.from({ length: 20 }, (_, i) => {
+      const lineNo = i + 1;
+      if (lineNo === 10) return `- ${lineNo} line ${lineNo}`;
+      if (lineNo === 11) return `+ ${lineNo} changed line`;
+      return `  ${lineNo} line ${lineNo}`;
+    }).join("\n");
+    const messages = [
+      makeUserMessage("edit verbose.ts"),
+      makeAssistantWithCalls([
+        { type: "toolCall", id: callId, name: "edit", arguments: { path: filePath } },
+      ]),
+      makeToolResult({ toolCallId: callId, toolName: "edit", diff: verbosePiDiff }),
+    ];
+    const entries = await buildTurnDiff({ messages: messages as never[] }, projectPath);
+    const diff = entries[0]?.diff ?? "";
+    assert("verbose pi diff produces 1 entry", entries.length === 1);
+    assert("verbose pi diff keeps changed line", diff.includes("changed line"), diff);
+    assert("verbose pi diff trims distant leading context", !diff.includes("  1 line 1"), diff);
+    assert("verbose pi diff trims distant trailing context", !diff.includes("  20 line 20"), diff);
+  }
+
+  // --- Case D: untracked existing edit without details does NOT render as whole-file add. ---
+  {
+    const filePath = join(projectPath, "untracked-existing.ts");
+    await fsWrite(filePath, "one\ntwo changed\nthree\n", "utf8");
+    const callId = randomUUID();
+    const messages = [
+      makeUserMessage("edit an untracked existing file"),
+      makeAssistantWithCalls([
+        {
+          type: "toolCall",
+          id: callId,
+          name: "edit",
+          arguments: {
+            path: filePath,
+            edits: [{ oldText: "two", newText: "two changed" }],
+          },
+        },
+      ]),
+      makeToolResult({ toolCallId: callId, toolName: "edit" }),
+    ];
+    const entries = await buildTurnDiff({ messages: messages as never[] }, projectPath);
+    const e = entries[0];
+    assert("untracked existing edit produces 1 entry", entries.length === 1);
+    if (e !== undefined) {
+      assert("untracked existing edit is not pure addition", e.isPureAddition === false);
+      assert("untracked existing edit shows deletion", e.diff.includes("-two"), e.diff);
+      assert("untracked existing edit shows insertion", e.diff.includes("+two changed"), e.diff);
+      assert("untracked existing edit does not add every line", e.additions === 1, e.diff);
+    }
+  }
+
+  // --- Case E: multi-edit same file in one turn — collapses to one entry. ---
   {
     const filePath = join(projectPath, "multi.ts");
     await fsWrite(filePath, "a\nb\nc\n", "utf8");
@@ -226,7 +315,7 @@ async function unitTests(): Promise<void> {
     assert("multi-edit same file collapses to 1 entry", entries.length === 1);
   }
 
-  // --- Case D: only consider the LATEST turn (after most recent user message). ---
+  // --- Case F: only consider the LATEST turn (after most recent user message). ---
   {
     const filePath = join(projectPath, "older.ts");
     await fsWrite(filePath, "old\n", "utf8");
