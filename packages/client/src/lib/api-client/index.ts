@@ -88,7 +88,7 @@ function isObject(v: unknown): v is Record<string, unknown> {
 }
 
 const vVoid: Validator<undefined> = (value, status) => {
-  if (value !== undefined) fail(status, "expected empty body");
+  if (value !== undefined && value !== null) fail(status, "expected empty body");
   return undefined;
 };
 
@@ -1492,6 +1492,7 @@ async function request<T>(
   }
 
   if (!parsed.ok) {
+    if (text.length === 0) return validator(undefined, res.status);
     throw new ApiError(res.status, "invalid_response_body", "server returned non-JSON 2xx body");
   }
 
