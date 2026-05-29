@@ -15,6 +15,38 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.3.4] — 2026-05-28
+
+### Added
+
+- **Deleted sessions are archived before removal.** Session deletion now
+  writes the removed JSONL into pi-forge's archive path before disposing
+  the active registry entry, preserving recoverable local history instead
+  of immediately discarding the session file.
+- **Low-noise tool calls collapse into batch cards in chat.** Consecutive
+  read/search/list/process/todo-style tool calls now render as compact
+  expandable groups, while high-signal writes and edits stay visible as
+  standalone cards.
+
+### Fixed
+
+- **File viewer and turn diff rendering are more reliable.** File browser
+  paths, search-panel selection, and turn diff reconstruction handle more
+  edge cases, with expanded integration coverage for diff and file flows.
+- **Container images include Python 3.14 and pip support.** The Dockerfile
+  now builds the newer Python runtime and documents the container setup so
+  Python-based agent tooling works out of the box.
+- **Agent tool guidance avoids noisy process polling.** Todo/process tool
+  prompt strings now steer agents away from repeated status polling and
+  toward event-driven process notifications.
+- **Vite dev proxy respects the configured API port.** Local client dev
+  proxying now targets the dev API port rather than assuming the default.
+
+### Documentation
+
+- **Documented node-pty rebuild setup.** CONTRIBUTING.md now covers the
+  rebuild steps needed when native terminal dependencies change.
+
 ## [1.3.3] — 2026-05-28
 
 ### Added
