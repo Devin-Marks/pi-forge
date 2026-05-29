@@ -5,7 +5,7 @@ import type { WebSocket } from "ws";
 import { extractBearer, verifyApiKey, verifyToken } from "../auth.js";
 import { authEnabled } from "../config.js";
 import { getProject } from "../project-manager.js";
-import { attachSink, findPtyByTabId, spawnPty } from "../pty-manager.js";
+import { attachSink, findPtyByTabId, killPty, spawnPty } from "../pty-manager.js";
 
 /**
  * WebSocket close codes used here. Per RFC 6455 §7.4, codes in
@@ -22,6 +22,10 @@ const CLOSE_INTERNAL_ERROR = 4500;
  *
  *   { type: "input",  data: string }            keystrokes
  *   { type: "resize", cols: number, rows: number } pty resize
+ *
+ * An intentional terminal-tab close is signalled by closing the
+ * WebSocket with reason `tab_closed`; ordinary socket drops detach
+ * for reattach instead.
  *
  * Server → client is raw bytes (the PTY's stdout). xterm consumes
  * those directly. We don't wrap them in JSON to avoid latency on
@@ -345,16 +349,25 @@ export const terminalRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       let disposed = false;
-      const cleanup = (reason: string): void => {
+      const cleanup = (reason: string, killOnClose = false): void => {
         if (disposed) return;
         disposed = true;
         clearInterval(keepAliveTimer);
         detach();
         exitDisposable.dispose();
-        // NB: no killPty here. The PTY is intentionally kept alive
-        // so a page-refresh / network blip can reattach. The idle
-        // reaper inside attachSink will GC it after IDLE_REAP_MS
-        // if no reconnect arrives.
+        if (killOnClose) {
+          // Explicit tab close is different from a transient WS drop:
+          // the user asked to close this terminal, so terminate the
+          // backing PTY (and any foreground process attached to it)
+          // immediately instead of keeping it alive for reattach.
+          killPty(managed.ptyId);
+          log.info({ ptyId: managed.ptyId, tabId: managed.tabId, reason }, "terminal closed");
+          return;
+        }
+        // NB: no killPty on ordinary WS close. The PTY is intentionally
+        // kept alive so a page-refresh / network blip can reattach. The
+        // idle reaper inside attachSink will GC it after IDLE_REAP_MS if
+        // no reconnect arrives.
         log.info({ ptyId: managed.ptyId, tabId: managed.tabId, reason }, "terminal detached");
       };
 
@@ -389,7 +402,9 @@ export const terminalRoutes: FastifyPluginAsync = async (fastify) => {
         }
       });
 
-      socket.on("close", () => cleanup("ws_close"));
+      socket.on("close", (_code: number, reason: Buffer) => {
+        cleanup("ws_close", reason.toString("utf8") === "tab_closed");
+      });
       socket.on("error", (err) => {
         log.warn({ err, ptyId: managed.ptyId }, "terminal websocket error");
         cleanup("ws_error");
