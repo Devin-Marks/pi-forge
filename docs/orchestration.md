@@ -119,7 +119,7 @@ types:
 | `worker.ended` | Worker's AgentSession emitted `agent_end` |
 | `worker.ask_user` | Worker called `ask_user_question` |
 | `worker.auto_retry_failed` | Worker's SDK auto-retry exhausted on a provider error |
-| `worker.process_alert` | A background process the worker spawned exited (success / failure / external kill) |
+| `worker.process_alert` | Not enqueued for worker process alerts; process success/failure/kill notifications stay in the worker session and do not wake the supervisor |
 | `worker.deleted` | Worker's session was deleted (cold or live) |
 
 When an event lands, the bridge enqueues it AND tries to wake the
@@ -259,8 +259,8 @@ supervisor. v1 disallows this by design — depth is capped at 1.
   agent events" surface. Webhooks fan out OVER HTTPS to external
   systems; orchestration fans IN to a supervisor session.
 - [`processes.md`](./processes.md) — workers can spawn background
-  processes the same way standalone sessions can; process alerts
-  fed back into the supervisor's inbox as `worker.process_alert`.
+  processes the same way standalone sessions can; process alerts stay
+  local to the worker session and do not wake the supervisor.
 - [`ask-user-question.md`](./ask-user-question.md) — when a worker
   calls this tool, the supervisor sees a `worker.ask_user` inbox
   item and can answer via `orchestrate_send_to_worker`.
