@@ -36,7 +36,10 @@ const POLL_INTERVAL_MS = 15_000;
  * in flight. (AbortController would also work but adds API surface
  * the api-client doesn't expose.)
  */
-export function useGitStatus(projectId: string | undefined): {
+export function useGitStatus(
+  projectId: string | undefined,
+  worktreePath?: string | undefined,
+): {
   status: GitStatus | undefined;
   error: string | undefined;
   refresh: () => Promise<void>;
@@ -64,7 +67,7 @@ export function useGitStatus(projectId: string | undefined): {
     const myEpoch = epochRef.current;
     const myProjectId = projectId;
     try {
-      const next = await api.gitStatus(myProjectId);
+      const next = await api.gitStatus(myProjectId, worktreePath);
       if (epochRef.current !== myEpoch) return; // stale — project switched
       setStatus(next);
       setError(undefined);
@@ -81,7 +84,7 @@ export function useGitStatus(projectId: string | undefined): {
     epochRef.current += 1;
     setStatus(undefined);
     setError(undefined);
-  }, [projectId]);
+  }, [projectId, worktreePath]);
 
   useEffect(() => {
     if (projectId === undefined) return undefined;
@@ -94,7 +97,7 @@ export function useGitStatus(projectId: string | undefined): {
       window.clearInterval(id);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, isStreaming]);
+  }, [projectId, worktreePath, isStreaming]);
 
   // Push refresh on every agent_end. The polling effect above pauses
   // during streaming and only fires once when isStreaming flips back
@@ -110,7 +113,7 @@ export function useGitStatus(projectId: string | undefined): {
     if (agentEndCount === 0) return; // initial value, no agent_end yet
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, activeSessionId, agentEndCount]);
+  }, [projectId, worktreePath, activeSessionId, agentEndCount]);
 
   return { status, error, refresh };
 }

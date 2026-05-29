@@ -48,6 +48,8 @@ import {
   type GitBranchesResponse,
   type GitRemote,
   type GitRemotesResponse,
+  type GitWorktree,
+  type GitWorktreesResponse,
   type SearchMatch,
   type SearchResponse,
   type SearchOptions,
@@ -1322,6 +1324,35 @@ function vGitRemotes(value: unknown, status: number): GitRemotesResponse {
   };
 }
 
+function vGitWorktrees(value: unknown, status: number): GitWorktreesResponse {
+  if (!isObject(value) || typeof value.isGitRepo !== "boolean" || !Array.isArray(value.worktrees)) {
+    fail(status, "expected GitWorktreesResponse");
+  }
+  return {
+    isGitRepo: value.isGitRepo,
+    worktrees: value.worktrees.map((w): GitWorktree => {
+      if (
+        !isObject(w) ||
+        typeof w.path !== "string" ||
+        typeof w.bare !== "boolean" ||
+        typeof w.detached !== "boolean" ||
+        typeof w.current !== "boolean"
+      ) {
+        fail(status, "expected GitWorktree");
+      }
+      const out: GitWorktree = {
+        path: w.path,
+        bare: w.bare,
+        detached: w.detached,
+        current: w.current,
+      };
+      if (typeof w.head === "string") out.head = w.head;
+      if (typeof w.branch === "string") out.branch = w.branch;
+      return out;
+    }),
+  };
+}
+
 function vPathOnly(value: unknown, status: number): { path: string } {
   if (!isObject(value) || typeof value.path !== "string") {
     fail(status, "expected { path: string }");
@@ -1465,6 +1496,19 @@ async function request<T>(
   }
 
   return validator(parsed.value, res.status);
+}
+
+function gitQuery(
+  projectId: string,
+  worktreePath?: string,
+  extra?: Record<string, string>,
+): string {
+  const qs = new URLSearchParams({ projectId });
+  if (worktreePath !== undefined) qs.set("worktreePath", worktreePath);
+  if (extra !== undefined) {
+    for (const [key, value] of Object.entries(extra)) qs.set(key, value);
+  }
+  return qs.toString();
 }
 
 export const api = {
@@ -2616,61 +2660,70 @@ export const api = {
       },
       { method: "POST", body: { projectId } },
     ),
-  gitStatus: (projectId: string) =>
-    request(`/api/v1/git/status?projectId=${encodeURIComponent(projectId)}`, vGitStatus),
-  gitDiff: (projectId: string) =>
-    request(`/api/v1/git/diff?projectId=${encodeURIComponent(projectId)}`, vGitDiff),
-  gitDiffStaged: (projectId: string) =>
-    request(`/api/v1/git/diff/staged?projectId=${encodeURIComponent(projectId)}`, vGitDiff),
-  gitDiffFile: (projectId: string, path: string, staged: boolean) => {
-    const qs = new URLSearchParams({ projectId, path });
-    if (staged) qs.set("staged", "1");
-    return request(`/api/v1/git/diff/file?${qs.toString()}`, vGitDiff);
+  gitStatus: (projectId: string, worktreePath?: string) =>
+    request(`/api/v1/git/status?${gitQuery(projectId, worktreePath)}`, vGitStatus),
+  gitWorktrees: (projectId: string) =>
+    request(`/api/v1/git/worktrees?${gitQuery(projectId)}`, vGitWorktrees),
+  gitDiff: (projectId: string, worktreePath?: string) =>
+    request(`/api/v1/git/diff?${gitQuery(projectId, worktreePath)}`, vGitDiff),
+  gitDiffStaged: (projectId: string, worktreePath?: string) =>
+    request(`/api/v1/git/diff/staged?${gitQuery(projectId, worktreePath)}`, vGitDiff),
+  gitDiffFile: (projectId: string, path: string, staged: boolean, worktreePath?: string) => {
+    const extra: Record<string, string> = { path };
+    if (staged) extra.staged = "1";
+    return request(`/api/v1/git/diff/file?${gitQuery(projectId, worktreePath, extra)}`, vGitDiff);
   },
-  gitLog: (projectId: string, limit?: number) => {
-    const qs = new URLSearchParams({ projectId });
-    if (limit !== undefined) qs.set("limit", String(limit));
-    return request(`/api/v1/git/log?${qs.toString()}`, vGitLog);
+  gitLog: (projectId: string, limit?: number, worktreePath?: string) => {
+    const extra: Record<string, string> = {};
+    if (limit !== undefined) extra.limit = String(limit);
+    return request(`/api/v1/git/log?${gitQuery(projectId, worktreePath, extra)}`, vGitLog);
   },
-  gitBranches: (projectId: string) =>
-    request(`/api/v1/git/branches?projectId=${encodeURIComponent(projectId)}`, vGitBranches),
-  gitRemotes: (projectId: string) =>
-    request(`/api/v1/git/remotes?projectId=${encodeURIComponent(projectId)}`, vGitRemotes),
-  gitRemoteAdd: (projectId: string, name: string, url: string) =>
+  gitBranches: (projectId: string, worktreePath?: string) =>
+    request(`/api/v1/git/branches?${gitQuery(projectId, worktreePath)}`, vGitBranches),
+  gitRemotes: (projectId: string, worktreePath?: string) =>
+    request(`/api/v1/git/remotes?${gitQuery(projectId, worktreePath)}`, vGitRemotes),
+  gitRemoteAdd: (projectId: string, name: string, url: string, worktreePath?: string) =>
     request(
       "/api/v1/git/remote/add",
       (v, s) => {
         if (!isObject(v) || v.ok !== true) fail(s, "expected { ok: true }");
         return { ok: true as const };
       },
-      { method: "POST", body: { projectId, name, url } },
+      {
+        method: "POST",
+        body: { projectId, name, url, ...(worktreePath !== undefined ? { worktreePath } : {}) },
+      },
     ),
-  gitRemoteRemove: (projectId: string, name: string) =>
+  gitRemoteRemove: (projectId: string, name: string, worktreePath?: string) =>
     request(
-      `/api/v1/git/remote/${encodeURIComponent(name)}?projectId=${encodeURIComponent(projectId)}`,
+      `/api/v1/git/remote/${encodeURIComponent(name)}?${gitQuery(projectId, worktreePath)}`,
       (v, s) => {
         if (!isObject(v) || v.ok !== true) fail(s, "expected { ok: true }");
         return { ok: true as const };
       },
       { method: "DELETE" },
     ),
-  gitCheckout: (projectId: string, branch: string) =>
+  gitCheckout: (projectId: string, branch: string, worktreePath?: string) =>
     request(
       "/api/v1/git/checkout",
       (v, s) => {
         if (!isObject(v) || v.ok !== true) fail(s, "expected { ok: true }");
         return { ok: true as const };
       },
-      { method: "POST", body: { projectId, branch } },
+      {
+        method: "POST",
+        body: { projectId, branch, ...(worktreePath !== undefined ? { worktreePath } : {}) },
+      },
     ),
   gitBranchCreate: (
     projectId: string,
     name: string,
-    opts?: { startPoint?: string; checkout?: boolean },
+    opts?: { startPoint?: string; checkout?: boolean; worktreePath?: string },
   ) => {
     const body: Record<string, unknown> = { projectId, name };
     if (opts?.startPoint !== undefined) body.startPoint = opts.startPoint;
     if (opts?.checkout !== undefined) body.checkout = opts.checkout;
+    if (opts?.worktreePath !== undefined) body.worktreePath = opts.worktreePath;
     return request(
       "/api/v1/git/branch/create",
       (v, s) => {
@@ -2680,11 +2733,11 @@ export const api = {
       { method: "POST", body },
     );
   },
-  gitBranchDelete: (projectId: string, name: string, force?: boolean) => {
-    const qs = new URLSearchParams({ projectId });
-    if (force === true) qs.set("force", "1");
+  gitBranchDelete: (projectId: string, name: string, force?: boolean, worktreePath?: string) => {
+    const extra: Record<string, string> = {};
+    if (force === true) extra.force = "1";
     return request(
-      `/api/v1/git/branch/${encodeURIComponent(name)}?${qs.toString()}`,
+      `/api/v1/git/branch/${encodeURIComponent(name)}?${gitQuery(projectId, worktreePath, extra)}`,
       (v, s) => {
         if (!isObject(v) || v.ok !== true) fail(s, "expected { ok: true }");
         return { ok: true as const };
@@ -2692,23 +2745,29 @@ export const api = {
       { method: "DELETE" },
     );
   },
-  gitStage: (projectId: string, paths: string[]) =>
+  gitStage: (projectId: string, paths: string[], worktreePath?: string) =>
     request(
       "/api/v1/git/stage",
       (v, s) => {
         if (!isObject(v) || v.ok !== true) fail(s, "expected { ok: true }");
         return { ok: true as const };
       },
-      { method: "POST", body: { projectId, paths } },
+      {
+        method: "POST",
+        body: { projectId, paths, ...(worktreePath !== undefined ? { worktreePath } : {}) },
+      },
     ),
-  gitUnstage: (projectId: string, paths: string[]) =>
+  gitUnstage: (projectId: string, paths: string[], worktreePath?: string) =>
     request(
       "/api/v1/git/unstage",
       (v, s) => {
         if (!isObject(v) || v.ok !== true) fail(s, "expected { ok: true }");
         return { ok: true as const };
       },
-      { method: "POST", body: { projectId, paths } },
+      {
+        method: "POST",
+        body: { projectId, paths, ...(worktreePath !== undefined ? { worktreePath } : {}) },
+      },
     ),
   /**
    * Stage or unstage selected hunks of a single file. Server returns
@@ -2722,6 +2781,7 @@ export const api = {
     path: string,
     mode: "stage" | "unstage",
     hunkIndices: number[],
+    worktreePath?: string,
   ) =>
     request<{ ok: boolean; error?: string; totalHunks?: number }>(
       "/api/v1/git/apply-hunks",
@@ -2734,30 +2794,49 @@ export const api = {
         if (typeof v.totalHunks === "number") out.totalHunks = v.totalHunks;
         return out;
       },
-      { method: "POST", body: { projectId, path, mode, hunkIndices } },
+      {
+        method: "POST",
+        body: {
+          projectId,
+          path,
+          mode,
+          hunkIndices,
+          ...(worktreePath !== undefined ? { worktreePath } : {}),
+        },
+      },
     ),
-  gitRevert: (projectId: string, paths: string[]) =>
+  gitRevert: (projectId: string, paths: string[], worktreePath?: string) =>
     request(
       "/api/v1/git/revert",
       (v, s) => {
         if (!isObject(v) || v.ok !== true) fail(s, "expected { ok: true }");
         return { ok: true as const };
       },
-      { method: "POST", body: { projectId, paths } },
+      {
+        method: "POST",
+        body: { projectId, paths, ...(worktreePath !== undefined ? { worktreePath } : {}) },
+      },
     ),
-  gitCommit: (projectId: string, message: string) =>
+  gitCommit: (projectId: string, message: string, worktreePath?: string) =>
     request(
       "/api/v1/git/commit",
       (v, s) => {
         if (!isObject(v) || typeof v.hash !== "string") fail(s, "expected { hash }");
         return { hash: v.hash };
       },
-      { method: "POST", body: { projectId, message } },
+      {
+        method: "POST",
+        body: { projectId, message, ...(worktreePath !== undefined ? { worktreePath } : {}) },
+      },
     ),
-  gitFetch: (projectId: string, opts?: { remote?: string; prune?: boolean }) => {
+  gitFetch: (
+    projectId: string,
+    opts?: { remote?: string; prune?: boolean; worktreePath?: string },
+  ) => {
     const body: Record<string, unknown> = { projectId };
     if (opts?.remote !== undefined) body.remote = opts.remote;
     if (opts?.prune !== undefined) body.prune = opts.prune;
+    if (opts?.worktreePath !== undefined) body.worktreePath = opts.worktreePath;
     return request(
       "/api/v1/git/fetch",
       (v, s) => {
@@ -2767,11 +2846,15 @@ export const api = {
       { method: "POST", body },
     );
   },
-  gitPull: (projectId: string, opts?: { remote?: string; branch?: string; rebase?: boolean }) => {
+  gitPull: (
+    projectId: string,
+    opts?: { remote?: string; branch?: string; rebase?: boolean; worktreePath?: string },
+  ) => {
     const body: Record<string, unknown> = { projectId };
     if (opts?.remote !== undefined) body.remote = opts.remote;
     if (opts?.branch !== undefined) body.branch = opts.branch;
     if (opts?.rebase !== undefined) body.rebase = opts.rebase;
+    if (opts?.worktreePath !== undefined) body.worktreePath = opts.worktreePath;
     return request(
       "/api/v1/git/pull",
       (v, s) => {
@@ -2783,12 +2866,13 @@ export const api = {
   },
   gitPush: (
     projectId: string,
-    opts?: { remote?: string; branch?: string; setUpstream?: boolean },
+    opts?: { remote?: string; branch?: string; setUpstream?: boolean; worktreePath?: string },
   ) => {
     const body: Record<string, unknown> = { projectId };
     if (opts?.remote !== undefined) body.remote = opts.remote;
     if (opts?.branch !== undefined) body.branch = opts.branch;
     if (opts?.setUpstream !== undefined) body.setUpstream = opts.setUpstream;
+    if (opts?.worktreePath !== undefined) body.worktreePath = opts.worktreePath;
     return request(
       "/api/v1/git/push",
       (v, s) => {

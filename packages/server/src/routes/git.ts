@@ -17,6 +17,7 @@ import {
   getLog,
   getStagedDiff,
   getStatus,
+  getWorktrees,
   initRepo,
   isGitRepo,
   pull,
@@ -27,6 +28,7 @@ import {
 } from "../git-runner.js";
 import { applyHunks, HunkStagingError } from "../git-hunk-stager.js";
 import { config } from "../config.js";
+import { PathOutsideRootError } from "../file-manager.js";
 import { getProject } from "../project-manager.js";
 import { errorSchema } from "./_schemas.js";
 
@@ -141,6 +143,36 @@ const remotesSchema = {
   },
 } as const;
 
+const worktreesSchema = {
+  type: "object",
+  required: ["isGitRepo", "worktrees"],
+  properties: {
+    isGitRepo: { type: "boolean" },
+    worktrees: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["path", "bare", "detached", "current"],
+        properties: {
+          path: { type: "string" },
+          head: { type: "string" },
+          branch: { type: "string" },
+          bare: { type: "boolean" },
+          detached: { type: "boolean" },
+          current: { type: "boolean" },
+        },
+      },
+    },
+  },
+} as const;
+
+class InvalidWorktreePathError extends Error {
+  constructor(path: string) {
+    super(`invalid worktree path: ${path}`);
+    this.name = "InvalidWorktreePathError";
+  }
+}
+
 /* ----------------------------- error mapping ----------------------------- */
 
 function mapError(reply: FastifyReply, err: unknown): FastifyReply {
@@ -152,6 +184,12 @@ function mapError(reply: FastifyReply, err: unknown): FastifyReply {
   }
   if (err instanceof InvalidBranchNameError) {
     return reply.code(400).send({ error: "invalid_branch_name", message: err.message });
+  }
+  if (err instanceof InvalidWorktreePathError) {
+    return reply.code(400).send({ error: "invalid_worktree_path", message: err.message });
+  }
+  if (err instanceof PathOutsideRootError) {
+    return reply.code(403).send({ error: "path_not_allowed", message: "path outside workspace" });
   }
   if (err instanceof GitCommandError) {
     // Git "rejected" / "non-fast-forward" / commit hook failures /
@@ -216,6 +254,44 @@ async function withProject<T>(
   }
 }
 
+async function resolveGitCwd(
+  project: { path: string },
+  worktreePath: string | undefined,
+): Promise<string> {
+  if (worktreePath === undefined) return project.path;
+  const listed = await getWorktrees(project.path);
+  const match = listed.worktrees.find((w) => w.path === worktreePath);
+  if (match === undefined) throw new InvalidWorktreePathError(worktreePath);
+  return match.path;
+}
+
+async function withGitCwd<T>(
+  projectId: string,
+  worktreePath: string | undefined,
+  reply: FastifyReply,
+  fn: (cwd: string) => Promise<T>,
+): Promise<T | FastifyReply | undefined> {
+  const project = await resolveProject(projectId, reply);
+  if (project === undefined) return reply;
+  try {
+    const cwd = await resolveGitCwd(project, worktreePath);
+    return await fn(cwd);
+  } catch (err) {
+    return mapError(reply, err);
+  }
+}
+
+const projectWorktreeQuerySchema = {
+  type: "object",
+  required: ["projectId"],
+  properties: {
+    projectId: { type: "string", minLength: 1 },
+    worktreePath: { type: "string", minLength: 1 },
+  },
+} as const;
+
+const worktreeBodyProperty = { worktreePath: { type: "string", minLength: 1 } } as const;
+
 /* ----------------------------- routes ----------------------------- */
 
 export const gitRoutes: FastifyPluginAsync = async (fastify) => {
@@ -265,7 +341,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  fastify.get<{ Querystring: { projectId: string } }>(
+  fastify.get<{ Querystring: { projectId: string; worktreePath?: string } }>(
     "/git/status",
     {
       // Polled by the client every ~15s while a project is open. We
@@ -281,60 +357,91 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
           "`{ isGitRepo: false, files: [] }` (NOT 500) so the panel can sit " +
           "quiet on plain folders.",
         tags: ["git"],
+        querystring: projectWorktreeQuerySchema,
+        response: {
+          200: statusSchema,
+          400: errorSchema,
+          403: errorSchema,
+          404: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) =>
+      withGitCwd(req.query.projectId, req.query.worktreePath, reply, (cwd) => getStatus(cwd)),
+  );
+
+  fastify.get<{ Querystring: { projectId: string } }>(
+    "/git/worktrees",
+    {
+      schema: {
+        description:
+          "List registered git worktrees for the project's repository. Returned absolute paths " +
+          "can be passed back as `worktreePath` to git routes and are accepted only if still registered.",
+        tags: ["git"],
         querystring: {
           type: "object",
           required: ["projectId"],
           properties: { projectId: { type: "string", minLength: 1 } },
         },
-        response: { 200: statusSchema, 400: errorSchema, 404: errorSchema, 500: errorSchema },
+        response: {
+          200: worktreesSchema,
+          400: errorSchema,
+          403: errorSchema,
+          404: errorSchema,
+          500: errorSchema,
+        },
       },
     },
-    async (req, reply) => {
-      const project = await resolveProject(req.query.projectId, reply);
-      if (project === undefined) return reply;
-      try {
-        return await getStatus(project.path);
-      } catch (err) {
-        return mapError(reply, err);
-      }
-    },
+    async (req, reply) =>
+      withProject(req.query.projectId, reply, async (p) => {
+        return getWorktrees(p.path);
+      }),
   );
 
-  fastify.get<{ Querystring: { projectId: string } }>(
+  fastify.get<{ Querystring: { projectId: string; worktreePath?: string } }>(
     "/git/diff",
     {
       schema: {
         description: "Unstaged unified diff for the project (working tree vs index).",
         tags: ["git"],
-        querystring: {
-          type: "object",
-          required: ["projectId"],
-          properties: { projectId: { type: "string", minLength: 1 } },
+        querystring: projectWorktreeQuerySchema,
+        response: {
+          200: diffSchema,
+          400: errorSchema,
+          403: errorSchema,
+          404: errorSchema,
+          500: errorSchema,
         },
-        response: { 200: diffSchema, 400: errorSchema, 404: errorSchema, 500: errorSchema },
       },
     },
-    async (req, reply) => withProject(req.query.projectId, reply, (p) => getDiff(p.path)),
+    async (req, reply) =>
+      withGitCwd(req.query.projectId, req.query.worktreePath, reply, (cwd) => getDiff(cwd)),
   );
 
-  fastify.get<{ Querystring: { projectId: string } }>(
+  fastify.get<{ Querystring: { projectId: string; worktreePath?: string } }>(
     "/git/diff/staged",
     {
       schema: {
         description: "Staged unified diff (index vs HEAD).",
         tags: ["git"],
-        querystring: {
-          type: "object",
-          required: ["projectId"],
-          properties: { projectId: { type: "string", minLength: 1 } },
+        querystring: projectWorktreeQuerySchema,
+        response: {
+          200: diffSchema,
+          400: errorSchema,
+          403: errorSchema,
+          404: errorSchema,
+          500: errorSchema,
         },
-        response: { 200: diffSchema, 400: errorSchema, 404: errorSchema, 500: errorSchema },
       },
     },
-    async (req, reply) => withProject(req.query.projectId, reply, (p) => getStagedDiff(p.path)),
+    async (req, reply) =>
+      withGitCwd(req.query.projectId, req.query.worktreePath, reply, (cwd) => getStagedDiff(cwd)),
   );
 
-  fastify.get<{ Querystring: { projectId: string; path: string; staged?: string } }>(
+  fastify.get<{
+    Querystring: { projectId: string; path: string; staged?: string; worktreePath?: string };
+  }>(
     "/git/diff/file",
     {
       schema: {
@@ -349,20 +456,27 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
             projectId: { type: "string", minLength: 1 },
             path: { type: "string", minLength: 1 },
             staged: { type: "string", enum: ["0", "1", "true", "false"] },
+            worktreePath: { type: "string", minLength: 1 },
           },
         },
-        response: { 200: diffSchema, 400: errorSchema, 404: errorSchema, 500: errorSchema },
+        response: {
+          200: diffSchema,
+          400: errorSchema,
+          403: errorSchema,
+          404: errorSchema,
+          500: errorSchema,
+        },
       },
     },
     async (req, reply) => {
       const staged = req.query.staged === "1" || req.query.staged === "true";
-      return withProject(req.query.projectId, reply, (p) =>
-        getFileDiff(p.path, req.query.path, staged),
+      return withGitCwd(req.query.projectId, req.query.worktreePath, reply, (cwd) =>
+        getFileDiff(cwd, req.query.path, staged),
       );
     },
   );
 
-  fastify.get<{ Querystring: { projectId: string; limit?: string } }>(
+  fastify.get<{ Querystring: { projectId: string; limit?: string; worktreePath?: string } }>(
     "/git/log",
     {
       schema: {
@@ -375,9 +489,16 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
           properties: {
             projectId: { type: "string", minLength: 1 },
             limit: { type: "string", pattern: "^[0-9]+$" },
+            worktreePath: { type: "string", minLength: 1 },
           },
         },
-        response: { 200: logSchema, 400: errorSchema, 404: errorSchema, 500: errorSchema },
+        response: {
+          200: logSchema,
+          400: errorSchema,
+          403: errorSchema,
+          404: errorSchema,
+          500: errorSchema,
+        },
       },
     },
     async (req, reply) => {
@@ -385,28 +506,33 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
         req.query.limit !== undefined
           ? Math.min(1000, Math.max(1, Number.parseInt(req.query.limit, 10)))
           : 30;
-      return withProject(req.query.projectId, reply, (p) => getLog(p.path, limit));
+      return withGitCwd(req.query.projectId, req.query.worktreePath, reply, (cwd) =>
+        getLog(cwd, limit),
+      );
     },
   );
 
-  fastify.get<{ Querystring: { projectId: string } }>(
+  fastify.get<{ Querystring: { projectId: string; worktreePath?: string } }>(
     "/git/branches",
     {
       schema: {
         description: "Local + remote branch list with `current` flag.",
         tags: ["git"],
-        querystring: {
-          type: "object",
-          required: ["projectId"],
-          properties: { projectId: { type: "string", minLength: 1 } },
+        querystring: projectWorktreeQuerySchema,
+        response: {
+          200: branchesSchema,
+          400: errorSchema,
+          403: errorSchema,
+          404: errorSchema,
+          500: errorSchema,
         },
-        response: { 200: branchesSchema, 400: errorSchema, 404: errorSchema, 500: errorSchema },
       },
     },
-    async (req, reply) => withProject(req.query.projectId, reply, (p) => getBranches(p.path)),
+    async (req, reply) =>
+      withGitCwd(req.query.projectId, req.query.worktreePath, reply, (cwd) => getBranches(cwd)),
   );
 
-  fastify.get<{ Querystring: { projectId: string } }>(
+  fastify.get<{ Querystring: { projectId: string; worktreePath?: string } }>(
     "/git/remotes",
     {
       schema: {
@@ -414,18 +540,21 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
           "Configured git remotes with their fetch + push URLs. " +
           "Empty array for non-git projects or repos with no remotes.",
         tags: ["git"],
-        querystring: {
-          type: "object",
-          required: ["projectId"],
-          properties: { projectId: { type: "string", minLength: 1 } },
+        querystring: projectWorktreeQuerySchema,
+        response: {
+          200: remotesSchema,
+          400: errorSchema,
+          403: errorSchema,
+          404: errorSchema,
+          500: errorSchema,
         },
-        response: { 200: remotesSchema, 400: errorSchema, 404: errorSchema, 500: errorSchema },
       },
     },
-    async (req, reply) => withProject(req.query.projectId, reply, (p) => getRemotes(p.path)),
+    async (req, reply) =>
+      withGitCwd(req.query.projectId, req.query.worktreePath, reply, (cwd) => getRemotes(cwd)),
   );
 
-  fastify.post<{ Body: { projectId: string; name: string; url: string } }>(
+  fastify.post<{ Body: { projectId: string; name: string; url: string; worktreePath?: string } }>(
     "/git/remote/add",
     {
       schema: {
@@ -443,6 +572,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
             projectId: { type: "string", minLength: 1 },
             name: { type: "string", minLength: 1 },
             url: { type: "string", minLength: 1, maxLength: 1024 },
+            ...worktreeBodyProperty,
           },
         },
         response: {
@@ -453,19 +583,17 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
         },
       },
     },
-    async (req, reply) => {
-      const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return reply;
-      try {
-        await addRemote(project.path, req.body.name, req.body.url);
+    async (req, reply) =>
+      withGitCwd(req.body.projectId, req.body.worktreePath, reply, async (cwd) => {
+        await addRemote(cwd, req.body.name, req.body.url);
         return { ok: true };
-      } catch (err) {
-        return mapError(reply, err);
-      }
-    },
+      }),
   );
 
-  fastify.delete<{ Params: { name: string }; Querystring: { projectId: string } }>(
+  fastify.delete<{
+    Params: { name: string };
+    Querystring: { projectId: string; worktreePath?: string };
+  }>(
     "/git/remote/:name",
     {
       schema: {
@@ -478,11 +606,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
           required: ["name"],
           properties: { name: { type: "string", minLength: 1 } },
         },
-        querystring: {
-          type: "object",
-          required: ["projectId"],
-          properties: { projectId: { type: "string", minLength: 1 } },
-        },
+        querystring: projectWorktreeQuerySchema,
         response: {
           200: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
           400: errorSchema,
@@ -491,19 +615,14 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
         },
       },
     },
-    async (req, reply) => {
-      const project = await resolveProject(req.query.projectId, reply);
-      if (project === undefined) return reply;
-      try {
-        await removeRemote(project.path, req.params.name);
+    async (req, reply) =>
+      withGitCwd(req.query.projectId, req.query.worktreePath, reply, async (cwd) => {
+        await removeRemote(cwd, req.params.name);
         return { ok: true };
-      } catch (err) {
-        return mapError(reply, err);
-      }
-    },
+      }),
   );
 
-  fastify.post<{ Body: { projectId: string; branch: string } }>(
+  fastify.post<{ Body: { projectId: string; branch: string; worktreePath?: string } }>(
     "/git/checkout",
     {
       schema: {
@@ -520,6 +639,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
           properties: {
             projectId: { type: "string", minLength: 1 },
             branch: { type: "string", minLength: 1 },
+            ...worktreeBodyProperty,
           },
         },
         response: {
@@ -530,20 +650,21 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
         },
       },
     },
-    async (req, reply) => {
-      const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return reply;
-      try {
-        await checkoutBranch(project.path, req.body.branch);
+    async (req, reply) =>
+      withGitCwd(req.body.projectId, req.body.worktreePath, reply, async (cwd) => {
+        await checkoutBranch(cwd, req.body.branch);
         return { ok: true };
-      } catch (err) {
-        return mapError(reply, err);
-      }
-    },
+      }),
   );
 
   fastify.post<{
-    Body: { projectId: string; name: string; startPoint?: string; checkout?: boolean };
+    Body: {
+      projectId: string;
+      name: string;
+      startPoint?: string;
+      checkout?: boolean;
+      worktreePath?: string;
+    };
   }>(
     "/git/branch/create",
     {
@@ -562,6 +683,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
             name: { type: "string", minLength: 1 },
             startPoint: { type: "string", minLength: 1 },
             checkout: { type: "boolean" },
+            ...worktreeBodyProperty,
           },
         },
         response: {
@@ -572,22 +694,20 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
         },
       },
     },
-    async (req, reply) => {
-      const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return reply;
-      try {
+    async (req, reply) =>
+      withGitCwd(req.body.projectId, req.body.worktreePath, reply, async (cwd) => {
         const opts: { startPoint?: string; checkout?: boolean } = {};
         if (req.body.startPoint !== undefined) opts.startPoint = req.body.startPoint;
         if (req.body.checkout !== undefined) opts.checkout = req.body.checkout;
-        await createBranch(project.path, req.body.name, opts);
+        await createBranch(cwd, req.body.name, opts);
         return { ok: true };
-      } catch (err) {
-        return mapError(reply, err);
-      }
-    },
+      }),
   );
 
-  fastify.delete<{ Querystring: { projectId: string; force?: string }; Params: { name: string } }>(
+  fastify.delete<{
+    Querystring: { projectId: string; force?: string; worktreePath?: string };
+    Params: { name: string };
+  }>(
     "/git/branch/:name",
     {
       schema: {
@@ -607,6 +727,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
           properties: {
             projectId: { type: "string", minLength: 1 },
             force: { type: "string", enum: ["0", "1", "true", "false"] },
+            worktreePath: { type: "string", minLength: 1 },
           },
         },
         response: {
@@ -618,19 +739,15 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
-      const project = await resolveProject(req.query.projectId, reply);
-      if (project === undefined) return reply;
-      try {
-        const force = req.query.force === "1" || req.query.force === "true";
-        await deleteBranch(project.path, req.params.name, { force });
+      const force = req.query.force === "1" || req.query.force === "true";
+      return withGitCwd(req.query.projectId, req.query.worktreePath, reply, async (cwd) => {
+        await deleteBranch(cwd, req.params.name, { force });
         return { ok: true };
-      } catch (err) {
-        return mapError(reply, err);
-      }
+      });
     },
   );
 
-  fastify.post<{ Body: { projectId: string; paths: string[] } }>(
+  fastify.post<{ Body: { projectId: string; paths: string[]; worktreePath?: string } }>(
     "/git/stage",
     {
       schema: {
@@ -653,6 +770,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
               // even a very wide repo land well under 1000 paths.
               maxItems: 1000,
             },
+            ...worktreeBodyProperty,
           },
         },
         response: {
@@ -663,19 +781,14 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
         },
       },
     },
-    async (req, reply) => {
-      const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return reply;
-      try {
-        await stagePaths(project.path, req.body.paths);
+    async (req, reply) =>
+      withGitCwd(req.body.projectId, req.body.worktreePath, reply, async (cwd) => {
+        await stagePaths(cwd, req.body.paths);
         return { ok: true };
-      } catch (err) {
-        return mapError(reply, err);
-      }
-    },
+      }),
   );
 
-  fastify.post<{ Body: { projectId: string; paths: string[] } }>(
+  fastify.post<{ Body: { projectId: string; paths: string[]; worktreePath?: string } }>(
     "/git/unstage",
     {
       schema: {
@@ -698,6 +811,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
               // even a very wide repo land well under 1000 paths.
               maxItems: 1000,
             },
+            ...worktreeBodyProperty,
           },
         },
         response: {
@@ -708,16 +822,11 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
         },
       },
     },
-    async (req, reply) => {
-      const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return reply;
-      try {
-        await unstagePaths(project.path, req.body.paths);
+    async (req, reply) =>
+      withGitCwd(req.body.projectId, req.body.worktreePath, reply, async (cwd) => {
+        await unstagePaths(cwd, req.body.paths);
         return { ok: true };
-      } catch (err) {
-        return mapError(reply, err);
-      }
-    },
+      }),
   );
 
   fastify.post<{
@@ -726,6 +835,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
       path: string;
       mode: "stage" | "unstage";
       hunkIndices: number[];
+      worktreePath?: string;
     };
   }>(
     "/git/apply-hunks",
@@ -754,6 +864,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
               minItems: 1,
               maxItems: 1_000,
             },
+            ...worktreeBodyProperty,
           },
         },
         response: {
@@ -772,31 +883,30 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
         },
       },
     },
-    async (req, reply) => {
-      const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return reply;
-      try {
-        const { totalHunks } = await applyHunks(
-          project.path,
-          req.body.path,
-          req.body.hunkIndices,
-          req.body.mode,
-        );
-        return { ok: true, totalHunks };
-      } catch (err) {
-        // HunkStagingError carries a code suitable for the UI to show
-        // (binary_or_no_hunks, no_diff, hunk_index_out_of_range,
-        // git_apply_failed). Return as ok:false so the panel can render
-        // a banner rather than a generic toast.
-        if (err instanceof HunkStagingError) {
-          return { ok: false, error: err.code, totalHunks: 0 };
+    async (req, reply) =>
+      withGitCwd(req.body.projectId, req.body.worktreePath, reply, async (cwd) => {
+        try {
+          const { totalHunks } = await applyHunks(
+            cwd,
+            req.body.path,
+            req.body.hunkIndices,
+            req.body.mode,
+          );
+          return { ok: true, totalHunks };
+        } catch (err) {
+          // HunkStagingError carries a code suitable for the UI to show
+          // (binary_or_no_hunks, no_diff, hunk_index_out_of_range,
+          // git_apply_failed). Return as ok:false so the panel can render
+          // a banner rather than a generic toast.
+          if (err instanceof HunkStagingError) {
+            return { ok: false, error: err.code, totalHunks: 0 };
+          }
+          throw err;
         }
-        return mapError(reply, err);
-      }
-    },
+      }),
   );
 
-  fastify.post<{ Body: { projectId: string; paths: string[] } }>(
+  fastify.post<{ Body: { projectId: string; paths: string[]; worktreePath?: string } }>(
     "/git/revert",
     {
       schema: {
@@ -825,6 +935,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
               // even a very wide repo land well under 1000 paths.
               maxItems: 1000,
             },
+            ...worktreeBodyProperty,
           },
         },
         response: {
@@ -835,19 +946,14 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
         },
       },
     },
-    async (req, reply) => {
-      const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return reply;
-      try {
-        await revertPaths(project.path, req.body.paths);
+    async (req, reply) =>
+      withGitCwd(req.body.projectId, req.body.worktreePath, reply, async (cwd) => {
+        await revertPaths(cwd, req.body.paths);
         return { ok: true };
-      } catch (err) {
-        return mapError(reply, err);
-      }
-    },
+      }),
   );
 
-  fastify.post<{ Body: { projectId: string; message: string } }>(
+  fastify.post<{ Body: { projectId: string; message: string; worktreePath?: string } }>(
     "/git/commit",
     {
       schema: {
@@ -863,6 +969,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
           properties: {
             projectId: { type: "string", minLength: 1 },
             message: { type: "string", minLength: 1 },
+            ...worktreeBodyProperty,
           },
         },
         response: {
@@ -878,21 +985,19 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
-      const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return reply;
       const message = req.body.message.trim();
       if (message.length === 0) {
         return reply.code(400).send({ error: "empty_message" });
       }
-      try {
-        return await commit(project.path, message);
-      } catch (err) {
-        return mapError(reply, err);
-      }
+      return withGitCwd(req.body.projectId, req.body.worktreePath, reply, (cwd) =>
+        commit(cwd, message),
+      );
     },
   );
 
-  fastify.post<{ Body: { projectId: string; remote?: string; prune?: boolean } }>(
+  fastify.post<{
+    Body: { projectId: string; remote?: string; prune?: boolean; worktreePath?: string };
+  }>(
     "/git/fetch",
     {
       schema: {
@@ -909,6 +1014,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
             projectId: { type: "string", minLength: 1 },
             remote: { type: "string", minLength: 1 },
             prune: { type: "boolean" },
+            ...worktreeBodyProperty,
           },
         },
         response: {
@@ -919,23 +1025,24 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
         },
       },
     },
-    async (req, reply) => {
-      const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return reply;
-      try {
+    async (req, reply) =>
+      withGitCwd(req.body.projectId, req.body.worktreePath, reply, async (cwd) => {
         const opts: { remote?: string; prune?: boolean } = {};
         if (req.body.remote !== undefined) opts.remote = req.body.remote;
         if (req.body.prune !== undefined) opts.prune = req.body.prune;
-        const { stdout } = await fetch(project.path, opts);
+        const { stdout } = await fetch(cwd, opts);
         return { output: stdout };
-      } catch (err) {
-        return mapError(reply, err);
-      }
-    },
+      }),
   );
 
   fastify.post<{
-    Body: { projectId: string; remote?: string; branch?: string; rebase?: boolean };
+    Body: {
+      projectId: string;
+      remote?: string;
+      branch?: string;
+      rebase?: boolean;
+      worktreePath?: string;
+    };
   }>(
     "/git/pull",
     {
@@ -955,6 +1062,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
             remote: { type: "string", minLength: 1 },
             branch: { type: "string", minLength: 1 },
             rebase: { type: "boolean" },
+            ...worktreeBodyProperty,
           },
         },
         response: {
@@ -965,24 +1073,25 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
         },
       },
     },
-    async (req, reply) => {
-      const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return reply;
-      try {
+    async (req, reply) =>
+      withGitCwd(req.body.projectId, req.body.worktreePath, reply, async (cwd) => {
         const opts: { remote?: string; branch?: string; rebase?: boolean } = {};
         if (req.body.remote !== undefined) opts.remote = req.body.remote;
         if (req.body.branch !== undefined) opts.branch = req.body.branch;
         if (req.body.rebase !== undefined) opts.rebase = req.body.rebase;
-        const { stdout } = await pull(project.path, opts);
+        const { stdout } = await pull(cwd, opts);
         return { output: stdout };
-      } catch (err) {
-        return mapError(reply, err);
-      }
-    },
+      }),
   );
 
   fastify.post<{
-    Body: { projectId: string; remote?: string; branch?: string; setUpstream?: boolean };
+    Body: {
+      projectId: string;
+      remote?: string;
+      branch?: string;
+      setUpstream?: boolean;
+      worktreePath?: string;
+    };
   }>(
     "/git/push",
     {
@@ -1010,6 +1119,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
             remote: { type: "string", minLength: 1 },
             branch: { type: "string", minLength: 1 },
             setUpstream: { type: "boolean" },
+            ...worktreeBodyProperty,
           },
         },
         response: {
@@ -1024,19 +1134,14 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
         },
       },
     },
-    async (req, reply) => {
-      const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return reply;
-      try {
+    async (req, reply) =>
+      withGitCwd(req.body.projectId, req.body.worktreePath, reply, async (cwd) => {
         const opts: { remote?: string; branch?: string; setUpstream?: boolean } = {};
         if (req.body.remote !== undefined) opts.remote = req.body.remote;
         if (req.body.branch !== undefined) opts.branch = req.body.branch;
         if (req.body.setUpstream !== undefined) opts.setUpstream = req.body.setUpstream;
-        const { stdout } = await push(project.path, opts);
+        const { stdout } = await push(cwd, opts);
         return { output: stdout };
-      } catch (err) {
-        return mapError(reply, err);
-      }
-    },
+      }),
   );
 };

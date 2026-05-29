@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
@@ -115,6 +116,20 @@ export interface BranchesResult {
   isGitRepo: boolean;
   current: string | undefined;
   branches: BranchEntry[];
+}
+
+export interface WorktreeEntry {
+  path: string;
+  head: string | undefined;
+  branch: string | undefined;
+  bare: boolean;
+  detached: boolean;
+  current: boolean;
+}
+
+export interface WorktreesResult {
+  isGitRepo: boolean;
+  worktrees: WorktreeEntry[];
 }
 
 /* ----------------------------- helpers ----------------------------- */
@@ -582,6 +597,58 @@ export async function removeRemote(cwd: string, name: string): Promise<void> {
 }
 
 /* ----------------------------- branches ----------------------------- */
+
+export async function getWorktrees(cwd: string): Promise<WorktreesResult> {
+  if (!(await isGitRepo(cwd))) return { isGitRepo: false, worktrees: [] };
+  const currentPath = await canonicalPath(cwd);
+  const { stdout } = await runGit(cwd, ["worktree", "list", "--porcelain", "-z"]);
+  const worktrees: WorktreeEntry[] = [];
+  let entry: WorktreeEntry | undefined;
+  const finish = async (): Promise<void> => {
+    if (entry !== undefined) {
+      const path = await canonicalPath(entry.path);
+      worktrees.push({ ...entry, path, current: path === currentPath });
+      entry = undefined;
+    }
+  };
+  for (const token of stdout.split("\0")) {
+    if (token.length === 0) {
+      await finish();
+      continue;
+    }
+    if (token.startsWith("worktree ")) {
+      await finish();
+      const path = token.slice("worktree ".length);
+      entry = {
+        path,
+        head: undefined,
+        branch: undefined,
+        bare: false,
+        detached: false,
+        current: false,
+      };
+    } else if (entry !== undefined && token.startsWith("HEAD ")) {
+      entry.head = token.slice("HEAD ".length);
+    } else if (entry !== undefined && token.startsWith("branch ")) {
+      const branch = token.slice("branch ".length);
+      entry.branch = branch.startsWith("refs/heads/") ? branch.slice("refs/heads/".length) : branch;
+    } else if (entry !== undefined && token === "bare") {
+      entry.bare = true;
+    } else if (entry !== undefined && token === "detached") {
+      entry.detached = true;
+    }
+  }
+  await finish();
+  return { isGitRepo: true, worktrees };
+}
+
+async function canonicalPath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch {
+    return resolve(path);
+  }
+}
 
 export async function getBranches(cwd: string): Promise<BranchesResult> {
   if (!(await isGitRepo(cwd))) return { isGitRepo: false, current: undefined, branches: [] };
