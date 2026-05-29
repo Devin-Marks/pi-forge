@@ -19,6 +19,7 @@ import {
   type GitLogEntry,
   type GitBranch as GitBranchEntry,
   type GitRemote,
+  type GitWorktree,
 } from "../lib/api-client";
 import { useActiveProject } from "../store/project-store";
 import { useGitStatus } from "../hooks/useGitStatus";
@@ -45,7 +46,10 @@ import { laneColor, layoutCommits, type CommitLayout } from "../lib/git-graph";
  */
 export function GitPanel() {
   const project = useActiveProject();
-  const { status, error: statusError, refresh } = useGitStatus(project?.id);
+  const projectId = project?.id;
+  const [worktrees, setWorktrees] = useState<GitWorktree[] | undefined>(undefined);
+  const [selectedWorktreePath, setSelectedWorktreePath] = useState<string | undefined>(undefined);
+  const { status, error: statusError, refresh } = useGitStatus(projectId, selectedWorktreePath);
 
   const [commitMessage, setCommitMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -80,7 +84,7 @@ export function GitPanel() {
   const reloadRemotes = async (): Promise<void> => {
     if (project === undefined) return;
     try {
-      const r = await api.gitRemotes(project.id);
+      const r = await api.gitRemotes(project.id, selectedWorktreePath);
       setRemotes(r.remotes);
     } catch (err) {
       setOpError(err instanceof ApiError ? err.code : (err as Error).message);
@@ -95,7 +99,7 @@ export function GitPanel() {
     setRemoteBusy(name);
     setOpError(undefined);
     try {
-      await api.gitRemoteAdd(project.id, name, url);
+      await api.gitRemoteAdd(project.id, name, url, selectedWorktreePath);
       setShowAddRemote(false);
       setNewRemoteName("");
       setNewRemoteUrl("");
@@ -114,7 +118,7 @@ export function GitPanel() {
     setRemoteBusy(name);
     setOpError(undefined);
     try {
-      await api.gitRemoteRemove(project.id, name);
+      await api.gitRemoteRemove(project.id, name, selectedWorktreePath);
       await reloadRemotes();
     } catch (err) {
       setOpError(err instanceof ApiError ? err.message || err.code : (err as Error).message);
@@ -126,7 +130,7 @@ export function GitPanel() {
   const reloadBranches = async (): Promise<void> => {
     if (project === undefined) return;
     try {
-      const r = await api.gitBranches(project.id);
+      const r = await api.gitBranches(project.id, selectedWorktreePath);
       setBranches(r.branches);
     } catch (err) {
       setOpError(err instanceof ApiError ? err.code : (err as Error).message);
@@ -138,7 +142,7 @@ export function GitPanel() {
     setBranchBusy(branch);
     setOpError(undefined);
     try {
-      await api.gitCheckout(project.id, branch);
+      await api.gitCheckout(project.id, branch, selectedWorktreePath);
       await reloadBranches();
       void refresh();
     } catch (err) {
@@ -157,7 +161,9 @@ export function GitPanel() {
       // Create + checkout in one step — matches what most UIs do
       // when the user clicks "New branch" while looking at the
       // branches panel.
-      await api.gitBranchCreate(project.id, name, { checkout: true });
+      const opts: { checkout: true; worktreePath?: string } = { checkout: true };
+      if (selectedWorktreePath !== undefined) opts.worktreePath = selectedWorktreePath;
+      await api.gitBranchCreate(project.id, name, opts);
       await reloadBranches();
       void refresh();
     } catch (err) {
@@ -174,7 +180,7 @@ export function GitPanel() {
     setBranchBusy(name);
     setOpError(undefined);
     try {
-      await api.gitBranchDelete(project.id, name, force);
+      await api.gitBranchDelete(project.id, name, force, selectedWorktreePath);
       await reloadBranches();
     } catch (err) {
       setOpError(err instanceof ApiError ? err.code : (err as Error).message);
@@ -222,6 +228,35 @@ export function GitPanel() {
       // ignore — choice still applies for this session
     }
   };
+
+  useEffect(() => {
+    setWorktrees(undefined);
+    setSelectedWorktreePath(undefined);
+    setLog(undefined);
+    setBranches(undefined);
+    setRemotes(undefined);
+    setOpenDiffs({});
+    if (projectId === undefined) return;
+    void api
+      .gitWorktrees(projectId)
+      .then((r) => {
+        setWorktrees(r.worktrees);
+        const current = r.worktrees.find((w) => w.current) ?? r.worktrees[0];
+        setSelectedWorktreePath(current?.path);
+      })
+      .catch((err: unknown) =>
+        setOpError(err instanceof ApiError ? err.code : (err as Error).message),
+      );
+  }, [projectId]);
+
+  useEffect(() => {
+    setLog(undefined);
+    setBranches(undefined);
+    setRemotes(undefined);
+    setOpenDiffs({});
+    setOpResult(undefined);
+    setOpError(undefined);
+  }, [selectedWorktreePath]);
 
   // Prune diff cache entries whose file is no longer in the latest
   // status (e.g. user ran `git checkout -- file` from the integrated
@@ -352,7 +387,7 @@ export function GitPanel() {
     }
     setOpenDiffs((s) => ({ ...s, [key]: "loading" }));
     try {
-      const r = await api.gitDiffFile(project.id, file.path, staged);
+      const r = await api.gitDiffFile(project.id, file.path, staged, selectedWorktreePath);
       setOpenDiffs((s) => ({ ...s, [key]: r.diff }));
     } catch {
       // Diff fetch failed (file vanished, git error). State machine
@@ -367,7 +402,7 @@ export function GitPanel() {
     setBusy(true);
     setOpError(undefined);
     try {
-      await api.gitStage(project.id, paths);
+      await api.gitStage(project.id, paths, selectedWorktreePath);
       await refresh();
     } catch (err) {
       setOpError(err instanceof ApiError ? err.message : (err as Error).message);
@@ -387,7 +422,7 @@ export function GitPanel() {
     setOpError(undefined);
     setOpResult(undefined);
     try {
-      await api.gitRevert(project.id, paths);
+      await api.gitRevert(project.id, paths, selectedWorktreePath);
       setOpResult(paths.length === 1 ? `Reverted ${paths[0]}` : `Reverted ${paths.length} files`);
       await refresh();
     } catch (err) {
@@ -402,7 +437,7 @@ export function GitPanel() {
     setBusy(true);
     setOpError(undefined);
     try {
-      await api.gitUnstage(project.id, paths);
+      await api.gitUnstage(project.id, paths, selectedWorktreePath);
       await refresh();
     } catch (err) {
       setOpError(err instanceof ApiError ? err.message : (err as Error).message);
@@ -426,7 +461,13 @@ export function GitPanel() {
     setPendingHunkPath(file.path);
     setOpError(undefined);
     try {
-      const r = await api.gitApplyHunks(project.id, file.path, mode, [hunkIndex]);
+      const r = await api.gitApplyHunks(
+        project.id,
+        file.path,
+        mode,
+        [hunkIndex],
+        selectedWorktreePath,
+      );
       if (r.ok !== true) {
         // Surface the server's error code as the op-error banner so
         // the user sees "binary_or_no_hunks" / "git_apply_failed" /
@@ -451,7 +492,7 @@ export function GitPanel() {
     if (openDiffs[key] === undefined) return; // not currently shown — skip
     setOpenDiffs((s) => ({ ...s, [key]: "loading" }));
     try {
-      const r = await api.gitDiffFile(project.id, file.path, staged);
+      const r = await api.gitDiffFile(project.id, file.path, staged, selectedWorktreePath);
       setOpenDiffs((s) => {
         // Empty diff after an apply means "no more changes on this side";
         // drop the key so the inline section collapses naturally.
@@ -474,13 +515,13 @@ export function GitPanel() {
     setOpError(undefined);
     setOpResult(undefined);
     try {
-      const { hash } = await api.gitCommit(project.id, msg);
+      const { hash } = await api.gitCommit(project.id, msg, selectedWorktreePath);
       setCommitMessage("");
       setOpResult(`Committed ${hash.slice(0, 7)}`);
       await refresh();
       // Refresh log if the section is open so the new commit shows up.
       if (showLog) {
-        const r = await api.gitLog(project.id, 30);
+        const r = await api.gitLog(project.id, 30, selectedWorktreePath);
         setLog(r.commits);
       }
     } catch (err) {
@@ -523,8 +564,9 @@ export function GitPanel() {
     setOpError(undefined);
     setOpResult(undefined);
     try {
-      const opts: { remote?: string } = {};
+      const opts: { remote?: string; worktreePath?: string } = {};
       if (pushRemote !== undefined) opts.remote = pushRemote;
+      if (selectedWorktreePath !== undefined) opts.worktreePath = selectedWorktreePath;
       const { output } = await api.gitFetch(project.id, opts);
       setOpResult(
         output.trim().length > 0 ? (output.trim().split("\n").pop() ?? "Fetched") : "Fetched",
@@ -541,10 +583,11 @@ export function GitPanel() {
     setOpError(undefined);
     setOpResult(undefined);
     try {
-      const opts: { remote?: string; branch?: string } = {};
+      const opts: { remote?: string; branch?: string; worktreePath?: string } = {};
       if (pushRemote !== undefined) opts.remote = pushRemote;
       const overrideName = pushBranchOverride.trim();
       if (overrideName.length > 0) opts.branch = overrideName;
+      if (selectedWorktreePath !== undefined) opts.worktreePath = selectedWorktreePath;
       const { output } = await api.gitPull(project.id, opts);
       setOpResult(
         output.trim().length > 0 ? (output.trim().split("\n").pop() ?? "Pulled") : "Pulled",
@@ -564,11 +607,17 @@ export function GitPanel() {
     setOpError(undefined);
     setOpResult(undefined);
     try {
-      const opts: { remote?: string; branch?: string; setUpstream?: boolean } = {};
+      const opts: {
+        remote?: string;
+        branch?: string;
+        setUpstream?: boolean;
+        worktreePath?: string;
+      } = {};
       if (pushRemote !== undefined) opts.remote = pushRemote;
       const overrideName = pushBranchOverride.trim();
       if (overrideName.length > 0) opts.branch = overrideName;
       if (pushSetUpstream) opts.setUpstream = true;
+      if (selectedWorktreePath !== undefined) opts.worktreePath = selectedWorktreePath;
       const { output } = await api.gitPush(project.id, opts);
       setOpResult(
         output.trim().length > 0 ? (output.trim().split("\n").pop() ?? "Pushed") : "Pushed",
@@ -584,19 +633,54 @@ export function GitPanel() {
     }
   };
 
+  const worktreeLabel = (w: GitWorktree): string => {
+    const dirname = w.path.split(/[\\/]/).filter(Boolean).pop() ?? w.path;
+    if (w.branch !== undefined) return `${w.branch} — ${dirname}`;
+    if (w.detached && w.head !== undefined) return `${w.head.slice(0, 7)} — ${dirname}`;
+    return dirname;
+  };
+
   return (
     <div className="flex h-full flex-col text-xs text-neutral-300">
-      <div className="flex items-center justify-between border-b border-neutral-800 px-3 py-2">
-        <div className="flex items-center gap-2 font-medium text-neutral-200">
-          <GitBranch size={13} />
-          {status?.branch ?? "—"}
-          {status !== undefined && status.files.length > 0 && (
-            <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
-              {status.files.length}
-            </span>
-          )}
+      <div className="flex items-center justify-between gap-2 border-b border-neutral-800 px-3 py-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 font-medium text-neutral-200">
+            <GitBranch size={13} className="shrink-0" />
+            <span className="truncate">{status?.branch ?? "—"}</span>
+            {status !== undefined && status.files.length > 0 && (
+              <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
+                {status.files.length}
+              </span>
+            )}
+          </div>
+          <label className="mt-1 flex items-center gap-1.5 text-[10px] text-neutral-500">
+            <span className="shrink-0 uppercase tracking-wider">Worktree</span>
+            <select
+              value={selectedWorktreePath ?? ""}
+              onChange={(e) => setSelectedWorktreePath(e.target.value || undefined)}
+              disabled={worktrees === undefined || worktrees.length <= 1}
+              className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-[10px] text-neutral-200 outline-none hover:border-neutral-600 focus:border-neutral-500 disabled:cursor-not-allowed disabled:border-neutral-800 disabled:text-neutral-500"
+              title={
+                selectedWorktreePath !== undefined
+                  ? `Viewing git info for ${selectedWorktreePath}`
+                  : "Loading git worktrees"
+              }
+            >
+              {worktrees === undefined ? (
+                <option value="">Loading…</option>
+              ) : worktrees.length === 0 ? (
+                <option value="">No worktrees</option>
+              ) : (
+                worktrees.map((w) => (
+                  <option key={w.path} value={w.path}>
+                    {worktreeLabel(w)}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           <button
             onClick={() => setAndPersistDiffView(diffViewType === "split" ? "unified" : "split")}
             className="rounded p-1 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"

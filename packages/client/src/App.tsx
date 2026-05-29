@@ -203,7 +203,6 @@ export function App() {
   useEffect(() => {
     if (openEditorPaneSeq === 0) return;
     setEditorOpenPersisted(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openEditorPaneSeq]);
 
   // Pane widths (px). Persisted on every drag-end via the ref; we keep

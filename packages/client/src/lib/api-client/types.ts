@@ -619,6 +619,20 @@ export interface GitRemotesResponse {
   remotes: GitRemote[];
 }
 
+export interface GitWorktree {
+  path: string;
+  head?: string;
+  branch?: string;
+  bare: boolean;
+  detached: boolean;
+  current: boolean;
+}
+
+export interface GitWorktreesResponse {
+  isGitRepo: boolean;
+  worktrees: GitWorktree[];
+}
+
 export interface SearchMatch {
   /** Project-relative POSIX path. */
   path: string;

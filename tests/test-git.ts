@@ -99,6 +99,7 @@ async function main(): Promise<void> {
   const workspacePath = await mkdtemp(join(tmpdir(), "pi-git-ws-"));
   const configDir = await mkdtemp(join(tmpdir(), "pi-git-cfg-"));
   const dataDir = await mkdtemp(join(tmpdir(), "pi-git-data-"));
+  const externalWorktreeRoot = await mkdtemp(join(tmpdir(), "pi-git-external-wt-"));
 
   // ---- Real git repo with one commit ----
   const projectPath = join(workspacePath, "demo");
@@ -110,6 +111,8 @@ async function main(): Promise<void> {
   await fsWrite(join(projectPath, "README.md"), "# demo\n", "utf8");
   await git(projectPath, ["add", "."]);
   await git(projectPath, ["commit", "-q", "-m", "initial"]);
+  const siblingWorktreePath = join(externalWorktreeRoot, "demo-feature");
+  await git(projectPath, ["worktree", "add", "-q", "-b", "feature/worktree", siblingWorktreePath]);
 
   // ---- Plain (non-git) project ----
   const nonGitPath = join(workspacePath, "plain");
@@ -191,6 +194,52 @@ async function main(): Promise<void> {
         "non-git: commits === []",
         Array.isArray((log.body as { commits: unknown[] }).commits) &&
           (log.body as { commits: unknown[] }).commits.length === 0,
+      );
+    }
+
+    // ---- worktree discovery + selected worktree status ----
+    {
+      const r = await jget(
+        `${base}/api/v1/git/worktrees?projectId=${encodeURIComponent(gitProjectId)}`,
+        auth,
+      );
+      assert("worktrees → 200", r.status === 200);
+      const body = r.body as { worktrees: { path: string; branch?: string; current: boolean }[] };
+      assert(
+        "worktrees include main + sibling",
+        body.worktrees.some((w) => w.path === projectPath && w.current) &&
+          body.worktrees.some(
+            (w) => w.path === siblingWorktreePath && w.branch === "feature/worktree",
+          ),
+      );
+      assert(
+        "registered worktree outside WORKSPACE_PATH is included",
+        body.worktrees.some(
+          (w) => w.path === siblingWorktreePath && w.branch === "feature/worktree",
+        ),
+      );
+
+      await fsWrite(join(siblingWorktreePath, "worktree-only.txt"), "from sibling\n", "utf8");
+      const qs = new URLSearchParams({
+        projectId: gitProjectId,
+        worktreePath: siblingWorktreePath,
+      }).toString();
+      const selected = await jget(`${base}/api/v1/git/status?${qs}`, auth);
+      assert("selected worktree status → 200", selected.status === 200);
+      const selectedFiles = (selected.body as { branch?: string; files: { path: string }[] }).files;
+      assert(
+        "selected worktree sees its own untracked file",
+        selectedFiles.some((f) => f.path === "worktree-only.txt"),
+      );
+
+      const mainStatus = await jget(
+        `${base}/api/v1/git/status?projectId=${encodeURIComponent(gitProjectId)}`,
+        auth,
+      );
+      const mainFiles = (mainStatus.body as { files: { path: string }[] }).files;
+      assert(
+        "main worktree does not see sibling-only file",
+        !mainFiles.some((f) => f.path === "worktree-only.txt"),
       );
     }
 
@@ -538,6 +587,7 @@ async function main(): Promise<void> {
     await rm(workspacePath, { recursive: true, force: true });
     await rm(configDir, { recursive: true, force: true });
     await rm(dataDir, { recursive: true, force: true });
+    await rm(externalWorktreeRoot, { recursive: true, force: true });
   }
 
   if (failures > 0) {
