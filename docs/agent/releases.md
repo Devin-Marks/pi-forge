@@ -31,14 +31,6 @@ When cutting a version, use the repository release tooling. Do not hand-edit pac
 
 5. Include the changelog updates and version bumps together in the version bump PR. The PR should
    clearly call out that release notes were generated from changes since the previous version.
-6. Before asking for merge, verify the expected checks for a release PR, typically:
-
-   ```bash
-   npm run build
-   npm run check
-   npm run test:ci
-   ```
-
 ## Important Rules
 
 - Do not bypass `scripts/bump-version.sh` for normal releases.

@@ -52,6 +52,7 @@ npm run build        # Compile server TS + Vite client build
 npm run dev          # Start server (:3000) + Vite client (:5173)
 npm run dev:remote   # Bind both to 0.0.0.0; set auth before exposing
 npm run check        # tsc + eslint + prettier (requires npm run build first)
+npm run format:check # Prettier formatting check
 npm run test:ci      # CI test loop (skips test-docker)
 npm run test         # Local full loop (no CI skip list)
 
@@ -60,8 +61,9 @@ npx tsx tests/test-session.ts
 scripts/run-tests.sh --only session,terminal
 ```
 
-Use the runner before opening a PR. When product behavior changes, update the
-relevant integration test in the same PR.
+Use the runner before opening a PR. Run Prettier/format checks for docs-only or
+config-only changes when full checks are unnecessary. When product behavior changes,
+update the relevant integration test in the same PR.
 
 ---
 
@@ -93,6 +95,8 @@ relevant integration test in the same PR.
     `{ success: false, error }`, not a server error; sanitize stderr.
 14. **Use structured route errors.** Session not found → 404; validation → 400;
     traversal → 403; SDK crash → 500 `{ error: "agent_error", message }`.
+15. **Put git worktrees under `.worktrees/`.** Do not create worker worktrees
+    elsewhere in the repository or workspace.
 
 ---
 
