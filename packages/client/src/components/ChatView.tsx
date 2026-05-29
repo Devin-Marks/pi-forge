@@ -943,56 +943,34 @@ function Message({
 
   // Assistant messages — content is an array of TextContent / ThinkingContent / ToolCall.
   if (message.role === "assistant") {
-    const content = Array.isArray(message.content) ? message.content : [];
-    // Show the raw toggle only when the message has at least one
-    // text block — toolCall and thinking blocks aren't markdown and
-    // the toggle would do nothing useful for them.
-    const hasTextBlock = content.some((b) => (b as Record<string, unknown>).type === "text");
-    // Provider-side failures (openai-completions catch path, openrouter
-    // 4xx, etc.) finalise the assistant message with `stopReason="error"`
-    // and an `errorMessage`. The session-level banner gets cleared by the
-    // next agent_start, so without an inline indicator the failed turn
-    // would show as a blank bubble with no signal what went wrong. Render
-    // an amber inline strip below the content carrying the SDK's message.
-    const stopReason = (message as { stopReason?: unknown }).stopReason;
-    const errorMessage = (message as { errorMessage?: unknown }).errorMessage;
-    const inlineError =
-      stopReason === "error" && typeof errorMessage === "string" && errorMessage.length > 0
-        ? errorMessage
-        : undefined;
+    const content = Array.isArray(message.content)
+      ? (message.content as Record<string, unknown>[])
+      : [];
+    const segments = splitAssistantToolSegments(content, toolResultsById);
+    if (segments !== undefined) {
+      return (
+        <div className="space-y-2">
+          {segments.map((segment, index) => (
+            <AssistantRenderSegmentView
+              key={`${segment.kind}-${index}`}
+              segment={segment}
+              message={message}
+              toolResultsById={toolResultsById}
+              showRaw={showRaw}
+              setShowRaw={setShowRaw}
+            />
+          ))}
+        </div>
+      );
+    }
     return (
-      <div
-        className="message-bubble group rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3"
-        data-message-role="assistant"
-      >
-        <div className="mb-1 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase tracking-wider text-neutral-500">assistant</span>
-            <MessageTimestamp ts={(message as { timestamp?: unknown }).timestamp} />
-          </div>
-          {hasTextBlock && (
-            <div className="flex items-center gap-1">
-              <CopyButton
-                getText={() => assistantTextContent(content as Record<string, unknown>[])}
-                title="Copy all text from this assistant message"
-              />
-              <RawToggle showRaw={showRaw} onToggle={setShowRaw} />
-            </div>
-          )}
-        </div>
-        <div className="space-y-2 text-sm text-neutral-100">
-          {renderAssistantBlocks(content as Record<string, unknown>[], toolResultsById, showRaw)}
-        </div>
-        {inlineError !== undefined && (
-          <div
-            className="mt-2 rounded border border-amber-700/40 bg-amber-900/20 px-3 py-2 text-xs text-amber-200 light:border-amber-300 light:bg-amber-50 light:text-amber-800"
-            role="alert"
-          >
-            <span className="font-medium">Provider error: </span>
-            {inlineError}
-          </div>
-        )}
-      </div>
+      <AssistantMessageBubble
+        message={message}
+        content={content}
+        toolResultsById={toolResultsById}
+        showRaw={showRaw}
+        setShowRaw={setShowRaw}
+      />
     );
   }
 
@@ -1026,82 +1004,201 @@ function Message({
   );
 }
 
+function AssistantMessageBubble({
+  message,
+  content,
+  toolResultsById,
+  showRaw,
+  setShowRaw,
+}: {
+  message: AgentMessageLike;
+  content: Record<string, unknown>[];
+  toolResultsById: Map<string, AgentMessageLike> | undefined;
+  showRaw: boolean;
+  setShowRaw: (next: boolean) => void;
+}) {
+  // Show the raw toggle only when the message has at least one
+  // text block — toolCall and thinking blocks aren't markdown and
+  // the toggle would do nothing useful for them.
+  const hasTextBlock = content.some((b) => b.type === "text");
+  // Provider-side failures (openai-completions catch path, openrouter
+  // 4xx, etc.) finalise the assistant message with `stopReason="error"`
+  // and an `errorMessage`. The session-level banner gets cleared by the
+  // next agent_start, so without an inline indicator the failed turn
+  // would show as a blank bubble with no signal what went wrong. Render
+  // an amber inline strip below the content carrying the SDK's message.
+  const stopReason = (message as { stopReason?: unknown }).stopReason;
+  const errorMessage = (message as { errorMessage?: unknown }).errorMessage;
+  const inlineError =
+    stopReason === "error" && typeof errorMessage === "string" && errorMessage.length > 0
+      ? errorMessage
+      : undefined;
+  return (
+    <div
+      className="message-bubble group rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3"
+      data-message-role="assistant"
+    >
+      <div className="mb-1 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] uppercase tracking-wider text-neutral-500">assistant</span>
+          <MessageTimestamp ts={(message as { timestamp?: unknown }).timestamp} />
+        </div>
+        {hasTextBlock && (
+          <div className="flex items-center gap-1">
+            <CopyButton
+              getText={() => assistantTextContent(content)}
+              title="Copy all text from this assistant message"
+            />
+            <RawToggle showRaw={showRaw} onToggle={setShowRaw} />
+          </div>
+        )}
+      </div>
+      <div className="space-y-2 text-sm text-neutral-100">
+        {renderAssistantBlocks(content, toolResultsById, showRaw)}
+      </div>
+      {inlineError !== undefined && (
+        <div
+          className="mt-2 rounded border border-amber-700/40 bg-amber-900/20 px-3 py-2 text-xs text-amber-200 light:border-amber-300 light:bg-amber-50 light:text-amber-800"
+          role="alert"
+        >
+          <span className="font-medium">Provider error: </span>
+          {inlineError}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type AssistantRenderSegment =
+  | { kind: "assistant"; content: Record<string, unknown>[] }
+  | { kind: "tools"; entries: ToolBatchEntry[] };
+
+function AssistantRenderSegmentView({
+  segment,
+  message,
+  toolResultsById,
+  showRaw,
+  setShowRaw,
+}: {
+  segment: AssistantRenderSegment;
+  message: AgentMessageLike;
+  toolResultsById: Map<string, AgentMessageLike> | undefined;
+  showRaw: boolean;
+  setShowRaw: (next: boolean) => void;
+}) {
+  if (segment.kind === "assistant") {
+    return (
+      <AssistantMessageBubble
+        message={message}
+        content={segment.content}
+        toolResultsById={toolResultsById}
+        showRaw={showRaw}
+        setShowRaw={setShowRaw}
+      />
+    );
+  }
+
+  if (countToolBatchCalls(segment.entries) === 1) {
+    const toolEntry = segment.entries.find((entry) => entry.kind === "tool");
+    if (toolEntry !== undefined) {
+      return <ToolCallEntry block={toolEntry.block} result={toolEntry.result} />;
+    }
+  }
+
+  return <ToolCallBatchCard entries={segment.entries} />;
+}
+
 /**
- * Render an assistant message's content array, collapsing runs of
- * consecutive low-noise toolCall blocks into a single batched card.
+ * Split collapsible tool-call runs out of assistant prose bubbles.
  *
- * Motivation: exploratory turns often fire several `read` / `grep` /
- * `find` / `ls` / `process` / `todo` calls back-to-back, and each one
- * would otherwise render as its own bordered card. The collapsed batch
- * preserves chronology and auditability while making the default chat
- * timeline much shorter; clicking the batch reveals each full tool card.
- *
- * High-signal or potentially destructive tools (`edit`, `write`) render
- * individually. Mixed runs separated by assistant text stay in original
- * order because grouping only happens for adjacent batchable tool calls.
+ * Pi stores toolCall blocks inside assistant messages, but visually the
+ * resulting cards are timeline actions rather than assistant prose. Keeping
+ * batched tool cards as siblings avoids the confusing nested layout where a
+ * "tools ×N" batch appears inside an "assistant" bubble.
+ */
+function splitAssistantToolSegments(
+  content: Record<string, unknown>[],
+  toolResultsById: Map<string, AgentMessageLike> | undefined,
+): AssistantRenderSegment[] | undefined {
+  const segments: AssistantRenderSegment[] = [];
+  let prose: Record<string, unknown>[] = [];
+  let sawToolSegment = false;
+  const flushProse = (): void => {
+    if (prose.length === 0) return;
+    segments.push({ kind: "assistant", content: prose });
+    prose = [];
+  };
+
+  let i = 0;
+  while (i < content.length) {
+    const block = content[i]!;
+    if (!isBatchableToolCall(block)) {
+      prose.push(block);
+      i += 1;
+      continue;
+    }
+
+    flushProse();
+    sawToolSegment = true;
+    const entries: ToolBatchEntry[] = [];
+    while (i < content.length && countToolBatchCalls(entries) < MAX_TOOL_BATCH_SIZE) {
+      const current = content[i];
+      if (current === undefined) break;
+      if (isToolBatchThinkingBlock(current)) {
+        entries.push({ kind: "thinking", block: current });
+        i += 1;
+        continue;
+      }
+      if (isToolBatchWhitespaceBlock(current)) {
+        i += 1;
+        continue;
+      }
+      if (!isBatchableToolCall(current)) break;
+      const id = typeof current.id === "string" ? current.id : undefined;
+      entries.push({
+        kind: "tool",
+        block: current,
+        result: id !== undefined ? toolResultsById?.get(id) : undefined,
+      });
+      i += 1;
+    }
+    segments.push({ kind: "tools", entries });
+  }
+  flushProse();
+
+  return sawToolSegment ? segments : undefined;
+}
+
+/**
+ * Render assistant prose/thinking blocks. Tool-call batching is handled at the
+ * message-fragment level so batch cards can be rendered as siblings of the
+ * assistant bubble rather than nested inside it.
  */
 function renderAssistantBlocks(
   content: Record<string, unknown>[],
   toolResultsById: Map<string, AgentMessageLike> | undefined,
   showRaw: boolean,
 ): React.ReactNode {
-  const out: React.ReactNode[] = [];
-  let i = 0;
-  while (i < content.length) {
-    const block = content[i]!;
-    if (isBatchableToolCall(block)) {
-      // Greedy: pull every adjacent batchable toolCall into the same compact card.
-      const start = i;
-      const batch: ToolBatchEntry[] = [];
-      while (i < content.length && countToolBatchCalls(batch) < MAX_TOOL_BATCH_SIZE) {
-        const b = content[i];
-        if (b === undefined) break;
-        if (isToolBatchThinkingBlock(b)) {
-          batch.push({ kind: "thinking", block: b });
-          i += 1;
-          continue;
-        }
-        if (isToolBatchWhitespaceBlock(b)) {
-          i += 1;
-          continue;
-        }
-        if (!isBatchableToolCall(b)) break;
-        const id = typeof b.id === "string" ? b.id : undefined;
-        const r = id !== undefined ? toolResultsById?.get(id) : undefined;
-        batch.push({ kind: "tool", block: b, result: r });
-        i += 1;
-      }
-      if (countToolBatchCalls(batch) === 1) {
-        // Single call — render via the standard ToolCallEntry path.
-        const only = batch.find((entry) => entry.kind === "tool");
-        if (only !== undefined)
-          out.push(<ToolCallEntry key={start} block={only.block} result={only.result} />);
-      } else {
-        out.push(<ToolCallBatchCard key={`tool-batch-${start}`} entries={batch} />);
-      }
-      continue;
-    }
+  return content.map((block, i) => {
     const blockProps: {
       block: Record<string, unknown>;
       toolResultsById?: Map<string, AgentMessageLike>;
       showRaw?: boolean;
     } = { block, showRaw };
     if (toolResultsById !== undefined) blockProps.toolResultsById = toolResultsById;
-    out.push(<AssistantBlock key={i} {...blockProps} />);
-    i += 1;
-  }
-  return out;
+    return <AssistantBlock key={i} {...blockProps} />;
+  });
 }
 
 const MAX_TOOL_BATCH_SIZE = 10;
-const BATCHABLE_TOOL_NAMES = new Set(["read", "grep", "find", "ls", "todo", "process", "bash"]);
+const NON_BATCHABLE_TOOL_NAMES = new Set(["edit", "write"]);
 
 type ToolBatchEntry =
   | { kind: "tool"; block: Record<string, unknown>; result: AgentMessageLike | undefined }
   | { kind: "thinking"; block: Record<string, unknown> };
 
 function isBatchableToolCall(block: Record<string, unknown> | undefined): boolean {
-  return block?.type === "toolCall" && BATCHABLE_TOOL_NAMES.has(String(block.name ?? ""));
+  return block?.type === "toolCall" && !NON_BATCHABLE_TOOL_NAMES.has(String(block.name ?? ""));
 }
 
 function isToolBatchThinkingBlock(block: Record<string, unknown> | undefined): boolean {
@@ -1167,7 +1264,7 @@ function toolPreviewFromArgs(name: string, args: unknown): string | undefined {
 }
 
 /**
- * Compact single-card rendering for a run of consecutive low-noise tool calls.
+ * Compact single-card rendering for a run of consecutive collapsible tool calls.
  * The summary takes one row; expanding reveals each full ToolCallEntry so no
  * input/output detail is lost.
  */
