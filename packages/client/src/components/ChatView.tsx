@@ -1351,7 +1351,7 @@ function renderAssistantBlocks(
   });
 }
 
-const MAX_TOOL_BATCH_SIZE = 10;
+const MAX_TOOL_BATCH_SIZE = Number.POSITIVE_INFINITY;
 const NON_BATCHABLE_TOOL_NAMES = new Set(["edit", "write"]);
 
 type ToolBatchEntry =
