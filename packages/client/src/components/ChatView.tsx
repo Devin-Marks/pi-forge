@@ -36,6 +36,12 @@ import { useQuickActionRunsStore } from "../store/quick-actions-store";
 import { parseSubagentDetails, type SubagentResult } from "../lib/subagent-parser";
 import { OrchestrationPanel } from "./OrchestrationPanel";
 import { useUiConfigStore } from "../store/ui-config-store";
+import {
+  buildToolCallPairing,
+  getToolCallId,
+  isPairedToolResult,
+  isToolCallBlock,
+} from "../lib/tool-call-pairing";
 
 /**
  * Per-ChatView diff view-type preference. Each diff-rendering surface
@@ -376,21 +382,8 @@ export function ChatView({ sessionId }: Props) {
               // of two separate boxes. Loose toolResults — orphans
               // from older sessions, or results whose call we never
               // saw — still render via the standalone path.
-              const toolResultsById = new Map<string, AgentMessageLike>();
-              const pairedIds = new Set<string>();
-              for (const m of messages) {
-                if (m.role === "toolResult" && typeof m.toolCallId === "string") {
-                  toolResultsById.set(m.toolCallId, m);
-                }
-              }
-              for (const m of messages) {
-                if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
-                for (const block of m.content as Record<string, unknown>[]) {
-                  if (block.type === "toolCall" && typeof block.id === "string") {
-                    pairedIds.add(block.id);
-                  }
-                }
-              }
+              const toolPairing = buildToolCallPairing(messages);
+              const { toolResultsById } = toolPairing;
               // Group compactions by `insertBeforeIndex` so each
               // render-loop tick can ask "any cards land here?" in O(1).
               // Multiple compactions can share insertBeforeIndex=0 —
@@ -403,10 +396,9 @@ export function ChatView({ sessionId }: Props) {
                 list.push(ev);
                 compactionsAt.set(ev.insertBeforeIndex, list);
               }
-              const renderArchived = (ev: CompactionEvent): React.ReactNode =>
-                ev.archivedMessages.map((am, i) => (
-                  <Message key={i} message={am} toolResultsById={toolResultsById} />
-                ));
+              const renderArchived = (ev: CompactionEvent): React.ReactNode => (
+                <ArchivedMessages messages={ev.archivedMessages} />
+              );
               const out: React.ReactNode[] = [];
               let pendingBatch: ToolBatchEntry[] = [];
               let pendingBatchStartIndex = 0;
@@ -502,11 +494,7 @@ export function ChatView({ sessionId }: Props) {
               for (let i = 0; i < messages.length; i++) {
                 const m = messages[i]!;
                 renderCardsAt(i);
-                if (
-                  m.role === "toolResult" &&
-                  typeof m.toolCallId === "string" &&
-                  pairedIds.has(m.toolCallId)
-                ) {
+                if (isPairedToolResult(toolPairing, m)) {
                   continue; // rendered inline next to its toolCall
                 }
                 // Hide the SDK-synthesized compaction summary message
@@ -872,6 +860,92 @@ function FileRefBadge({ ref: r }: { ref: FileRef }) {
   );
 }
 
+function ArchivedMessages({ messages }: { messages: AgentMessageLike[] }) {
+  const toolPairing = buildToolCallPairing(messages);
+  const { toolResultsById } = toolPairing;
+  const out: React.ReactNode[] = [];
+  let pendingBatch: ToolBatchEntry[] = [];
+  let pendingBatchStartIndex = 0;
+  let renderedBatchSerial = 0;
+
+  const renderToolEntries = (entries: ToolBatchEntry[], key: string): React.ReactNode => {
+    const toolCount = countToolBatchCalls(entries);
+    const toolEntry = entries.find((entry) => entry.kind === "tool");
+    const hasThinking = entries.some((entry) => entry.kind === "thinking");
+    if (toolCount === 1 && !hasThinking && toolEntry !== undefined) {
+      return <ToolCallEntry key={key} block={toolEntry.block} result={toolEntry.result} />;
+    }
+    return <ToolCallBatchCard key={key} entries={entries} />;
+  };
+
+  const flushPendingBatch = (): void => {
+    if (pendingBatch.length === 0) return;
+    let chunk: ToolBatchEntry[] = [];
+    let chunkStart = pendingBatchStartIndex;
+    const pushChunk = (): void => {
+      if (chunk.length === 0) return;
+      const batchKey = `archived-tool-batch-${renderedBatchSerial}`;
+      out.push(
+        <div key={batchKey} data-message-index={chunkStart}>
+          {renderToolEntries(chunk, `${batchKey}-card`)}
+        </div>,
+      );
+      chunk = [];
+      renderedBatchSerial += 1;
+    };
+    for (const entry of pendingBatch) {
+      if (entry.kind === "tool" && countToolBatchCalls(chunk) >= MAX_TOOL_BATCH_SIZE) {
+        pushChunk();
+        chunkStart = pendingBatchStartIndex;
+      }
+      chunk.push(entry);
+    }
+    pushChunk();
+    pendingBatch = [];
+  };
+
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i]!;
+    if (isPairedToolResult(toolPairing, m)) continue;
+    if (m.role === "assistant" && Array.isArray(m.content)) {
+      const segments = splitAssistantToolSegments(
+        m.content as Record<string, unknown>[],
+        toolResultsById,
+      );
+      if (segments !== undefined) {
+        for (const [segmentIndex, segment] of segments.entries()) {
+          if (segment.kind === "tools" && segment.batchable) {
+            if (pendingBatch.length === 0) pendingBatchStartIndex = i;
+            pendingBatch.push(...segment.entries);
+            continue;
+          }
+          flushPendingBatch();
+          out.push(
+            <div key={`${i}-${segment.kind}-${segmentIndex}`} data-message-index={i}>
+              <AssistantRenderSegmentView
+                segment={segment}
+                message={m}
+                toolResultsById={toolResultsById}
+                showRaw={undefined}
+                setShowRaw={undefined}
+              />
+            </div>,
+          );
+        }
+        continue;
+      }
+    }
+    flushPendingBatch();
+    out.push(
+      <div key={i} data-message-index={i}>
+        <Message message={m} toolResultsById={toolResultsById} />
+      </div>,
+    );
+  }
+  flushPendingBatch();
+  return <>{out}</>;
+}
+
 function Message({
   message,
   toolResultsById,
@@ -1210,7 +1284,7 @@ function splitAssistantToolSegments(
     sawToolSegment = true;
 
     if (!isBatchableToolCall(block)) {
-      const id = typeof block.id === "string" ? block.id : undefined;
+      const id = getToolCallId(block);
       segments.push({
         kind: "tools",
         batchable: false,
@@ -1241,7 +1315,7 @@ function splitAssistantToolSegments(
         continue;
       }
       if (!isBatchableToolCall(current)) break;
-      const id = typeof current.id === "string" ? current.id : undefined;
+      const id = getToolCallId(current);
       entries.push({
         kind: "tool",
         block: current,
@@ -1285,11 +1359,11 @@ type ToolBatchEntry =
   | { kind: "thinking"; block: Record<string, unknown> };
 
 function isToolCall(block: Record<string, unknown> | undefined): boolean {
-  return block?.type === "toolCall";
+  return isToolCallBlock(block);
 }
 
 function isBatchableToolCall(block: Record<string, unknown> | undefined): boolean {
-  return block?.type === "toolCall" && !NON_BATCHABLE_TOOL_NAMES.has(String(block.name ?? ""));
+  return isToolCallBlock(block) && !NON_BATCHABLE_TOOL_NAMES.has(String(block.name ?? ""));
 }
 
 function isToolBatchThinkingBlock(block: Record<string, unknown> | undefined): boolean {
@@ -1442,8 +1516,8 @@ function AssistantBlock({
     );
   }
 
-  if (type === "toolCall") {
-    const id = typeof block.id === "string" ? block.id : undefined;
+  if (isToolCallBlock(block)) {
+    const id = getToolCallId(block);
     const result = id !== undefined ? toolResultsById?.get(id) : undefined;
     return <ToolCallEntry block={block} result={result} />;
   }
