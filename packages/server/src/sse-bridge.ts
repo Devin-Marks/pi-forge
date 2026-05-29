@@ -100,6 +100,21 @@ const COMPACTION_START_PADDING_BYTES = 2048;
 const COMPACTION_START_PADDING_LINE = `: pad-flush ${"_".repeat(COMPACTION_START_PADDING_BYTES - 14)}\n\n`;
 
 /**
+ * One-shot padding flush for tiny forge-native session-list nudges.
+ *
+ * `session_list_changed` is intentionally a small event (usually just
+ * projectId + reason), which makes it vulnerable to L7 proxy buffering in
+ * the exact path where users need it most: long-running supervisor turns
+ * that spawn a worker, then continue working while the sidebar should update.
+ * Follow the data frame with a padded SSE comment so nginx/HAProxy/Vite proxy
+ * release it immediately instead of batching it with a later heartbeat.
+ */
+const SESSION_LIST_CHANGED_PADDING_BYTES = 2048;
+const SESSION_LIST_CHANGED_PADDING_LINE = `: session-list-changed ${"_".repeat(
+  SESSION_LIST_CHANGED_PADDING_BYTES - 24,
+)}\n\n`;
+
+/**
  * One-shot snapshot event sent immediately on SSE connect so the browser can
  * hydrate full session state without a separate HTTP round-trip.
  */
@@ -154,6 +169,10 @@ const ALLOWED_EVENT_TYPES = new Set<string>([
   "process_update",
   "process_output",
   "process_watch",
+  // Forge-native session-list invalidation used when tools create sessions
+  // out-of-band relative to the user's current sidebar list: pi-subagents'
+  // `subagent` and orchestration's `orchestrate_spawn_worker`.
+  "session_list_changed",
 ]);
 
 export function isAllowedEvent(event: { type: string }): boolean {
@@ -447,6 +466,9 @@ export function createSSEClient(reply: FastifyReply, live: LiveSession): SSEClie
       // Cheap — fires at most once per compaction, ~2KB on the wire.
       if (event.type === "compaction_start") {
         writeRaw(COMPACTION_START_PADDING_LINE);
+      }
+      if (event.type === "session_list_changed") {
+        writeRaw(SESSION_LIST_CHANGED_PADDING_LINE);
       }
     };
 
