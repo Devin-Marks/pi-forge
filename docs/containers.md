@@ -19,8 +19,8 @@ runtime (Node + native bindings), and makes deploys reproducible.
 
 | Stage | Base | Purpose |
 |---|---|---|
-| `python-base` | `python:3.14-slim-bookworm` | Source for the Python 3.14 + pip runtime copied into the shared Node base |
-| `node-python-base` | `node:22-bookworm-slim` | Shared Debian slim base with Node.js 22 plus Python 3.14 + pip |
+| `python-base` | `python:3.12-slim-bookworm` | Source for the Python 3.12 + pip runtime copied into the shared Node base |
+| `node-python-base` | `node:22-bookworm-slim` | Shared Debian slim base with Node.js 22 plus Python 3.12 + pip |
 | `builder` | `node-python-base` | Installs all deps including devDeps, compiles native bindings (`node-pty`), runs `npm run build` for both packages |
 | `runtime` | `node-python-base` | Production deps + built artifacts only. Adds `git`, `ripgrep`, `bash`, `curl`, `less`, `procps`, and the C++ toolchain needed for native-module rebuilds during in-container development. Runs as non-root `pi`; `SHELL=/bin/bash` so xterm sessions land in bash, not dash |
 
@@ -31,7 +31,7 @@ prebuilds; on musl, those packages fall back to source builds.
 Installed at runtime:
 
 - **Node.js 22**
-- **Python 3.14 + pip** — callable as `python3`, `python`, or `py`
+- **Python 3.12 + pip** — callable as `python3`, `python`, or `py`
 - **`tini`** — init for signal forwarding + zombie reaping
 - **`git`** — required by the agent's `bash` tool and the GitPanel routes
 - **`ripgrep`** — pi's `grep` tool delegates to `rg` when present;
@@ -69,7 +69,7 @@ conversation history. Override with `SESSION_DIR` to relocate.
 
 ### Persistent Python packages outside this project
 
-The image includes Python 3.14 and pip. Python is callable as `python3`,
+The image includes Python 3.12 and pip. Python is callable as `python3`,
 `python`, or `py`. The shipped compose file does not persist Python
 package installs by default. If you want package installs
 to survive image rebuilds/container replacement without storing them in
@@ -243,7 +243,7 @@ The native `node-pty` binding doesn't match the runtime Node version.
 Rebuild the image first: `docker compose up -d --build` (note `--build`).
 If you're using the running container as a development shell and running
 `npm install` against a bind-mounted checkout, the runtime image includes
-Python 3.14, `pip`, `make`, and `g++` so node-gyp can rebuild `node-pty`
+Python 3.12, `pip`, `make`, and `g++` so node-gyp can rebuild `node-pty`
 in place.
 
 ### Health check failing on first start
