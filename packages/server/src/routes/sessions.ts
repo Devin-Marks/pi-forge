@@ -12,8 +12,11 @@ import {
   type UnifiedSession,
 } from "../session-registry.js";
 import { bridgeSessionDeleted } from "../webhooks/event-bridge.js";
-import { bridgeWorkerDeleted } from "../orchestration/event-bridge.js";
-import { unregisterWorker } from "../orchestration/store.js";
+import { isSupervisor, getWorkerRecord } from "../orchestration/store.js";
+import {
+  cleanupWorkersForDeletedSupervisor,
+  killWorkerAndArchive,
+} from "../orchestration/worker-lifecycle.js";
 import { errorSchema, liveSummaryBody, liveSummarySchema } from "./_schemas.js";
 import { buildTurnDiff } from "../turn-diff-builder.js";
 import { buildCompactionHistory } from "../compaction-history.js";
@@ -800,6 +803,34 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
       // session — both `getSession` and the on-disk lookup go away
       // mid-flow. Used for the session_deleted webhook payload.
       const projectIdForWebhook = await findProjectIdForSession(req.params.id);
+      const workerRecord = await getWorkerRecord(req.params.id);
+      if (workerRecord !== undefined) {
+        try {
+          const result = await killWorkerAndArchive({
+            supervisorId: workerRecord.supervisorId,
+            workerId: req.params.id,
+          });
+          bridgeSessionDeleted({
+            sessionId: req.params.id,
+            ...(projectIdForWebhook !== undefined ? { projectId: projectIdForWebhook } : {}),
+            wasLive: result.wasLive,
+          });
+          return reply.code(204).send();
+        } catch (err) {
+          req.log.error({ err }, "killWorkerAndArchive failed during session delete");
+          return reply.code(500).send({ error: "session_delete_failed" });
+        }
+      }
+
+      if (await isSupervisor(req.params.id)) {
+        try {
+          await cleanupWorkersForDeletedSupervisor(req.params.id);
+        } catch (err) {
+          req.log.error({ err }, "cleanupWorkersForDeletedSupervisor failed during session delete");
+          return reply.code(500).send({ error: "session_delete_failed" });
+        }
+      }
+
       const wasLive = await disposeSession(req.params.id);
       // Always soft-delete: dispose (above) + move JSONL into the 7-day
       // archive (below). After dispose, the registry no longer has the entry;
@@ -819,11 +850,6 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
           ...(projectIdForWebhook !== undefined ? { projectId: projectIdForWebhook } : {}),
           wasLive,
         });
-        // Fire the worker.deleted inbox event BEFORE unregistering
-        // so the bridge can still resolve the supervisor link.
-        // Best-effort: a failure here doesn't undo the delete.
-        void bridgeWorkerDeleted(req.params.id, { wasLive });
-        void unregisterWorker(req.params.id).catch(() => undefined);
         return reply.code(204).send();
       }
       if (r === "live") {
@@ -844,8 +870,6 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
                 ...(projectIdForWebhook !== undefined ? { projectId: projectIdForWebhook } : {}),
                 wasLive: true,
               });
-              void bridgeWorkerDeleted(req.params.id, { wasLive: true });
-              void unregisterWorker(req.params.id).catch(() => undefined);
               return reply.code(204).send();
             }
           } catch (err) {
@@ -869,8 +893,6 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
           ...(projectIdForWebhook !== undefined ? { projectId: projectIdForWebhook } : {}),
           wasLive: true,
         });
-        void bridgeWorkerDeleted(req.params.id, { wasLive: true });
-        void unregisterWorker(req.params.id).catch(() => undefined);
         return reply.code(204).send();
       }
       return notFound(reply);
