@@ -134,7 +134,7 @@ export function SessionList({ projectId }: Props) {
   };
 
   /**
-   * Per-parent expansion state for the pi-subagents sub-agent dropdown.
+   * Per-parent expansion state for nested child/worker session dropdowns.
    * Tracks user TOGGLES — undefined entries inherit the default
    * (auto-expanded when the parent has children). Storing toggles
    * rather than absolute state means a freshly-discovered parent
@@ -161,30 +161,36 @@ export function SessionList({ projectId }: Props) {
    */
   const { topLevel, childrenByParent } = useMemo(() => {
     const childrenByParent = new Map<string, UnifiedSession[]>();
-    const topLevelIds = new Set(
-      sessions.filter((s) => s.parentSessionId === undefined).map((s) => s.sessionId),
-    );
+    const allIds = new Set(sessions.map((s) => s.sessionId));
     for (const s of sessions) {
       if (s.parentSessionId === undefined) continue;
-      if (!topLevelIds.has(s.parentSessionId)) continue; // orphan — keep at top level
+      if (!allIds.has(s.parentSessionId)) continue; // orphan — keep at top level
+      if (s.parentSessionId === s.sessionId) continue; // invalid self-cycle — keep visible
       const arr = childrenByParent.get(s.parentSessionId);
       if (arr === undefined) childrenByParent.set(s.parentSessionId, [s]);
       else arr.push(s);
     }
-    const topLevel = sessions.filter(
-      (s) => s.parentSessionId === undefined || !topLevelIds.has(s.parentSessionId),
+    let topLevel = sessions.filter(
+      (s) =>
+        s.parentSessionId === undefined ||
+        !allIds.has(s.parentSessionId) ||
+        s.parentSessionId === s.sessionId,
     );
+    // If malformed metadata creates a closed parent cycle, every row
+    // would otherwise disappear. Fall back to a flat list rather than
+    // hiding sessions from the sidebar.
+    if (topLevel.length === 0 && sessions.length > 0) topLevel = sessions;
     // One-shot diagnostic so a still-broken grouping report can be
     // triaged from the browser console: shows what parentSessionIds
     // came in on the wire and which buckets they landed in. Strip
-    // when the sub-agent UX stabilises.
+    // when nested-session UX stabilises.
     if (sessions.some((s) => s.parentSessionId !== undefined)) {
-      console.info("[subagent] SessionList grouping", {
+      console.info("[sessions] SessionList grouping", {
         projectId,
         sessionCount: sessions.length,
         topLevelCount: topLevel.length,
         childCount: Array.from(childrenByParent.values()).reduce((n, a) => n + a.length, 0),
-        topLevelIds: Array.from(topLevelIds),
+        allIds: Array.from(allIds),
         parentIdsOnChildren: sessions
           .filter((s) => s.parentSessionId !== undefined)
           .map((s) => s.parentSessionId),
@@ -250,6 +256,49 @@ export function SessionList({ projectId }: Props) {
     }
   };
 
+  const renderSessionRows = (
+    s: UnifiedSession,
+    depth: number,
+    ancestors: ReadonlySet<string>,
+  ): ReactNode[] => {
+    const children = childrenByParent.get(s.sessionId) ?? [];
+    // Default-collapsed: most parents have zero children, and a
+    // sweeping "show every run's child/worker sessions" expansion adds
+    // noise to the sidebar. User toggle persists.
+    const userToggle = expandedParents.get(s.sessionId);
+    const isExpanded = userToggle === true;
+    const rows: ReactNode[] = [
+      <SessionRow
+        key={s.sessionId}
+        session={s}
+        isActive={s.sessionId === activeSessionId}
+        isSelected={selectedIds.has(s.sessionId)}
+        isRenaming={renamingId === s.sessionId}
+        renameDraft={renameDraft}
+        childCount={children.length}
+        isExpanded={isExpanded}
+        depth={depth}
+        onSelect={selectSession}
+        onToggleSelect={toggleSelected}
+        onStartRename={startRename}
+        onChangeRename={setRenameDraft}
+        onRenameKeyDown={onRenameKeyDown}
+        onCommitRename={(id) => void commitRename(id)}
+        onToggleExpanded={toggleExpanded}
+        isArmedForDelete={armedDeleteId === s.sessionId}
+        onDeleteClick={onDeleteClick}
+      />,
+    ];
+    if (!isExpanded) return rows;
+    const nextAncestors = new Set(ancestors);
+    nextAncestors.add(s.sessionId);
+    for (const c of children) {
+      if (nextAncestors.has(c.sessionId)) continue;
+      rows.push(...renderSessionRows(c, depth + 1, nextAncestors));
+    }
+    return rows;
+  };
+
   return (
     // `mt-1` separates the first session row from the project row
     // above; without it, the active-row highlight backgrounds (both
@@ -287,63 +336,7 @@ export function SessionList({ projectId }: Props) {
         appear directly under their parent in DOM order, not as a
         separate group at the bottom of the list.
       */}
-      {topLevel.flatMap((s) => {
-        const children = childrenByParent.get(s.sessionId) ?? [];
-        // Default-collapsed: most parents have zero children, and a
-        // sweeping "show every run's sub-agents" expansion adds noise
-        // to the sidebar. User toggle persists.
-        const userToggle = expandedParents.get(s.sessionId);
-        const isExpanded = userToggle === true;
-        const rows: ReactNode[] = [
-          <SessionRow
-            key={s.sessionId}
-            session={s}
-            isActive={s.sessionId === activeSessionId}
-            isSelected={selectedIds.has(s.sessionId)}
-            isRenaming={renamingId === s.sessionId}
-            renameDraft={renameDraft}
-            childCount={children.length}
-            isExpanded={isExpanded}
-            isChild={false}
-            onSelect={selectSession}
-            onToggleSelect={toggleSelected}
-            onStartRename={startRename}
-            onChangeRename={setRenameDraft}
-            onRenameKeyDown={onRenameKeyDown}
-            onCommitRename={(id) => void commitRename(id)}
-            onToggleExpanded={toggleExpanded}
-            isArmedForDelete={armedDeleteId === s.sessionId}
-            onDeleteClick={onDeleteClick}
-          />,
-        ];
-        if (isExpanded) {
-          for (const c of children) {
-            rows.push(
-              <SessionRow
-                key={c.sessionId}
-                session={c}
-                isActive={c.sessionId === activeSessionId}
-                isSelected={selectedIds.has(c.sessionId)}
-                isRenaming={renamingId === c.sessionId}
-                renameDraft={renameDraft}
-                childCount={0}
-                isExpanded={false}
-                isChild={true}
-                onSelect={selectSession}
-                onToggleSelect={toggleSelected}
-                onStartRename={startRename}
-                onChangeRename={setRenameDraft}
-                onRenameKeyDown={onRenameKeyDown}
-                onCommitRename={(id) => void commitRename(id)}
-                onToggleExpanded={toggleExpanded}
-                isArmedForDelete={armedDeleteId === c.sessionId}
-                onDeleteClick={onDeleteClick}
-              />,
-            );
-          }
-        }
-        return rows;
-      })}
+      {topLevel.flatMap((s) => renderSessionRows(s, 0, new Set()))}
       <ConfirmDialog
         open={deleteDialog !== undefined}
         onClose={() => setDeleteDialog(undefined)}
@@ -365,11 +358,11 @@ interface SessionRowProps {
   isSelected: boolean;
   isRenaming: boolean;
   renameDraft: string;
-  /** Number of pi-subagents children for this session — drives chevron visibility. */
+  /** Number of nested child/worker sessions — drives chevron visibility. */
   childCount: number;
   isExpanded: boolean;
-  /** When true, render with extra left indent + nested-row treatment. */
-  isChild: boolean;
+  /** Nesting depth: 0 for top-level sessions, 1+ for children/workers. */
+  depth: number;
   onSelect: (sessionId: string) => void;
   onToggleSelect: (sessionId: string) => void;
   onStartRename: (sessionId: string, current: string) => void;
@@ -391,7 +384,7 @@ function SessionRow(props: SessionRowProps) {
     renameDraft,
     childCount,
     isExpanded,
-    isChild,
+    depth,
     onSelect,
     onToggleSelect,
     onStartRename,
@@ -415,7 +408,8 @@ function SessionRow(props: SessionRowProps) {
       // when unselected) so toggling selection doesn't shift content
       // by 2 px. Blue, not emerald, to disambiguate from any future
       // success / drop affordances on these rows.
-      className={`group flex items-center gap-1 rounded border-l-2 ${isChild ? "ml-4" : ""} px-2 py-0.5 text-xs ${
+      style={depth > 0 ? { marginLeft: `${Math.min(depth, 3) * 8}px` } : undefined}
+      className={`group flex items-center gap-1 rounded border-l-2 px-2 py-0.5 text-xs ${
         isSelected
           ? "border-blue-400 bg-blue-500/15 text-neutral-100 hover:bg-blue-500/25"
           : isActive
@@ -430,8 +424,8 @@ function SessionRow(props: SessionRowProps) {
         <button
           onClick={() => onToggleExpanded(s.sessionId, isExpanded)}
           className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-neutral-500 hover:text-neutral-200"
-          title={`${childCount} sub-agent session${childCount === 1 ? "" : "s"}`}
-          aria-label={isExpanded ? "Collapse sub-agents" : "Expand sub-agents"}
+          title={`${childCount} child/worker session${childCount === 1 ? "" : "s"}`}
+          aria-label={isExpanded ? "Collapse child sessions" : "Expand child sessions"}
         >
           {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </button>
@@ -463,8 +457,11 @@ function SessionRow(props: SessionRowProps) {
           title={`${s.sessionId} — double-click to rename, Cmd/Ctrl+click to select for bulk delete`}
         >
           {s.isLive && <span className="mr-1 text-emerald-500 light:text-emerald-700">●</span>}
-          {isChild && (
-            <span className="mr-1 text-purple-400 light:text-purple-700" title="sub-agent">
+          {depth > 0 && (
+            <span
+              className="mr-1 text-purple-400 light:text-purple-700"
+              title="child/worker session"
+            >
               ↳
             </span>
           )}

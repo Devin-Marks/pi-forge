@@ -41,8 +41,8 @@ const unifiedSchema = {
     messageCount: { type: "integer", minimum: 0 },
     firstMessage: { type: "string" },
     /**
-     * Set on pi-subagents child sessions — the id of the session that
-     * spawned this sub-agent. Drives the sidebar's parent-row chevron
+     * Set when this row is nested under another session (pi-subagents child
+     * or orchestration worker). Drives the sidebar's parent-row chevron
      * grouping.
      */
     parentSessionId: { type: "string" },

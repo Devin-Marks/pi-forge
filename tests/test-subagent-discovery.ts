@@ -88,12 +88,21 @@ interface TestDiscovered {
   parentSessionId?: string;
   runId?: string;
 }
+interface TestUnifiedSession {
+  sessionId: string;
+  parentSessionId?: string;
+  runId?: string;
+}
 interface TestRegistry {
   createSession: (projectId: string, workspacePath: string) => Promise<TestLive>;
   disposeSession: (id: string) => Promise<boolean>;
   disposeAllSessions: () => Promise<void>;
   resumeSession: (id: string, projectId: string, workspacePath: string) => Promise<TestLive>;
   discoverSessionsOnDisk: (projectId: string, workspacePath: string) => Promise<TestDiscovered[]>;
+  listSessionsForProject: (
+    projectId: string,
+    workspacePath: string,
+  ) => Promise<TestUnifiedSession[]>;
   findSessionLocation: (
     id: string,
   ) => Promise<{ projectId: string; workspacePath: string } | undefined>;
@@ -102,6 +111,30 @@ interface TestRegistry {
 }
 interface TestProjectManager {
   createProject: (name: string, path: string) => Promise<{ id: string; path: string }>;
+}
+interface TestOrchestrationStore {
+  enableSupervisor: (sessionId: string) => Promise<unknown>;
+  registerWorker: (opts: { supervisorId: string; workerId: string }) => Promise<void>;
+}
+
+function appendFixtureMessage(live: TestLive, text: string): void {
+  live.session.sessionManager.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text, id: "stub-1" }],
+    api: "messages",
+    provider: "anthropic",
+    model: "test-fixture",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  });
 }
 
 async function main(): Promise<void> {
@@ -115,6 +148,9 @@ async function main(): Promise<void> {
   const pm = (await import(
     resolve(repoRoot, "packages/server/dist/project-manager.js")
   )) as unknown as TestProjectManager;
+  const orchestrationStore = (await import(
+    resolve(repoRoot, "packages/server/dist/orchestration/store.js")
+  )) as unknown as TestOrchestrationStore;
 
   // Register the project so findSessionLocation can locate children.
   const project = await pm.createProject("test-subagent-project", workspacePath);
@@ -130,23 +166,7 @@ async function main(): Promise<void> {
     // the live-test pattern in tests/test-session.ts). Inject a
     // minimal assistant message so the parent's JSONL header lands on
     // disk and `discoverSessionsOnDisk` can see it.
-    parent.session.sessionManager.appendMessage({
-      role: "assistant",
-      content: [{ type: "text", text: "test fixture", id: "stub-1" }],
-      api: "messages",
-      provider: "anthropic",
-      model: "test-fixture",
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: "stop",
-      timestamp: Date.now(),
-    });
+    appendFixtureMessage(parent, "test fixture");
 
     // 2. Fake a pi-subagents child JSONL nested under the parent's id.
     //    Layout: <sessionDir>/<projectId>/<parentId>/<runId>/<childId>.jsonl
@@ -185,6 +205,42 @@ async function main(): Promise<void> {
     assert(
       "parent session has no parentSessionId / runId tagging",
       parentEntry?.parentSessionId === undefined && parentEntry?.runId === undefined,
+    );
+
+    // 3b. Mixed hierarchy regression: orchestration workers are top-level
+    // sessions whose supervisor link is overlaid from session-orchestration.json,
+    // while pi-subagents children are discovered from disk below their parent.
+    // When a worker uses a subagent, both links must coexist so the sidebar can
+    // render: orchestrator -> worker -> subagent.
+    const orchestrator = await registry.createSession(project.id, project.path);
+    appendFixtureMessage(orchestrator, "orchestrator fixture");
+    const worker = await registry.createSession(project.id, project.path);
+    appendFixtureMessage(worker, "worker fixture");
+    await orchestrationStore.enableSupervisor(orchestrator.sessionId);
+    await orchestrationStore.registerWorker({
+      supervisorId: orchestrator.sessionId,
+      workerId: worker.sessionId,
+    });
+    const workerSubagentId = randomUUID();
+    const workerSubagentRunId = "run-" + randomUUID().slice(0, 8);
+    await writeChildSessionFile(
+      join(projectSessionDir, worker.sessionId, workerSubagentRunId, `${workerSubagentId}.jsonl`),
+      workerSubagentId,
+      project.path,
+    );
+    const mixedList = await registry.listSessionsForProject(project.id, project.path);
+    const workerRow = mixedList.find((s) => s.sessionId === worker.sessionId);
+    const workerSubagentRow = mixedList.find((s) => s.sessionId === workerSubagentId);
+    assert(
+      "orchestration worker is nested under orchestrator in unified list",
+      workerRow?.parentSessionId === orchestrator.sessionId,
+      `parentSessionId=${workerRow?.parentSessionId}`,
+    );
+    assert(
+      "worker subagent remains nested under the worker in unified list",
+      workerSubagentRow?.parentSessionId === worker.sessionId &&
+        workerSubagentRow?.runId === workerSubagentRunId,
+      `parentSessionId=${workerSubagentRow?.parentSessionId} runId=${workerSubagentRow?.runId}`,
     );
 
     // 4. findSessionLocation resolves the child to its project.

@@ -291,9 +291,10 @@ export interface UnifiedSession {
   messageCount: number;
   firstMessage: string;
   /**
-   * Set when this session was spawned by the pi-subagents extension —
-   * the parent session's id. The sidebar groups children under their
-   * parent in a chevron dropdown.
+   * Set when this session should be nested under another session —
+   * pi-subagents children use their parent session id; orchestration
+   * workers use their supervisor/orchestrator session id. The sidebar
+   * groups children under their parent in a chevron dropdown.
    */
   parentSessionId?: string;
   /** pi-subagents run id when this is a child session. */
