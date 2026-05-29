@@ -18,7 +18,7 @@
  * leaking into the cloned `origin` URL.
  */
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -353,6 +353,30 @@ async function main(): Promise<void> {
         projectName: "Cloned Repo 2",
       });
       assert("re-clone into non-empty folder → 409", second.status === 409);
+
+      // A parent directory that is a symlink inside WORKSPACE_PATH but
+      // resolves outside it must be rejected before spawning `git clone`.
+      const outsideParent = await mkdtemp(join(tmpdir(), "pi-forge-clone-outside-"));
+      const symlinkParent = join(srv.workspacePath, "outside-link");
+      try {
+        await symlink(outsideParent, symlinkParent, "dir");
+        const escaped = await streamClone(srv.base, {
+          url: sourceUrl,
+          parentPath: symlinkParent,
+          folderName: "escaped-repo",
+          projectName: "Escaped Repo",
+        });
+        assert("clone parent symlink outside workspace → 403", escaped.status === 403);
+        let escapedStat: Awaited<ReturnType<typeof stat>> | undefined;
+        try {
+          escapedStat = await stat(join(outsideParent, "escaped-repo"));
+        } catch {
+          escapedStat = undefined;
+        }
+        assert("symlink escape target was not created", escapedStat === undefined);
+      } finally {
+        await rm(outsideParent, { recursive: true, force: true });
+      }
     } finally {
       await rm(sourceParent, { recursive: true, force: true });
     }

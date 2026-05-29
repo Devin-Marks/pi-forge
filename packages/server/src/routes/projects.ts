@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync, FastifyReply } from "fastify";
-import { join, resolve } from "node:path";
+import { realpath } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { config } from "../config.js";
 import {
   assertTargetClonable,
@@ -48,6 +49,11 @@ const CLONE_HEARTBEAT_INTERVAL_MS = 20_000;
  */
 const CLONE_PADDING_BYTES = 2048;
 const CLONE_PADDING_LINE = `: pad-flush ${"_".repeat(CLONE_PADDING_BYTES - 14)}\n\n`;
+
+function isPathInsideOrEqual(child: string, parent: string): boolean {
+  const rel = relative(parent, child);
+  return rel.length === 0 || (!rel.startsWith("..") && !isAbsolute(rel));
+}
 
 const projectSchema = {
   type: "object",
@@ -510,18 +516,16 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ error: "invalid_directory_name" });
       }
       // Resolve target path and confirm it's inside WORKSPACE_PATH.
-      // Reuses the project-manager error so the route surface stays
-      // consistent.
+      // Realpath the parent before joining so a symlink inside the
+      // workspace cannot redirect the clone target outside it.
       const parentResolved = resolve(parentPath);
-      const targetPath = join(parentResolved, folderName);
-      const workspaceResolved = resolve(config.workspacePath);
-      if (
-        !parentResolved.startsWith(workspaceResolved + "/") &&
-        parentResolved !== workspaceResolved
-      ) {
+      const workspaceResolved = await realpath(config.workspacePath);
+      const parentReal = await realpath(parentResolved).catch(() => parentResolved);
+      const targetPath = join(parentReal, folderName);
+      if (!isPathInsideOrEqual(parentReal, workspaceResolved)) {
         return reply.code(403).send({ error: "path_not_allowed" });
       }
-      if (!targetPath.startsWith(workspaceResolved + "/") && targetPath !== workspaceResolved) {
+      if (!isPathInsideOrEqual(targetPath, workspaceResolved)) {
         return reply.code(403).send({ error: "path_not_allowed" });
       }
       try {
