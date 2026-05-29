@@ -74,6 +74,23 @@ interface InboxModule {
   ) => Promise<{ id: string } | undefined>;
 }
 
+interface ProcessInfoStub {
+  id: string;
+  name: string;
+  pid: number | null;
+  exitCode: number | null;
+  success: boolean;
+}
+
+interface EventBridgeModule {
+  bridgeWorkerProcessAlert: (
+    workerId: string,
+    info: ProcessInfoStub,
+    reason: "success" | "failure" | "killed",
+  ) => Promise<void>;
+  shouldBridgeWorkerProcessAlert: (reason: "success" | "failure" | "killed") => boolean;
+}
+
 interface ToolResult {
   content: { type: string; text?: string }[];
   details?: unknown;
@@ -228,6 +245,9 @@ async function main(): Promise<void> {
   const inbox = (await import(
     resolve(repoRoot, "packages/server/dist/orchestration/inbox.js")
   )) as unknown as InboxModule;
+  const eventBridge = (await import(
+    resolve(repoRoot, "packages/server/dist/orchestration/event-bridge.js")
+  )) as unknown as EventBridgeModule;
 
   // ===== enable / disable supervisor =====
   await store.enableSupervisor("sup-1");
@@ -300,12 +320,51 @@ async function main(): Promise<void> {
   const all = await store.readAllInbox("sup-1");
   assert("history retains drained items", all.length === 2);
 
-  // pendingInboxCount
+  // pendingInboxCount + process alert noise reduction
   const cnt = await store.pendingInboxCount("sup-1");
   assert("pendingInboxCount = 0 after drain", cnt === 0);
-  await inbox.bridgeWorkerEvent("w-2", "worker.process_alert", { reason: "exit" });
+  assert(
+    "success process alerts are not supervisor-worthy",
+    !eventBridge.shouldBridgeWorkerProcessAlert("success"),
+  );
+  assert(
+    "failure process alerts are not supervisor-worthy",
+    !eventBridge.shouldBridgeWorkerProcessAlert("failure"),
+  );
+  assert(
+    "killed process alerts are not supervisor-worthy",
+    !eventBridge.shouldBridgeWorkerProcessAlert("killed"),
+  );
+  const procInfo: ProcessInfoStub = {
+    id: "p1",
+    name: "build",
+    pid: 123,
+    exitCode: 0,
+    success: true,
+  };
+  await eventBridge.bridgeWorkerProcessAlert("w-2", procInfo, "success");
+  const cntAfterSuccess = await store.pendingInboxCount("sup-1");
+  assert(
+    "worker process success alert does not enqueue inbox item",
+    cntAfterSuccess === 0,
+    `got ${cntAfterSuccess}`,
+  );
+  await eventBridge.bridgeWorkerProcessAlert(
+    "w-2",
+    { ...procInfo, id: "p2", exitCode: 1, success: false },
+    "failure",
+  );
+  await eventBridge.bridgeWorkerProcessAlert(
+    "w-2",
+    { ...procInfo, id: "p3", exitCode: null, success: false },
+    "killed",
+  );
   const cnt2 = await store.pendingInboxCount("sup-1");
-  assert("pendingInboxCount = 1 after new event", cnt2 === 1);
+  assert(
+    "worker process failure/kill alerts do not enqueue inbox items",
+    cnt2 === 0,
+    `got ${cnt2}`,
+  );
 
   // Clear inbox
   await store.clearInbox("sup-1");

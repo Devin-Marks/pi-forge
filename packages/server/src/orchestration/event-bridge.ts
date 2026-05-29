@@ -11,7 +11,7 @@
  *     - `ask_user_question` → inbox `worker.ask_user`
  *
  *   processManager (forge-native):
- *     - `process_alert`     → inbox `worker.process_alert`
+ *     - `process_alert` is intentionally not bridged to the supervisor inbox
  *
  *   session-registry lifecycle (sessions DELETE route):
  *     - cold/hot delete    → inbox `worker.deleted`
@@ -125,11 +125,22 @@ export async function bridgeWorkerAskUserQuestion(
   });
 }
 
+export function shouldBridgeWorkerProcessAlert(_reason: ProcessAlertReason): boolean {
+  // Worker process alerts are intentionally not escalated to the
+  // supervisor inbox. The worker session itself still receives the
+  // in-chat process alert because it explicitly requested an
+  // alertOn* notification, and the running worker agent can react
+  // locally. Waking the orchestrator for process success/failure/kill
+  // outcomes has proven too noisy and duplicative.
+  return false;
+}
+
 export async function bridgeWorkerProcessAlert(
   sessionId: string,
   info: ProcessInfo,
   reason: ProcessAlertReason,
 ): Promise<void> {
+  if (!shouldBridgeWorkerProcessAlert(reason)) return;
   await bridgeWorkerEvent(sessionId, "worker.process_alert", {
     reason,
     processId: info.id,
