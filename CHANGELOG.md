@@ -15,6 +15,27 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.3.5] — 2026-05-28
+
+### Added
+
+- **Agent guidance now standardizes worker worktrees and lighter formatting checks.**
+  Main agent instructions tell workers to create git worktrees under `.worktrees/`,
+  document the `npm run format:check` Prettier check, and remove release-bump
+  guidance that asked version-only PRs to run the full build/check/test loop.
+
+### Fixed
+
+- **Tool call batches render consistently outside assistant bubbles.** Chat now
+  splits tool calls out into timeline-level cards, batches adjacent calls across
+  assistant message boundaries in groups of up to 10, keeps `edit` and `write`
+  visible as standalone cards, and improves the batch-card header layout on
+  mobile.
+- **Clone target validation rejects symlink escapes.** `/projects/clone` now
+  resolves the workspace and clone parent before constructing the target path,
+  preventing a symlink inside the workspace from redirecting clone output outside
+  `WORKSPACE_PATH`.
+
 ## [1.3.4] — 2026-05-28
 
 ### Added
