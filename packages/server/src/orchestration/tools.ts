@@ -36,6 +36,7 @@ import {
   registerWorker,
   unregisterWorker,
 } from "./store.js";
+import { killWorkerAndArchive } from "./worker-lifecycle.js";
 
 // ---- result shape helpers ----
 
@@ -746,9 +747,9 @@ const killSchema = {
     deleteOnDisk: {
       type: "boolean",
       description:
-        "When true, also delete the worker's .jsonl from disk (the session " +
-        "is gone from the sidebar). Default false — keeps the transcript " +
-        "for later inspection.",
+        "Deprecated compatibility flag. Killed workers are always moved out " +
+        "of the live session tree and preserved in the 7-day archive so they " +
+        "disappear from the sidebar without losing the transcript.",
     },
   },
 } as const;
@@ -759,24 +760,27 @@ function createKillWorker(supervisorId: string): ToolDefinition {
     label: "Kill worker",
     description:
       "Dispose the worker session (terminate any in-flight turn, close " +
-      "SSE clients) and unregister it from this supervisor. By default " +
-      "the .jsonl transcript stays on disk; pass `deleteOnDisk: true` " +
-      "to also remove it.",
+      "SSE clients), move its transcript into the 7-day archive so it " +
+      "disappears from the sidebar, and unregister it from this supervisor.",
     parameters: Type.Unsafe<Record<string, unknown>>(killSchema),
     async execute(_toolCallId, params) {
       const p = params as { workerId: string; deleteOnDisk?: boolean };
       const guard = await assertOwns(supervisorId, p.workerId);
       if (guard !== undefined) return guard;
-      const wasLive = await disposeSession(p.workerId);
-      let diskDeleted = false;
-      if (p.deleteOnDisk === true) {
-        const r = await deleteColdSession(p.workerId).catch(() => "not_found" as const);
-        diskDeleted = r === "deleted";
-      }
-      await unregisterWorker(p.workerId);
+      const result = await killWorkerAndArchive({ supervisorId, workerId: p.workerId });
       return ok(
-        { workerId: p.workerId, wasLive, diskDeleted },
-        `Killed worker ${p.workerId}${diskDeleted ? " (and deleted from disk)" : ""}.`,
+        {
+          workerId: p.workerId,
+          wasLive: result.wasLive,
+          archiveStatus: result.archiveStatus,
+          // Backward-compatible detail for older consumers that looked for
+          // the pre-archive flag name. "Deleted" means gone from live
+          // discovery, not purged from the retention archive.
+          diskDeleted: result.archiveStatus === "archived",
+        },
+        `Killed worker ${p.workerId}${
+          result.archiveStatus === "archived" ? " (transcript archived)" : ""
+        }.`,
       );
     },
   } satisfies ToolDefinition;

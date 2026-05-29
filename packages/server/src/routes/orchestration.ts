@@ -21,7 +21,6 @@
  */
 import type { FastifyPluginAsync, FastifyReply } from "fastify";
 import {
-  disposeSession,
   findProjectIdForSession,
   getSession,
   rebuildAgentSessionForTools,
@@ -44,6 +43,7 @@ import {
 } from "../orchestration/store.js";
 import { clearInbox, pendingInboxCount, readAllInbox } from "../orchestration/store.js";
 import { MAX_DEPTH } from "../orchestration/types.js";
+import { killWorkerAndArchive } from "../orchestration/worker-lifecycle.js";
 import { errorSchema } from "./_schemas.js";
 
 function gate(reply: FastifyReply): FastifyReply | undefined {
@@ -476,9 +476,9 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     {
       schema: {
         description:
-          "UI control: dispose the worker session AND unregister it from this " +
-          "supervisor. Does NOT delete the .jsonl from disk — use DELETE " +
-          "/sessions/:id for that.",
+          "UI control: dispose the worker session, move its transcript into " +
+          "the 7-day archive so it disappears from the live session list, " +
+          "and unregister it from this supervisor.",
         tags: ["orchestration"],
         params: {
           type: "object",
@@ -489,7 +489,10 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           200: {
             type: "object",
             required: ["wasLive"],
-            properties: { wasLive: { type: "boolean" } },
+            properties: {
+              wasLive: { type: "boolean" },
+              archiveStatus: { type: "string", enum: ["archived", "not_found"] },
+            },
           },
           403: errorSchema,
           404: errorSchema,
@@ -503,9 +506,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       if (rec === undefined || rec.supervisorId !== req.params.id) {
         return reply.code(404).send({ error: "worker_not_linked" });
       }
-      const wasLive = await disposeSession(req.params.wid);
-      await unregisterWorker(req.params.wid);
-      return { wasLive };
+      return killWorkerAndArchive({ supervisorId: req.params.id, workerId: req.params.wid });
     },
   );
 

@@ -22,9 +22,10 @@
  * thin wrappers around the same store / inbox / session-registry
  * functions covered below.
  */
+import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:net";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -661,6 +662,398 @@ async function main(): Promise<void> {
       unnestedList.status === 200 && unnestedWorker?.parentSessionId === undefined,
       `parentSessionId=${unnestedWorker?.parentSessionId}`,
     );
+
+    // Regression: killing an orchestration worker should remove it from the
+    // live session list instead of merely unregistering it into a standalone
+    // cold session. The transcript is soft-deleted into the 7-day archive.
+    const reEn = await jsend(
+      onSrv.base,
+      "POST",
+      `/api/v1/orchestration/sessions/${realSid}/enable`,
+    );
+    assert("re-enable real supervisor for kill regression → 200", reEn.status === 200);
+    const workerSessionDir = join(sharedWs, ".pi", "sessions", realProjectId);
+    const workerBasename = `kill-regression-${realWorkerId}`;
+    const childRunId = `run-${randomUUID().slice(0, 8)}`;
+    const workerSubagentId = randomUUID();
+    await mkdir(workerSessionDir, { recursive: true });
+    await writeFile(
+      join(workerSessionDir, `${workerBasename}.jsonl`),
+      JSON.stringify({
+        type: "session",
+        version: 1,
+        id: realWorkerId,
+        timestamp: new Date().toISOString(),
+        cwd: sharedWs,
+      }) + "\n",
+      "utf8",
+    );
+    const workerSubagentDir = join(workerSessionDir, workerBasename, childRunId);
+    await mkdir(workerSubagentDir, { recursive: true });
+    await writeFile(
+      join(workerSubagentDir, `${workerSubagentId}.jsonl`),
+      JSON.stringify({
+        type: "session",
+        version: 1,
+        id: workerSubagentId,
+        timestamp: new Date().toISOString(),
+        cwd: sharedWs,
+      }) + "\n",
+      "utf8",
+    );
+    await store.registerWorker({ supervisorId: realSid, workerId: realWorkerId });
+    const preKillNestedList = await jsend(
+      onSrv.base,
+      "GET",
+      `/api/v1/sessions?projectId=${encodeURIComponent(realProjectId)}`,
+    );
+    const preKillSessions =
+      (preKillNestedList.body as { sessions?: { sessionId: string; parentSessionId?: string }[] })
+        .sessions ?? [];
+    assert(
+      "worker subagent child is listed before kill",
+      preKillNestedList.status === 200 &&
+        preKillSessions.some(
+          (s) => s.sessionId === workerSubagentId && s.parentSessionId === realWorkerId,
+        ),
+      JSON.stringify(preKillNestedList.body),
+    );
+    const childSseAc = new AbortController();
+    const childSseRes = await fetch(`${onSrv.base}/api/v1/sessions/${workerSubagentId}/stream`, {
+      signal: childSseAc.signal,
+    });
+    assert(
+      "worker subagent child can be made live before kill",
+      childSseRes.status === 200,
+      `got ${childSseRes.status}`,
+    );
+    const killRes = await jsend(
+      onSrv.base,
+      "POST",
+      `/api/v1/orchestration/sessions/${realSid}/workers/${realWorkerId}/kill`,
+    );
+    assert(
+      "kill worker archives transcript",
+      killRes.status === 200 &&
+        (killRes.body as { wasLive?: boolean; archiveStatus?: string }).wasLive === true &&
+        (killRes.body as { wasLive?: boolean; archiveStatus?: string }).archiveStatus ===
+          "archived",
+      JSON.stringify(killRes.body),
+    );
+    const afterKillList = await jsend(
+      onSrv.base,
+      "GET",
+      `/api/v1/sessions?projectId=${encodeURIComponent(realProjectId)}`,
+    );
+    const afterKillSessions =
+      (afterKillList.body as { sessions?: { sessionId: string }[] }).sessions ?? [];
+    const killedWorkerStillListed = afterKillSessions.some((s) => s.sessionId === realWorkerId);
+    const workerSubagentStillListed = afterKillSessions.some(
+      (s) => s.sessionId === workerSubagentId,
+    );
+    assert(
+      "killed worker no longer appears in session list",
+      afterKillList.status === 200 && killedWorkerStillListed === false,
+      JSON.stringify(afterKillList.body),
+    );
+    assert(
+      "killed worker's subagent child no longer appears in session list",
+      afterKillList.status === 200 && workerSubagentStillListed === false,
+      JSON.stringify(afterKillList.body),
+    );
+    const childAfterKill = await jsend(onSrv.base, "GET", `/api/v1/sessions/${workerSubagentId}`);
+    assert(
+      "live worker subagent child is disposed during kill",
+      childAfterKill.status === 404,
+      `got ${childAfterKill.status}`,
+    );
+    const archiveEntries = await readdir(join(sharedData, "archived-sessions"));
+    const workerArchiveEntry = archiveEntries.find((name) => name.includes(realWorkerId));
+    assert(
+      "killed worker transcript has archive entry",
+      workerArchiveEntry !== undefined,
+      archiveEntries.join(","),
+    );
+    if (workerArchiveEntry !== undefined) {
+      const archivedChildFiles = await readdir(
+        join(sharedData, "archived-sessions", workerArchiveEntry, "subagents", childRunId),
+      );
+      assert(
+        "killed worker archive includes subagent child directory",
+        archivedChildFiles.includes(`${workerSubagentId}.jsonl`),
+        archivedChildFiles.join(","),
+      );
+    }
+    childSseAc.abort();
+    try {
+      await childSseRes.body?.cancel();
+    } catch {
+      // ignore — body cancel after abort can throw
+    }
+
+    // Same cleanup contract through the normal DELETE /sessions/:id route:
+    // if the target is a registered orchestration worker, it should use the
+    // shared kill/archive helper rather than the standalone delete path.
+    const deleteWorker = await jsend(onSrv.base, "POST", "/api/v1/sessions", {
+      projectId: realProjectId,
+    });
+    assert(
+      "create delete-route worker session → 201",
+      deleteWorker.status === 201 &&
+        typeof (deleteWorker.body as { sessionId: string }).sessionId === "string",
+    );
+    const deleteWorkerId = (deleteWorker.body as { sessionId: string }).sessionId;
+    const deleteWorkerBasename = `delete-regression-${deleteWorkerId}`;
+    const deleteChildRunId = `run-${randomUUID().slice(0, 8)}`;
+    const deleteWorkerSubagentId = randomUUID();
+    await writeFile(
+      join(workerSessionDir, `${deleteWorkerBasename}.jsonl`),
+      JSON.stringify({
+        type: "session",
+        version: 1,
+        id: deleteWorkerId,
+        timestamp: new Date().toISOString(),
+        cwd: sharedWs,
+      }) + "\n",
+      "utf8",
+    );
+    const deleteWorkerSubagentDir = join(workerSessionDir, deleteWorkerBasename, deleteChildRunId);
+    await mkdir(deleteWorkerSubagentDir, { recursive: true });
+    await writeFile(
+      join(deleteWorkerSubagentDir, `${deleteWorkerSubagentId}.jsonl`),
+      JSON.stringify({
+        type: "session",
+        version: 1,
+        id: deleteWorkerSubagentId,
+        timestamp: new Date().toISOString(),
+        cwd: sharedWs,
+      }) + "\n",
+      "utf8",
+    );
+    await store.registerWorker({ supervisorId: realSid, workerId: deleteWorkerId });
+    const deleteChildSseAc = new AbortController();
+    const deleteChildSseRes = await fetch(
+      `${onSrv.base}/api/v1/sessions/${deleteWorkerSubagentId}/stream`,
+      { signal: deleteChildSseAc.signal },
+    );
+    assert(
+      "delete-route worker subagent child can be made live before delete",
+      deleteChildSseRes.status === 200,
+      `got ${deleteChildSseRes.status}`,
+    );
+    const deleteWorkerRes = await jsend(onSrv.base, "DELETE", `/api/v1/sessions/${deleteWorkerId}`);
+    assert("DELETE /sessions/:id for worker returns 204", deleteWorkerRes.status === 204);
+    const afterDeleteWorkerList = await jsend(
+      onSrv.base,
+      "GET",
+      `/api/v1/sessions?projectId=${encodeURIComponent(realProjectId)}`,
+    );
+    const afterDeleteWorkerSessions =
+      (afterDeleteWorkerList.body as { sessions?: { sessionId: string }[] }).sessions ?? [];
+    assert(
+      "DELETE worker no longer appears in session list",
+      afterDeleteWorkerList.status === 200 &&
+        !afterDeleteWorkerSessions.some((s) => s.sessionId === deleteWorkerId),
+      JSON.stringify(afterDeleteWorkerList.body),
+    );
+    assert(
+      "DELETE worker's subagent child no longer appears in session list",
+      afterDeleteWorkerList.status === 200 &&
+        !afterDeleteWorkerSessions.some((s) => s.sessionId === deleteWorkerSubagentId),
+      JSON.stringify(afterDeleteWorkerList.body),
+    );
+    const deleteChildAfterKill = await jsend(
+      onSrv.base,
+      "GET",
+      `/api/v1/sessions/${deleteWorkerSubagentId}`,
+    );
+    assert(
+      "DELETE worker disposes live subagent child",
+      deleteChildAfterKill.status === 404,
+      `got ${deleteChildAfterKill.status}`,
+    );
+    const archiveEntriesAfterDelete = await readdir(join(sharedData, "archived-sessions"));
+    const deleteWorkerArchiveEntry = archiveEntriesAfterDelete.find((name) =>
+      name.includes(deleteWorkerId),
+    );
+    assert(
+      "DELETE worker transcript has archive entry",
+      deleteWorkerArchiveEntry !== undefined,
+      archiveEntriesAfterDelete.join(","),
+    );
+    if (deleteWorkerArchiveEntry !== undefined) {
+      const deleteArchivedChildFiles = await readdir(
+        join(
+          sharedData,
+          "archived-sessions",
+          deleteWorkerArchiveEntry,
+          "subagents",
+          deleteChildRunId,
+        ),
+      );
+      assert(
+        "DELETE worker archive includes subagent child directory",
+        deleteArchivedChildFiles.includes(`${deleteWorkerSubagentId}.jsonl`),
+        deleteArchivedChildFiles.join(","),
+      );
+    }
+    deleteChildSseAc.abort();
+    try {
+      await deleteChildSseRes.body?.cancel();
+    } catch {
+      // ignore — body cancel after abort can throw
+    }
+
+    // Deleting the supervisor itself should cascade through the same worker
+    // cleanup path: registered workers (and their subagent children) are
+    // archived out of live discovery and unregistered before the supervisor is
+    // removed.
+    const cascadeWorkerA = await jsend(onSrv.base, "POST", "/api/v1/sessions", {
+      projectId: realProjectId,
+    });
+    const cascadeWorkerB = await jsend(onSrv.base, "POST", "/api/v1/sessions", {
+      projectId: realProjectId,
+    });
+    assert(
+      "create cascade worker sessions → 201",
+      cascadeWorkerA.status === 201 && cascadeWorkerB.status === 201,
+    );
+    const cascadeWorkerAId = (cascadeWorkerA.body as { sessionId: string }).sessionId;
+    const cascadeWorkerBId = (cascadeWorkerB.body as { sessionId: string }).sessionId;
+    const cascadeWorkerABasename = `cascade-worker-${cascadeWorkerAId}`;
+    const cascadeWorkerBBasename = `cascade-worker-${cascadeWorkerBId}`;
+    const cascadeChildRunId = `run-${randomUUID().slice(0, 8)}`;
+    const cascadeWorkerSubagentId = randomUUID();
+    await writeFile(
+      join(workerSessionDir, `${cascadeWorkerABasename}.jsonl`),
+      JSON.stringify({
+        type: "session",
+        version: 1,
+        id: cascadeWorkerAId,
+        timestamp: new Date().toISOString(),
+        cwd: sharedWs,
+      }) + "\n",
+      "utf8",
+    );
+    await writeFile(
+      join(workerSessionDir, `${cascadeWorkerBBasename}.jsonl`),
+      JSON.stringify({
+        type: "session",
+        version: 1,
+        id: cascadeWorkerBId,
+        timestamp: new Date().toISOString(),
+        cwd: sharedWs,
+      }) + "\n",
+      "utf8",
+    );
+    const cascadeWorkerSubagentDir = join(
+      workerSessionDir,
+      cascadeWorkerABasename,
+      cascadeChildRunId,
+    );
+    await mkdir(cascadeWorkerSubagentDir, { recursive: true });
+    await writeFile(
+      join(cascadeWorkerSubagentDir, `${cascadeWorkerSubagentId}.jsonl`),
+      JSON.stringify({
+        type: "session",
+        version: 1,
+        id: cascadeWorkerSubagentId,
+        timestamp: new Date().toISOString(),
+        cwd: sharedWs,
+      }) + "\n",
+      "utf8",
+    );
+    await store.registerWorker({ supervisorId: realSid, workerId: cascadeWorkerAId });
+    await store.registerWorker({ supervisorId: realSid, workerId: cascadeWorkerBId });
+    const cascadeChildSseAc = new AbortController();
+    const cascadeChildSseRes = await fetch(
+      `${onSrv.base}/api/v1/sessions/${cascadeWorkerSubagentId}/stream`,
+      { signal: cascadeChildSseAc.signal },
+    );
+    assert(
+      "cascade worker subagent child can be made live before supervisor delete",
+      cascadeChildSseRes.status === 200,
+      `got ${cascadeChildSseRes.status}`,
+    );
+    const deleteSupervisorRes = await jsend(onSrv.base, "DELETE", `/api/v1/sessions/${realSid}`);
+    assert("DELETE /sessions/:id for supervisor returns 204", deleteSupervisorRes.status === 204);
+    const afterSupervisorDeleteList = await jsend(
+      onSrv.base,
+      "GET",
+      `/api/v1/sessions?projectId=${encodeURIComponent(realProjectId)}`,
+    );
+    const afterSupervisorDeleteSessions =
+      (afterSupervisorDeleteList.body as { sessions?: { sessionId: string }[] }).sessions ?? [];
+    assert(
+      "deleted supervisor no longer appears in session list",
+      afterSupervisorDeleteList.status === 200 &&
+        !afterSupervisorDeleteSessions.some((s) => s.sessionId === realSid),
+      JSON.stringify(afterSupervisorDeleteList.body),
+    );
+    assert(
+      "deleted supervisor's workers no longer appear in session list",
+      afterSupervisorDeleteList.status === 200 &&
+        !afterSupervisorDeleteSessions.some(
+          (s) => s.sessionId === cascadeWorkerAId || s.sessionId === cascadeWorkerBId,
+        ),
+      JSON.stringify(afterSupervisorDeleteList.body),
+    );
+    assert(
+      "deleted supervisor worker's subagent child no longer appears in session list",
+      afterSupervisorDeleteList.status === 200 &&
+        !afterSupervisorDeleteSessions.some((s) => s.sessionId === cascadeWorkerSubagentId),
+      JSON.stringify(afterSupervisorDeleteList.body),
+    );
+    assert(
+      "deleted supervisor workers are unregistered",
+      (await store.getWorkerIds(realSid)).length === 0,
+    );
+    const cascadeChildAfterDelete = await jsend(
+      onSrv.base,
+      "GET",
+      `/api/v1/sessions/${cascadeWorkerSubagentId}`,
+    );
+    assert(
+      "deleted supervisor disposes live worker subagent child",
+      cascadeChildAfterDelete.status === 404,
+      `got ${cascadeChildAfterDelete.status}`,
+    );
+    const archiveEntriesAfterSupervisorDelete = await readdir(
+      join(sharedData, "archived-sessions"),
+    );
+    const cascadeWorkerAArchiveEntry = archiveEntriesAfterSupervisorDelete.find((name) =>
+      name.includes(cascadeWorkerAId),
+    );
+    const cascadeWorkerBArchiveEntry = archiveEntriesAfterSupervisorDelete.find((name) =>
+      name.includes(cascadeWorkerBId),
+    );
+    assert(
+      "deleted supervisor's workers have archive entries",
+      cascadeWorkerAArchiveEntry !== undefined && cascadeWorkerBArchiveEntry !== undefined,
+      archiveEntriesAfterSupervisorDelete.join(","),
+    );
+    if (cascadeWorkerAArchiveEntry !== undefined) {
+      const cascadeArchivedChildFiles = await readdir(
+        join(
+          sharedData,
+          "archived-sessions",
+          cascadeWorkerAArchiveEntry,
+          "subagents",
+          cascadeChildRunId,
+        ),
+      );
+      assert(
+        "deleted supervisor worker archive includes subagent child directory",
+        cascadeArchivedChildFiles.includes(`${cascadeWorkerSubagentId}.jsonl`),
+        cascadeArchivedChildFiles.join(","),
+      );
+    }
+    cascadeChildSseAc.abort();
+    try {
+      await cascadeChildSseRes.body?.cancel();
+    } catch {
+      // ignore — body cancel after abort can throw
+    }
 
     // Plant some workers + inbox items via the store (since real
     // spawn_worker requires a live agent session).
