@@ -1192,24 +1192,24 @@ function ToolCallBatchCard({ entries }: { entries: ToolBatchEntry[] }) {
     .slice(0, 3);
   return (
     <details className="group rounded border border-neutral-800 bg-neutral-950 text-xs">
-      <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-neutral-300">
-        <span className="flex min-w-0 items-baseline gap-2">
+      <summary className="flex cursor-pointer flex-col gap-2 px-3 py-2 text-neutral-300 sm:flex-row sm:items-center sm:justify-between">
+        <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
           <span className="text-neutral-500">→</span>
           <span className="font-mono">tools</span>
           <span className="text-neutral-500">
             ×{toolCount} {toolCount === 1 ? "call" : "calls"}
           </span>
-          <span className="truncate text-neutral-400" title={countSummary}>
+          <span className="max-w-full truncate text-neutral-400" title={countSummary}>
             {countSummary}
           </span>
           {previews.length > 0 && (
-            <span className="ml-2 truncate font-mono text-[10px] text-neutral-500">
+            <span className="basis-full truncate font-mono text-[10px] text-neutral-500 sm:ml-2 sm:basis-auto">
               {previews.join(" · ")}
               {toolCount > previews.length ? " · …" : ""}
             </span>
           )}
         </span>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1 self-start sm:self-auto">
           {inFlight > 0 && (
             <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-400">
               {inFlight} running…
