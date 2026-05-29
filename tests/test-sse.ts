@@ -106,6 +106,10 @@ async function main(): Promise<void> {
   assert("isAllowedEvent('agent_start') === true", bridge.isAllowedEvent({ type: "agent_start" }));
   assert("isAllowedEvent('snapshot') === true", bridge.isAllowedEvent({ type: "snapshot" }));
   assert(
+    "isAllowedEvent('session_list_changed') === true",
+    bridge.isAllowedEvent({ type: "session_list_changed" }),
+  );
+  assert(
     "isAllowedEvent('session_info_changed') === false (filtered)",
     !bridge.isAllowedEvent({ type: "session_info_changed" }),
   );
@@ -237,7 +241,34 @@ async function main(): Promise<void> {
     }
     assert("client count drops to 1 after first abort", live.clients.size === 1);
 
-    // 8. Unknown sessionId → 404.
+    // 8. Forge-native session-list invalidation events must pass the
+    // bridge filter. worker_spawn relies on this synthetic event to
+    // refresh the sidebar immediately (including through proxy paths).
+    const remainingClient = [...live.clients][0];
+    remainingClient?.send({
+      type: "session_list_changed",
+      reason: "test_spawn_worker",
+      projectId,
+      sessionId: "worker-test",
+    });
+    const listChanged = await Promise.race([
+      (async (): Promise<{ type: string }> => {
+        while (true) {
+          const evt = await readUntilEvent();
+          if (evt.type === "session_list_changed") return evt;
+        }
+      })(),
+      new Promise<{ type: string }>((resolve) =>
+        setTimeout(() => resolve({ type: "__timeout__" }), 1000),
+      ),
+    ]);
+    assert(
+      "session_list_changed is delivered over SSE",
+      listChanged.type === "session_list_changed",
+      `type=${listChanged.type}`,
+    );
+
+    // 9. Unknown sessionId → 404.
     const res404 = await fetch(
       `${listenAddr}/api/v1/sessions/00000000-0000-0000-0000-000000000000/stream`,
       { headers: { Accept: "text/event-stream" } },
@@ -254,7 +285,7 @@ async function main(): Promise<void> {
       // expected
     }
 
-    // 9. Optional: live prompt with PI_TEST_LIVE_PROMPT=1.
+    // 10. Optional: live prompt with PI_TEST_LIVE_PROMPT=1.
     if (process.env.PI_TEST_LIVE_PROMPT === "1") {
       console.log("\n[test-sse] PI_TEST_LIVE_PROMPT=1 — running live prompt");
       const promptSession = await registry.createSession(projectId, workspacePath);
