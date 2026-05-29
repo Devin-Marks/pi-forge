@@ -46,9 +46,10 @@ import { laneColor, layoutCommits, type CommitLayout } from "../lib/git-graph";
  */
 export function GitPanel() {
   const project = useActiveProject();
+  const projectId = project?.id;
   const [worktrees, setWorktrees] = useState<GitWorktree[] | undefined>(undefined);
   const [selectedWorktreePath, setSelectedWorktreePath] = useState<string | undefined>(undefined);
-  const { status, error: statusError, refresh } = useGitStatus(project?.id, selectedWorktreePath);
+  const { status, error: statusError, refresh } = useGitStatus(projectId, selectedWorktreePath);
 
   const [commitMessage, setCommitMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -235,9 +236,9 @@ export function GitPanel() {
     setBranches(undefined);
     setRemotes(undefined);
     setOpenDiffs({});
-    if (project === undefined) return;
+    if (projectId === undefined) return;
     void api
-      .gitWorktrees(project.id)
+      .gitWorktrees(projectId)
       .then((r) => {
         setWorktrees(r.worktrees);
         const current = r.worktrees.find((w) => w.current) ?? r.worktrees[0];
@@ -246,7 +247,7 @@ export function GitPanel() {
       .catch((err: unknown) =>
         setOpError(err instanceof ApiError ? err.code : (err as Error).message),
       );
-  }, [project?.id]);
+  }, [projectId]);
 
   useEffect(() => {
     setLog(undefined);

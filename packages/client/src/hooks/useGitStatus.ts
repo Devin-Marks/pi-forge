@@ -38,7 +38,7 @@ const POLL_INTERVAL_MS = 15_000;
  */
 export function useGitStatus(
   projectId: string | undefined,
-  worktreePath?: string | undefined,
+  worktreePath?: string,
 ): {
   status: GitStatus | undefined;
   error: string | undefined;
