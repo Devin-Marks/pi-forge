@@ -3,7 +3,7 @@
 # Multi-stage Dockerfile for pi-forge.
 #
 #   builder  → install deps, compile server TS, build Vite client
-#   runtime  → node:22-bookworm-slim with Python 3.14 + pip, compiled
+#   runtime  → node:22-bookworm-slim with Python 3.12 + pip, compiled
 #              output, and hoisted node_modules; runs as a non-root user.
 #
 # Why bookworm-slim and not alpine: the Node native-module ecosystem
@@ -16,14 +16,14 @@
 # integrated terminal (bash + readline + a real coreutils).
 
 # ---------- shared Node + Python base ----------
-FROM python:3.14-slim-bookworm AS python-base
+FROM python:3.12-slim-bookworm AS python-base
 
 FROM node:22-bookworm-slim AS node-python-base
 
 # Keep the final image lineage on the official Node image — pi-forge is a
 # Node app, so preserving Node/npm/corepack exactly as shipped is more
 # important than preserving the Python image as the final base. Copy the
-# official Python 3.14 runtime into /usr/local (Docker COPY merges into
+# official Python 3.12 runtime into /usr/local (Docker COPY merges into
 # the existing Node-owned tree without deleting Node/npm/corepack) and
 # install the Debian runtime libraries CPython extension modules commonly
 # link against.
@@ -123,7 +123,7 @@ ARG PGID=1000
 #     hygiene. curl for fetching, ca-certificates so HTTPS works, less
 #     so `git log` and similar pagers don't bomb, procps so `ps`/`top`
 #     are present for users debugging long-running tool processes.
-#   - python3/pip3: Python 3.14 package tooling from the official
+#   - python3/pip3: Python 3.12 package tooling from the official
 #     Python image. `python` and `py` are aliases for `python3`.
 #   - make, g++: native-module rebuild toolchain for people using the
 #     container as a development environment. `npm install` can rebuild

@@ -15,6 +15,12 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+### Changed
+
+- **Container images now use Python 3.12.** The Docker runtime, container docs,
+  and Docker smoke test now pin Python 3.12 for agent tooling and native-module
+  rebuild support.
+
 ## [1.3.5] — 2026-05-28
 
 ### Added
