@@ -16,7 +16,7 @@
 # integrated terminal (bash + readline + a real coreutils).
 
 # ---------- shared Node + Python base ----------
-FROM python:3.12-slim-bookworm AS python-base
+FROM python:3.14-slim-bookworm AS python-base
 
 FROM node:22-bookworm-slim AS node-python-base
 
