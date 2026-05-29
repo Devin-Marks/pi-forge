@@ -18,6 +18,7 @@ import { discoverExtensionResources } from "./extensions-discovery.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   customToolsForProject as mcpCustomToolsForProject,
+  ensureGlobalLoaded as mcpEnsureGlobalLoaded,
   ensureProjectLoaded as mcpEnsureProjectLoaded,
   isGloballyEnabled as mcpIsGloballyEnabled,
 } from "./mcp/manager.js";
@@ -1809,13 +1810,16 @@ async function buildSessionSettingsManager(
  *
  * Honors the master `disabled` toggle in mcp.json: if MCP is globally
  * off, returns an empty array regardless of per-server state. Boot-
- * time `loadGlobal()` is called in index.ts; project-scope is loaded
- * lazily here on first session-create per project.
+ * time `loadGlobal()` is called in index.ts, but session creation also
+ * awaits the manager's global load/restart gate so a fast browser
+ * reconnect after container recreation does not create an AgentSession
+ * before persisted stdio MCP servers have respawned.
  */
 async function resolveMcpCustomTools(
   projectId: string,
   workspacePath: string,
 ): Promise<ReturnType<typeof mcpCustomToolsForProject>> {
+  await mcpEnsureGlobalLoaded().catch(() => undefined);
   if (!mcpIsGloballyEnabled()) return [];
   await mcpEnsureProjectLoaded(projectId, workspacePath).catch(() => undefined);
   return mcpCustomToolsForProject(projectId);

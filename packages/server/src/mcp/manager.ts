@@ -97,6 +97,8 @@ const loadedProjects = new Set<string>();
  * have to do file I/O.
  */
 let globallyEnabled = true;
+let globalLoaded = false;
+let globalLoadPromise: Promise<void> | undefined;
 
 export function isGloballyEnabled(): boolean {
   return globallyEnabled;
@@ -105,9 +107,25 @@ export function isGloballyEnabled(): boolean {
 /* ----------------------------- public API ----------------------------- */
 
 export async function loadGlobal(): Promise<void> {
+  if (globalLoadPromise !== undefined) return globalLoadPromise;
+  globalLoadPromise = loadGlobalNow();
+  try {
+    await globalLoadPromise;
+  } finally {
+    globalLoadPromise = undefined;
+  }
+}
+
+export async function ensureGlobalLoaded(): Promise<void> {
+  if (globalLoaded) return;
+  await loadGlobal();
+}
+
+async function loadGlobalNow(): Promise<void> {
   const cfg = await readMcpJson();
   globallyEnabled = cfg.disabled !== true;
   await syncScope("global", cfg.servers);
+  globalLoaded = true;
 }
 
 export async function loadProject(projectId: string, projectPath: string): Promise<void> {
@@ -129,7 +147,12 @@ export async function ensureProjectLoaded(projectId: string, projectPath: string
  */
 export async function reloadGlobal(): Promise<void> {
   loadedProjects.clear(); // project files may reference globals too
-  await loadGlobal();
+  globalLoadPromise = loadGlobalNow();
+  try {
+    await globalLoadPromise;
+  } finally {
+    globalLoadPromise = undefined;
+  }
 }
 
 /**
@@ -323,6 +346,8 @@ export async function disposeAll(): Promise<void> {
   pool.clear();
   loadedProjects.clear();
   cachedProjectPaths.clear();
+  globalLoaded = false;
+  globalLoadPromise = undefined;
 }
 
 /* ----------------------------- internals ----------------------------- */
@@ -338,6 +363,7 @@ async function syncScope(scope: Scope, configs: Record<string, McpServerConfig>)
       pool.delete(key);
     }
   }
+  const toConnect: PoolEntry[] = [];
   // Add / update each declared server.
   for (const [name, cfg] of Object.entries(configs)) {
     const key = entryKey(scope, name);
@@ -346,8 +372,12 @@ async function syncScope(scope: Scope, configs: Record<string, McpServerConfig>)
       const sameEnabled = (existing.config.enabled !== false) === (cfg.enabled !== false);
       const sameConnectionFields = sameConnectionConfig(existing.config, cfg);
       existing.config = cfg;
-      if (sameEnabled && sameConnectionFields) {
-        // Nothing meaningful changed; skip the disconnect/reconnect dance.
+      if (sameEnabled && sameConnectionFields && existing.state === "connected") {
+        // Nothing meaningful changed and the server is already usable;
+        // skip the disconnect/reconnect dance. If the previous attempt
+        // failed or the entry is idle (for example after a teardown-style
+        // reset), retry so persisted stdio servers can come back without a
+        // manual Probe click.
         continue;
       }
       await disconnectEntry(existing);
@@ -355,7 +385,7 @@ async function syncScope(scope: Scope, configs: Record<string, McpServerConfig>)
         existing.state = "disabled";
         continue;
       }
-      void connectEntry(existing);
+      toConnect.push(existing);
       continue;
     }
     const entry: PoolEntry = {
@@ -368,8 +398,11 @@ async function syncScope(scope: Scope, configs: Record<string, McpServerConfig>)
     };
     pool.set(key, entry);
     if (cfg.enabled !== false) {
-      void connectEntry(entry);
+      toConnect.push(entry);
     }
+  }
+  for (const entry of toConnect) {
+    await connectEntry(entry);
   }
 }
 

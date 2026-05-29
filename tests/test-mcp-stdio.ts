@@ -5,6 +5,7 @@
  * at `tests/fixtures/mcp-stdio-fixture.mjs`. Coverage:
  *
  *   - global stdio entry: load → spawn → list tools → execute
+ *   - dispose/re-load (container-recreation shape) respawns persisted stdio tools
  *   - env redaction: GET returns sentinel; PUT round-trips real value
  *   - project stdio entry: gated by trust → `trust_required` state
  *   - POST /mcp/trust grants → reconnects → tools appear
@@ -85,9 +86,9 @@ async function main(): Promise<void> {
     resolve(repoRoot, "packages/server/dist/mcp/config.js")
   )) as typeof import("../packages/server/src/mcp/config.js");
 
-  // Wait for an entry to leave `connecting` (the manager fires
-  // connect attempts fire-and-forget from syncScope, so loadGlobal /
-  // upsert routes return before the subprocess handshake finishes).
+  // Wait for an entry to reach an expected state. Most manager loads now
+  // await connect attempts, but route-triggered reconnects still benefit
+  // from a small poll while the HTTP response and status view settle.
   type ConnectionState =
     | "idle"
     | "connecting"
@@ -128,7 +129,7 @@ async function main(): Promise<void> {
       },
     });
     await managerModule.loadGlobal();
-    const connected = await waitForState("local", "connected");
+    const connected = managerModule.getStatus().find((s) => s.name === "local");
     assert(
       "global stdio: state === connected",
       connected?.state === "connected",
@@ -173,7 +174,33 @@ async function main(): Promise<void> {
       assert("subprocess env: MCP_TEST_VAR_B passed through", out.includes("value-B"), out);
     }
 
-    /* ===== Case D: env values are redacted on the GET path ===== */
+    /* ===== Case D: dispose/re-load respawns persisted stdio tools ===== */
+    await managerModule.disposeAll();
+    await managerModule.loadGlobal();
+    const restarted = managerModule.getStatus().find((s) => s.name === "local");
+    assert(
+      "stdio restart: loadGlobal awaited connected state",
+      restarted?.state === "connected" && restarted.toolCount === 2,
+      JSON.stringify(restarted),
+    );
+    const restartedTools = managerModule.customToolsForProject("any-project-id");
+    const restartedEcho = restartedTools.find((t) => t.name === "local__echo");
+    assert("stdio restart: echo tool present after reload", restartedEcho !== undefined);
+    if (restartedEcho !== undefined) {
+      const result = await restartedEcho.execute(
+        "tcid-restart",
+        { text: "after-restart" },
+        undefined,
+        undefined,
+        {} as Parameters<typeof restartedEcho.execute>[4],
+      );
+      assert(
+        "stdio restart: restarted subprocess handles calls",
+        JSON.stringify(result).includes("after-restart"),
+      );
+    }
+
+    /* ===== Case E: env values are redacted on the GET path ===== */
     {
       const r = await jget(base, "/api/v1/mcp/servers");
       assert("GET /mcp/servers → 200", r.status === 200);
@@ -189,7 +216,7 @@ async function main(): Promise<void> {
       );
     }
 
-    /* ===== Case E: sentinel round-trip on save preserves prior value ===== */
+    /* ===== Case F: sentinel round-trip on save preserves prior value ===== */
     {
       // The UI sees `***REDACTED***`. Save without changing it.
       const r = await jsend(base, "PUT", "/api/v1/mcp/servers/local", {
@@ -217,7 +244,7 @@ async function main(): Promise<void> {
       );
     }
 
-    /* ===== Case F: one-of url/command validation ===== */
+    /* ===== Case G: one-of url/command validation ===== */
     {
       const both = await jsend(base, "PUT", "/api/v1/mcp/servers/bad-both", {
         url: "https://example.com",
@@ -234,7 +261,7 @@ async function main(): Promise<void> {
       );
     }
 
-    /* ===== Case G: crash-on-start surfaces in `error` state ===== */
+    /* ===== Case H: crash-on-start surfaces in `error` state ===== */
     {
       await jsend(base, "PUT", "/api/v1/mcp/servers/crasher", {
         command: "node",
@@ -249,7 +276,7 @@ async function main(): Promise<void> {
       );
     }
 
-    /* ===== Case H: project stdio entry is gated by trust ===== */
+    /* ===== Case I: project stdio entry is gated by trust ===== */
     // Create a project + drop a project .mcp.json with a stdio entry.
     const projRes = await jsend(base, "POST", "/api/v1/projects", {
       name: "stdio-trust-test",
@@ -297,7 +324,7 @@ async function main(): Promise<void> {
       );
     }
 
-    /* ===== Case I: granting trust spawns the subprocess + surfaces tools ===== */
+    /* ===== Case J: granting trust spawns the subprocess + surfaces tools ===== */
     {
       const grant = await jsend(base, "POST", `/api/v1/mcp/trust/${projectId}`);
       assert("POST /mcp/trust → 200", grant.status === 200);
@@ -320,7 +347,7 @@ async function main(): Promise<void> {
       );
     }
 
-    /* ===== Case J: revoke trust unloads the project pool ===== */
+    /* ===== Case K: revoke trust unloads the project pool ===== */
     {
       const revoke = await jsend(base, "DELETE", `/api/v1/mcp/trust/${projectId}`);
       assert("DELETE /mcp/trust → 200", revoke.status === 200);
@@ -352,7 +379,7 @@ async function main(): Promise<void> {
       );
     }
 
-    /* ===== Case K: project delete cascades the trust entry ===== */
+    /* ===== Case L: project delete cascades the trust entry ===== */
     {
       // Re-grant so the trust file actually has an entry to clear.
       await jsend(base, "POST", `/api/v1/mcp/trust/${projectId}`);
