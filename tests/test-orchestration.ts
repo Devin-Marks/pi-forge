@@ -549,7 +549,7 @@ async function main(): Promise<void> {
       `/api/v1/sessions?projectId=${encodeURIComponent(realProjectId)}`,
     );
     const nestedWorker = (
-      nestedList.body as { sessions?: Array<{ sessionId: string; parentSessionId?: string }> }
+      nestedList.body as { sessions?: { sessionId: string; parentSessionId?: string }[] }
     ).sessions?.find((s) => s.sessionId === realWorkerId);
     assert(
       "session list nests orchestration worker under supervisor",
@@ -595,7 +595,7 @@ async function main(): Promise<void> {
       `/api/v1/sessions?projectId=${encodeURIComponent(realProjectId)}`,
     );
     const unnestedWorker = (
-      unnestedList.body as { sessions?: Array<{ sessionId: string; parentSessionId?: string }> }
+      unnestedList.body as { sessions?: { sessionId: string; parentSessionId?: string }[] }
     ).sessions?.find((s) => s.sessionId === realWorkerId);
     assert(
       "session list unnests worker after supervisor disable",
