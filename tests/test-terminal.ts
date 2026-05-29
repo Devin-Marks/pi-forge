@@ -101,13 +101,14 @@ interface OpenedSocket {
  */
 function openTerminal(
   base: string,
-  query: { projectId: string; token?: string },
+  query: { projectId: string; token?: string; tabId?: string },
   onClose?: () => void,
 ): Promise<OpenedSocket> {
   return new Promise((resolveFn, rejectFn) => {
     const qs = new URLSearchParams();
     qs.set("projectId", query.projectId);
     if (query.token !== undefined) qs.set("token", query.token);
+    if (query.tabId !== undefined) qs.set("tabId", query.tabId);
     const url = `${base.replace(/^http/, "ws")}/api/v1/terminal?${qs.toString()}`;
     const ws = new WebSocket(url);
     const state: OpenedSocket = { ws, output: "", closed: false };
@@ -171,6 +172,19 @@ async function waitForShellReady(state: OpenedSocket, timeoutMs = 5_000): Promis
   while (Date.now() < deadline) {
     if (state.output.length > 0) return true;
     await new Promise((r) => setTimeout(r, 25));
+  }
+  return false;
+}
+
+async function waitForProcessGone(pid: number, timeoutMs = 3_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 50));
   }
   return false;
 }
@@ -384,6 +398,40 @@ async function main(): Promise<void> {
       assert("term2 sees its own marker", got2);
       assert("term1 does NOT see term2's marker", !term.output.includes(m2));
       assert("term2 does NOT see term1's marker", !term2.output.includes(m1));
+    }
+
+    // ---- Explicit tab close kills the backing PTY/process immediately ----
+    {
+      const tabId = "close-kills-" + randomBytes(4).toString("hex");
+      const term3 = await openTerminal(base, { projectId: project.id, token: apiKey, tabId });
+      assert("activePtys === 3 before explicit tab close", (await waitForPtyCount(base, 3)) === 3);
+      const ready3 = await waitForShellReady(term3);
+      assert("term3 shell flushed initial output", ready3, `output: ${term3.output.slice(-200)}`);
+
+      send(term3.ws, { type: "input", data: "sh -c 'echo CLOSE_PID=$$; sleep 30'\n" });
+      const sawPid = await waitForOutput(term3, "CLOSE_PID=", 5_000);
+      const pidMatch = /CLOSE_PID=(\d+)/.exec(term3.output);
+      const childPid = pidMatch !== null ? Number(pidMatch[1]) : undefined;
+      assert(
+        "foreground process started before close",
+        sawPid && childPid !== undefined,
+        `output: ${term3.output.slice(-400)}`,
+      );
+
+      const closed = new Promise<void>((res) => term3.ws.on("close", () => res()));
+      term3.ws.close(1000, "tab_closed");
+      await closed;
+      assert(
+        "activePtys drops after explicit tab close",
+        (await waitForPtyCount(base, 2, 1_000)) === 2,
+      );
+      if (childPid !== undefined) {
+        assert(
+          "foreground process exits after explicit tab close",
+          await waitForProcessGone(childPid),
+          `pid=${childPid}`,
+        );
+      }
     }
 
     // ---- Close cleanup ----
