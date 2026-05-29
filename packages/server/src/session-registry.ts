@@ -31,7 +31,7 @@ import { createProcessTool } from "./processes/tool.js";
 import { processManager } from "./processes/manager.js";
 import { bridgeAgentSessionEvent, bridgeSessionCreated } from "./webhooks/event-bridge.js";
 import { isOrchestrationEnabled } from "./orchestration/config.js";
-import { isSupervisor } from "./orchestration/store.js";
+import { isSupervisor, readStore } from "./orchestration/store.js";
 import { createOrchestrationTools } from "./orchestration/tools.js";
 import { bridgeWorkerAgentEvent } from "./orchestration/event-bridge.js";
 import { notifySupervisorDisposed, notifySupervisorIdle } from "./orchestration/inbox.js";
@@ -122,7 +122,7 @@ export interface UnifiedSession {
   createdAt: Date;
   messageCount: number;
   firstMessage: string;
-  /** Parent session id when this is a pi-subagents child session. */
+  /** Parent session id when this is a nested child session (pi-subagents or orchestration). */
   parentSessionId?: string;
   /** pi-subagents run id when this is a child session. */
   runId?: string;
@@ -1329,6 +1329,34 @@ export async function listSessionsForProject(
     if (d.runId !== undefined) u.runId = d.runId;
     liveById.set(d.sessionId, u);
   }
+
+  // Orchestration workers are ordinary top-level pi sessions on disk, with
+  // their supervisor link stored in FORGE_DATA_DIR rather than in the JSONL
+  // path. Overlay that topology onto the unified list so the sidebar can
+  // render worker sessions beneath their supervisor the same way it nests
+  // pi-subagents child sessions. Existing disk-derived parentSessionId wins
+  // because those are true child JSONLs whose resume/delete semantics depend
+  // on the subdirectory layout.
+  try {
+    const orchestrationStore = await readStore();
+    for (const [workerId, rec] of Object.entries(orchestrationStore.workers)) {
+      const worker = liveById.get(workerId);
+      if (worker === undefined) continue;
+      if (worker.parentSessionId !== undefined) continue;
+      worker.parentSessionId = rec.supervisorId;
+    }
+  } catch (err) {
+    process.stderr.write(
+      JSON.stringify({
+        level: "warn",
+        time: new Date().toISOString(),
+        msg: "listSessionsForProject: failed to overlay orchestration worker links",
+        projectId,
+        err: err instanceof Error ? err.message : String(err),
+      }) + "\n",
+    );
+  }
+
   return Array.from(liveById.values()).sort(
     (a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime(),
   );

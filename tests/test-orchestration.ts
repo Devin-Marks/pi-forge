@@ -529,6 +529,34 @@ async function main(): Promise<void> {
       postEnable.status === 200 && (postEnable.body as { isLive: boolean }).isLive === true,
     );
 
+    // A worker is stored as an ordinary session, with the supervisor link in
+    // session-orchestration.json. The unified /sessions list overlays that
+    // link as parentSessionId so the sidebar can nest the worker under its
+    // orchestrator.
+    const realWorker = await jsend(onSrv.base, "POST", "/api/v1/sessions", {
+      projectId: realProjectId,
+    });
+    assert(
+      "create real worker session → 201",
+      realWorker.status === 201 &&
+        typeof (realWorker.body as { sessionId: string }).sessionId === "string",
+    );
+    const realWorkerId = (realWorker.body as { sessionId: string }).sessionId;
+    await store.registerWorker({ supervisorId: realSid, workerId: realWorkerId });
+    const nestedList = await jsend(
+      onSrv.base,
+      "GET",
+      `/api/v1/sessions?projectId=${encodeURIComponent(realProjectId)}`,
+    );
+    const nestedWorker = (
+      nestedList.body as { sessions?: Array<{ sessionId: string; parentSessionId?: string }> }
+    ).sessions?.find((s) => s.sessionId === realWorkerId);
+    assert(
+      "session list nests orchestration worker under supervisor",
+      nestedList.status === 200 && nestedWorker?.parentSessionId === realSid,
+      `parentSessionId=${nestedWorker?.parentSessionId}`,
+    );
+
     // SSE stream attach must NOT get 410 — there's no tombstone
     // since we never disposed. Fetch the stream briefly, capture
     // status, then close.
@@ -560,6 +588,19 @@ async function main(): Promise<void> {
     assert(
       "session still live after disable (not disposed)",
       postDisable.status === 200 && (postDisable.body as { isLive: boolean }).isLive === true,
+    );
+    const unnestedList = await jsend(
+      onSrv.base,
+      "GET",
+      `/api/v1/sessions?projectId=${encodeURIComponent(realProjectId)}`,
+    );
+    const unnestedWorker = (
+      unnestedList.body as { sessions?: Array<{ sessionId: string; parentSessionId?: string }> }
+    ).sessions?.find((s) => s.sessionId === realWorkerId);
+    assert(
+      "session list unnests worker after supervisor disable",
+      unnestedList.status === 200 && unnestedWorker?.parentSessionId === undefined,
+      `parentSessionId=${unnestedWorker?.parentSessionId}`,
     );
 
     // Plant some workers + inbox items via the store (since real
