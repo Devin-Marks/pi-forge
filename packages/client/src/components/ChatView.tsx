@@ -408,9 +408,52 @@ export function ChatView({ sessionId }: Props) {
                   <Message key={i} message={am} toolResultsById={toolResultsById} />
                 ));
               const out: React.ReactNode[] = [];
+              let pendingBatch: ToolBatchEntry[] = [];
+              let pendingBatchStartIndex = 0;
+              let renderedBatchSerial = 0;
+              const renderToolEntries = (
+                entries: ToolBatchEntry[],
+                key: string,
+              ): React.ReactNode => {
+                const toolCount = countToolBatchCalls(entries);
+                const toolEntry = entries.find((entry) => entry.kind === "tool");
+                const hasThinking = entries.some((entry) => entry.kind === "thinking");
+                if (toolCount === 1 && !hasThinking && toolEntry !== undefined) {
+                  return (
+                    <ToolCallEntry key={key} block={toolEntry.block} result={toolEntry.result} />
+                  );
+                }
+                return <ToolCallBatchCard key={key} entries={entries} />;
+              };
+              const flushPendingBatch = (): void => {
+                if (pendingBatch.length === 0) return;
+                let chunk: ToolBatchEntry[] = [];
+                let chunkStart = pendingBatchStartIndex;
+                const pushChunk = (): void => {
+                  if (chunk.length === 0) return;
+                  const batchKey = `tool-batch-${renderedBatchSerial}`;
+                  out.push(
+                    <div key={batchKey} data-message-index={chunkStart}>
+                      {renderToolEntries(chunk, `${batchKey}-card`)}
+                    </div>,
+                  );
+                  chunk = [];
+                  renderedBatchSerial += 1;
+                };
+                for (const entry of pendingBatch) {
+                  if (entry.kind === "tool" && countToolBatchCalls(chunk) >= MAX_TOOL_BATCH_SIZE) {
+                    pushChunk();
+                    chunkStart = pendingBatchStartIndex;
+                  }
+                  chunk.push(entry);
+                }
+                pushChunk();
+                pendingBatch = [];
+              };
               const renderCardsAt = (idx: number): void => {
                 const events = compactionsAt.get(idx);
                 if (events === undefined) return;
+                flushPendingBatch();
                 for (const ev of events) {
                   out.push(
                     <CompactionCard
@@ -472,50 +515,55 @@ export function ChatView({ sessionId }: Props) {
                 // disclosure body, so showing it as a top-of-chat
                 // bubble would just duplicate the content under an
                 // "unknown message" fallback.
-                if (m.role === "compactionSummary") continue;
+                if (m.role === "compactionSummary") {
+                  flushPendingBatch();
+                  continue;
+                }
                 // Kept-window suppression — see the comment block
                 // above for rationale and index ranges.
-                if (latestCard !== undefined && i >= 1 && i < keptWindowEnd) continue;
+                if (latestCard !== undefined && i >= 1 && i < keptWindowEnd) {
+                  flushPendingBatch();
+                  continue;
+                }
 
-                const firstBatch = batchableToolEntriesFromMessage(m, toolResultsById);
-                if (firstBatch !== undefined && countToolBatchCalls(firstBatch) === 1) {
-                  const batch = [...firstBatch];
-                  let j = i + 1;
-                  while (j < messages.length && countToolBatchCalls(batch) < MAX_TOOL_BATCH_SIZE) {
-                    const next = messages[j]!;
-                    if (
-                      next.role === "toolResult" &&
-                      typeof next.toolCallId === "string" &&
-                      pairedIds.has(next.toolCallId)
-                    ) {
-                      renderCardsAt(j);
-                      j += 1;
-                      continue;
+                if (m.role === "assistant" && Array.isArray(m.content)) {
+                  const segments = splitAssistantToolSegments(
+                    m.content as Record<string, unknown>[],
+                    toolResultsById,
+                  );
+                  if (segments !== undefined) {
+                    for (const [segmentIndex, segment] of segments.entries()) {
+                      if (segment.kind === "tools" && segment.batchable) {
+                        if (pendingBatch.length === 0) pendingBatchStartIndex = i;
+                        pendingBatch.push(...segment.entries);
+                        continue;
+                      }
+
+                      flushPendingBatch();
+                      out.push(
+                        <div key={`${i}-${segment.kind}-${segmentIndex}`} data-message-index={i}>
+                          <AssistantRenderSegmentView
+                            segment={segment}
+                            message={m}
+                            toolResultsById={toolResultsById}
+                            showRaw={undefined}
+                            setShowRaw={undefined}
+                          />
+                        </div>,
+                      );
                     }
-                    if (next.role === "compactionSummary") break;
-                    if (latestCard !== undefined && j >= 1 && j < keptWindowEnd) break;
-                    const nextBatch = batchableToolEntriesFromMessage(next, toolResultsById);
-                    if (nextBatch === undefined || countToolBatchCalls(nextBatch) !== 1) break;
-                    batch.push(...nextBatch);
-                    j += 1;
-                  }
-                  if (batch.length > 1) {
-                    out.push(
-                      <div key={`tool-batch-${i}`} data-message-index={i}>
-                        <ToolCallBatchCard entries={batch} />
-                      </div>,
-                    );
-                    i = j - 1;
                     continue;
                   }
                 }
 
+                flushPendingBatch();
                 out.push(
                   <div key={i} data-message-index={i}>
                     <Message message={m} toolResultsById={toolResultsById} />
                   </div>,
                 );
               }
+              flushPendingBatch();
               // Trailing cards (insertBeforeIndex === messages.length)
               // — the entire current context was archived but no
               // messages have been pushed since. Rare; render at the
@@ -1071,7 +1119,7 @@ function AssistantMessageBubble({
 
 type AssistantRenderSegment =
   | { kind: "assistant"; content: Record<string, unknown>[] }
-  | { kind: "tools"; entries: ToolBatchEntry[] };
+  | { kind: "tools"; entries: ToolBatchEntry[]; batchable: boolean };
 
 function AssistantRenderSegmentView({
   segment,
@@ -1083,26 +1131,45 @@ function AssistantRenderSegmentView({
   segment: AssistantRenderSegment;
   message: AgentMessageLike;
   toolResultsById: Map<string, AgentMessageLike> | undefined;
-  showRaw: boolean;
-  setShowRaw: (next: boolean) => void;
+  showRaw: boolean | undefined;
+  setShowRaw: ((next: boolean) => void) | undefined;
 }) {
+  const [localShowRaw, setLocalShowRaw] = useState(false);
+  const effectiveShowRaw = showRaw ?? localShowRaw;
+  const effectiveSetShowRaw = setShowRaw ?? setLocalShowRaw;
+
   if (segment.kind === "assistant") {
     return (
       <AssistantMessageBubble
         message={message}
         content={segment.content}
         toolResultsById={toolResultsById}
-        showRaw={showRaw}
-        setShowRaw={setShowRaw}
+        showRaw={effectiveShowRaw}
+        setShowRaw={effectiveSetShowRaw}
       />
     );
   }
 
-  if (countToolBatchCalls(segment.entries) === 1) {
-    const toolEntry = segment.entries.find((entry) => entry.kind === "tool");
-    if (toolEntry !== undefined) {
-      return <ToolCallEntry block={toolEntry.block} result={toolEntry.result} />;
-    }
+  const toolCount = countToolBatchCalls(segment.entries);
+  const toolEntry = segment.entries.find((entry) => entry.kind === "tool");
+  const hasThinking = segment.entries.some((entry) => entry.kind === "thinking");
+
+  if (!segment.batchable && toolEntry !== undefined) {
+    return (
+      <div className="space-y-2">
+        {segment.entries.map((entry, index) =>
+          entry.kind === "thinking" ? (
+            <AssistantBlock key={`thinking-${index}`} block={entry.block} />
+          ) : (
+            <ToolCallEntry key={`tool-${index}`} block={entry.block} result={entry.result} />
+          ),
+        )}
+      </div>
+    );
+  }
+
+  if (toolCount === 1 && !hasThinking && toolEntry !== undefined) {
+    return <ToolCallEntry block={toolEntry.block} result={toolEntry.result} />;
   }
 
   return <ToolCallBatchCard entries={segment.entries} />;
@@ -1132,15 +1199,35 @@ function splitAssistantToolSegments(
   let i = 0;
   while (i < content.length) {
     const block = content[i]!;
-    if (!isBatchableToolCall(block)) {
+    if (!isToolCall(block)) {
       prose.push(block);
       i += 1;
       continue;
     }
 
+    const leadingContext = takeTrailingToolRunContext(prose);
     flushProse();
     sawToolSegment = true;
-    const entries: ToolBatchEntry[] = [];
+
+    if (!isBatchableToolCall(block)) {
+      const id = typeof block.id === "string" ? block.id : undefined;
+      segments.push({
+        kind: "tools",
+        batchable: false,
+        entries: [
+          ...leadingContext,
+          {
+            kind: "tool",
+            block,
+            result: id !== undefined ? toolResultsById?.get(id) : undefined,
+          },
+        ],
+      });
+      i += 1;
+      continue;
+    }
+
+    const entries: ToolBatchEntry[] = [...leadingContext];
     while (i < content.length && countToolBatchCalls(entries) < MAX_TOOL_BATCH_SIZE) {
       const current = content[i];
       if (current === undefined) break;
@@ -1162,7 +1249,7 @@ function splitAssistantToolSegments(
       });
       i += 1;
     }
-    segments.push({ kind: "tools", entries });
+    segments.push({ kind: "tools", batchable: true, entries });
   }
   flushProse();
 
@@ -1197,6 +1284,10 @@ type ToolBatchEntry =
   | { kind: "tool"; block: Record<string, unknown>; result: AgentMessageLike | undefined }
   | { kind: "thinking"; block: Record<string, unknown> };
 
+function isToolCall(block: Record<string, unknown> | undefined): boolean {
+  return block?.type === "toolCall";
+}
+
 function isBatchableToolCall(block: Record<string, unknown> | undefined): boolean {
   return block?.type === "toolCall" && !NON_BATCHABLE_TOOL_NAMES.has(String(block.name ?? ""));
 }
@@ -1213,27 +1304,19 @@ function countToolBatchCalls(entries: ToolBatchEntry[]): number {
   return entries.filter((entry) => entry.kind === "tool").length;
 }
 
-function batchableToolEntriesFromMessage(
-  message: AgentMessageLike,
-  toolResultsById: Map<string, AgentMessageLike> | undefined,
-): ToolBatchEntry[] | undefined {
-  if (message.role !== "assistant" || !Array.isArray(message.content)) return undefined;
-  const entries: ToolBatchEntry[] = [];
-  for (const block of message.content as Record<string, unknown>[]) {
-    if (isToolBatchThinkingBlock(block)) {
-      entries.push({ kind: "thinking", block });
+function takeTrailingToolRunContext(prose: Record<string, unknown>[]): ToolBatchEntry[] {
+  const trailing: ToolBatchEntry[] = [];
+  while (prose.length > 0) {
+    const block = prose[prose.length - 1]!;
+    if (isToolBatchWhitespaceBlock(block)) {
+      prose.pop();
       continue;
     }
-    if (isToolBatchWhitespaceBlock(block)) continue;
-    if (!isBatchableToolCall(block)) return undefined;
-    const id = typeof block.id === "string" ? block.id : undefined;
-    entries.push({
-      kind: "tool",
-      block,
-      result: id !== undefined ? toolResultsById?.get(id) : undefined,
-    });
+    if (!isToolBatchThinkingBlock(block)) break;
+    trailing.unshift({ kind: "thinking", block });
+    prose.pop();
   }
-  return countToolBatchCalls(entries) > 0 ? entries : undefined;
+  return trailing;
 }
 
 function toolPreviewFromArgs(name: string, args: unknown): string | undefined {
