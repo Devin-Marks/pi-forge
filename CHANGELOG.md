@@ -15,11 +15,52 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.3.6] — 2026-05-29
+
+### Added
+
+- **Git pane worktree selector.** The Git tab now exposes a visible Worktree
+  dropdown backed by registered `git worktree list` entries so status, diffs,
+  logs, branches, remotes, and git actions can target a selected worktree.
+
 ### Changed
 
 - **Container images now use Python 3.12.** The Docker runtime, container docs,
   and Docker smoke test now pin Python 3.12 for agent tooling and native-module
   rebuild support.
+- **Tool batching no longer stops at ten calls.** Chat keeps the existing
+  batching behavior and natural breakpoints while removing the hard batch-size
+  cap.
+- **Worker process alerts no longer wake the orchestrator.** Worker-local
+  process notifications remain available in the worker session, but process
+  success/failure/kill alerts are no longer escalated into the supervisor inbox.
+- **Pi SDK packages were updated to 0.78.0.** The pinned pi SDK trio and related
+  npm dependencies were refreshed for this release.
+
+### Fixed
+
+- **Terminal tab close now terminates its process.** Explicit terminal tab closes
+  kill the backing PTY/process tree while ordinary WebSocket disconnects still
+  preserve reattach behavior.
+- **Worker-created sessions refresh reliably.** `session_list_changed` events now
+  pass through the SSE bridge and are padded so buffering proxies deliver worker
+  spawn refreshes promptly.
+- **Orchestrator, worker, and subagent sessions nest correctly.** The sessions
+  pane now renders recursive hierarchies such as `orchestrator → worker →
+  subagent` with capped indentation.
+- **Compaction history keeps tool calls paired with results.** Archived and
+  provider-variant tool call/result shapes are normalized so batched tool inputs
+  and outputs render together instead of drifting apart.
+- **Stdio MCP tools restart after server/container recreation.** Persisted global
+  stdio MCP servers are loaded and connected before sessions capture custom
+  tools, restoring tools after restart.
+- **Empty success responses are accepted by the browser API client.** `204 No
+  Content` responses, including the abort endpoint, no longer surface as invalid
+  response bodies.
+- **Killing or deleting orchestration sessions cleans up descendants.** Worker
+  kill, normal worker deletion, and supervisor deletion now archive worker
+  transcripts, remove them from the live session tree, unregister topology, and
+  clean up worker subagent children.
 
 ## [1.3.5] — 2026-05-28
 
