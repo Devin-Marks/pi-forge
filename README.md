@@ -171,10 +171,13 @@ The full feature grid (with categories and screenshots) is on the
 
 ## Versions
 
-Each pi-forge release pins exact patch versions of the pi SDK trio
-(`pi-coding-agent`, `pi-agent-core`, `pi-ai`) — no caret/tilde — so a
-transparent SDK upgrade can't surprise an existing install. Pinned versions
-live in [`packages/server/package.json`](./packages/server/package.json).
+Each pi-forge release declares a compatible patch range for the pi SDK trio
+(`pi-coding-agent`, `pi-agent-core`, `pi-ai`). While pi is still `0.x`, npm's
+caret range for `^0.78.0` resolves to `>=0.78.0 <0.79.0`: users can receive
+compatible SDK patch fixes without being moved across the next pi minor line.
+The supported range lives in
+[`packages/server/package.json`](./packages/server/package.json) and is hoisted
+verbatim into the published npm package.
 
 Only the latest tag is supported. Breaking SDK changes pi-forge had to absorb
 appear in the release notes' **Changed** section. Per-tag notes:

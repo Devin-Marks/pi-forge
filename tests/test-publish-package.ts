@@ -7,6 +7,7 @@
  *      publish/package.json).
  *   2. The synthetic package.json has the right shape — name, version
  *      from root, bin entry, deps hoisted from the server workspace,
+ *      pi SDK deps kept as compatible ranges rather than exact pins,
  *      provenance enabled, public access.
  *   3. `node publish/bin/pi-forge.mjs` boots the workbench, serves
  *      `/api/v1/health`, and serves the embedded SPA (`/`).
@@ -48,6 +49,11 @@ const rootPkg = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8
 const serverPkg = JSON.parse(
   readFileSync(resolve(repoRoot, "packages/server/package.json"), "utf8"),
 ) as { dependencies: Record<string, string> };
+const piSdkDeps = [
+  "@earendil-works/pi-agent-core",
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-coding-agent",
+] as const;
 
 let failures = 0;
 
@@ -185,6 +191,14 @@ async function main(): Promise<void> {
   // Every server runtime dep must be present in the synthetic package
   // (we hoist verbatim — a missing entry means the bin would fail to
   // import on a real `npm i pi-forge` install).
+  for (const dep of piSdkDeps) {
+    const version = serverPkg.dependencies[dep];
+    assert(
+      `${dep} uses a compatible patch range, not an exact pin`,
+      version !== undefined && /^\^0\.\d+\.\d+$/.test(version),
+      `got ${version ?? "<missing>"}`,
+    );
+  }
   for (const [dep, version] of Object.entries(serverPkg.dependencies)) {
     assert(
       `synth dependencies has ${dep}@${version}`,

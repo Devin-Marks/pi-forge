@@ -9,11 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Pi SDK trio (`@earendil-works/pi-coding-agent`, `@earendil-works/pi-agent-core`,
 `@earendil-works/pi-ai` — formerly under the `@mariozechner/*` scope through
-v1.1.4; see the v1.1.5 entry for the scope migration) is pinned to exact
-versions; any breaking SDK absorption is called out in its own release notes
+v1.1.4; see the v1.1.5 entry for the scope migration) uses a compatible patch
+range; any breaking SDK absorption is called out in its own release notes
 section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
+
+### Changed
+
+- **npm installs can receive compatible pi SDK patch updates.** The published
+  package now declares the pi SDK trio with a caret range (for example,
+  `^0.78.0`, which npm resolves as `>=0.78.0 <0.79.0` while pi remains `0.x`)
+  instead of exact patch pins, so npm users are not unnecessarily held to one
+  SDK patch version within pi-forge's tested minor compatibility window.
 
 ## [1.3.6] — 2026-05-29
 

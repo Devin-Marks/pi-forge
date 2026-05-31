@@ -205,6 +205,12 @@ This package version (\`${version}\`) tracks the [GitHub release](https://github
 of the same name. Docker images and the npm package are published in
 lockstep on each \`v*\` tag.
 
+pi-forge declares a compatible patch range for the pi SDK trio it embeds
+(for example, \`^0.78.0\`, which npm resolves as \`>=0.78.0 <0.79.0\`
+while pi remains \`0.x\`). That lets npm installs receive compatible pi
+SDK patch fixes without being pinned to one exact SDK patch or moved across
+the next pi minor line before pi-forge has absorbed it.
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).
