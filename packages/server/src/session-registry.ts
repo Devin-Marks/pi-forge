@@ -292,7 +292,7 @@ function isCodexProvider(provider: string | undefined): boolean {
   return provider === "openai-codex";
 }
 
-export function isCodexProviderTransportError(
+export function shouldSuppressCodexProviderErrorFromWebUi(
   provider: string | undefined,
   errorMessage: string | undefined,
 ): boolean {
@@ -397,9 +397,8 @@ function makeSubscribeHandler(live: LiveSession): () => void {
           errorMessage: msg.errorMessage,
           provider,
           modelId: msg.modelId ?? modelInfo?.id ?? live.session.model?.id,
-          transport: isCodexProvider(provider) ? live.session.agent.transport : undefined,
         });
-        if (isCodexProviderTransportError(provider, msg.errorMessage)) {
+        if (shouldSuppressCodexProviderErrorFromWebUi(provider, msg.errorMessage)) {
           outboundEvent = {
             ...(event as object),
             message: { ...msg, errorMessage: undefined },
@@ -465,13 +464,12 @@ function makeSubscribeHandler(live: LiveSession): () => void {
       }
       const provider = live.session.model?.provider;
       if (errMsg !== undefined && errMsg !== "") {
-        if (isCodexProviderTransportError(provider, errMsg)) {
+        if (shouldSuppressCodexProviderErrorFromWebUi(provider, errMsg)) {
           logAgentEvent("warn", {
-            msg: "suppressing Codex provider transport error from web UI",
+            msg: "suppressing Codex provider error from web UI",
             sessionId: live.sessionId,
             projectId: live.projectId,
             provider,
-            transport: live.session.agent.transport,
             errorMessage: errMsg,
           });
         } else {

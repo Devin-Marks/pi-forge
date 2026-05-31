@@ -1126,7 +1126,10 @@ function Message({
   );
 }
 
-function isCodexTransportUiNoise(message: AgentMessageLike, errorMessage: string): boolean {
+function shouldSuppressCodexProviderError(
+  message: AgentMessageLike,
+  errorMessage: string,
+): boolean {
   const provider = (message as { provider?: unknown }).provider;
   return (
     provider === "openai-codex" &&
@@ -1163,7 +1166,7 @@ function AssistantMessageBubble({
     stopReason === "error" &&
     typeof errorMessage === "string" &&
     errorMessage.length > 0 &&
-    !isCodexTransportUiNoise(message, errorMessage)
+    !shouldSuppressCodexProviderError(message, errorMessage)
       ? errorMessage
       : undefined;
   return (
