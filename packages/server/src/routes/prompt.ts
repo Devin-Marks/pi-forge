@@ -503,7 +503,7 @@ export const promptRoutes: FastifyPluginAsync = async (fastify) => {
       // `docker logs`. Pino redacts the prompt body itself; the byte
       // count is the safe diagnostic to emit.
       const activeModel = live.session.model;
-      const activeTransport = live.session.agent.transport;
+      const activeTransport = (live.session as { agent?: { transport?: string } }).agent?.transport;
       const isCodexPrompt = activeModel?.provider === "openai-codex";
       process.stderr.write(
         `${JSON.stringify({
