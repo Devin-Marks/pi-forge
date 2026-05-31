@@ -30,7 +30,14 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 type FlagType = "string" | "number" | "boolean" | "list";
-type FlagGroup = "network" | "paths" | "auth" | "rate-limits" | "features" | "terminal";
+type FlagGroup =
+  | "network"
+  | "paths"
+  | "auth"
+  | "rate-limits"
+  | "features"
+  | "terminal"
+  | "telemetry";
 
 interface FlagDef {
   name: string; // kebab-case CLI flag (without leading --)
@@ -209,6 +216,72 @@ const FLAGS: readonly FlagDef[] = [
     group: "features",
     desc: "Append a secret-hygiene rule to the agent's system prompt",
     defaultText: "false",
+  },
+  // telemetry
+  {
+    name: "telemetry-enabled",
+    env: "TELEMETRY_ENABLED",
+    type: "boolean",
+    group: "telemetry",
+    desc: "Enable OpenTelemetry export (off by default)",
+    defaultText: "false",
+  },
+  {
+    name: "otel-service-name",
+    env: "OTEL_SERVICE_NAME",
+    type: "string",
+    group: "telemetry",
+    desc: "OpenTelemetry service.name resource attribute",
+    defaultText: "pi-forge",
+  },
+  {
+    name: "otel-exporter-otlp-endpoint",
+    env: "OTEL_EXPORTER_OTLP_ENDPOINT",
+    type: "string",
+    group: "telemetry",
+    desc: "Base OTLP/HTTP collector endpoint for traces and metrics",
+    defaultText: "http://localhost:4318",
+  },
+  {
+    name: "otel-exporter-otlp-traces-endpoint",
+    env: "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+    type: "string",
+    group: "telemetry",
+    desc: "OTLP/HTTP traces endpoint (overrides base endpoint for traces)",
+    defaultText: "${otel-exporter-otlp-endpoint}/v1/traces",
+  },
+  {
+    name: "otel-exporter-otlp-metrics-endpoint",
+    env: "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+    type: "string",
+    group: "telemetry",
+    desc: "OTLP/HTTP metrics endpoint (overrides base endpoint for metrics)",
+    defaultText: "${otel-exporter-otlp-endpoint}/v1/metrics",
+  },
+  {
+    name: "otel-exporter-otlp-headers",
+    env: "OTEL_EXPORTER_OTLP_HEADERS",
+    type: "string",
+    group: "telemetry",
+    desc: "OTLP exporter headers (key=value pairs; never logged)",
+    defaultText: "(unset)",
+    sensitive: true,
+  },
+  {
+    name: "otel-traces-enabled",
+    env: "OTEL_TRACES_ENABLED",
+    type: "boolean",
+    group: "telemetry",
+    desc: "Export OpenTelemetry traces when telemetry is enabled",
+    defaultText: "true",
+  },
+  {
+    name: "otel-metrics-enabled",
+    env: "OTEL_METRICS_ENABLED",
+    type: "boolean",
+    group: "telemetry",
+    desc: "Export OpenTelemetry metrics when telemetry is enabled",
+    defaultText: "true",
   },
   // rate limits
   {
@@ -517,6 +590,7 @@ const GROUP_LABELS: Record<FlagGroup, string> = {
   features: "Features",
   "rate-limits": "Rate limits",
   terminal: "Terminal",
+  telemetry: "Telemetry",
 };
 
 export function buildHelpText(version: string): string {
@@ -533,7 +607,15 @@ export function buildHelpText(version: string): string {
   );
   out.push("");
 
-  const groups: FlagGroup[] = ["network", "paths", "auth", "features", "rate-limits", "terminal"];
+  const groups: FlagGroup[] = [
+    "network",
+    "paths",
+    "auth",
+    "features",
+    "telemetry",
+    "rate-limits",
+    "terminal",
+  ];
   for (const group of groups) {
     const flags = FLAGS.filter((f) => f.group === group);
     if (flags.length === 0) continue;
@@ -554,7 +636,7 @@ export function buildHelpText(version: string): string {
   out.push("");
   out.push("Boolean flags accept true/false/on/off/1/0/yes/no, or use --no-<flag> for false.");
   out.push(
-    "Sensitive flags (--ui-password, --api-key, --jwt-secret) accept @<path> to read from file.",
+    "Sensitive flags (--ui-password, --api-key, --jwt-secret, --otel-exporter-otlp-headers) accept @<path> to read from file.",
   );
   out.push("");
   out.push("Examples:");

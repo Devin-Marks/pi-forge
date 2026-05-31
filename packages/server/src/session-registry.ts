@@ -37,6 +37,7 @@ import { createOrchestrationTools } from "./orchestration/tools.js";
 import { bridgeWorkerAgentEvent } from "./orchestration/event-bridge.js";
 import { notifySupervisorDisposed, notifySupervisorIdle } from "./orchestration/inbox.js";
 import { archiveSessionFiles } from "./session-archive.js";
+import { recordSessionEvent, withSessionSpan } from "./telemetry.js";
 
 /**
  * Minimal SSE client contract used by the registry to fan out events.
@@ -321,6 +322,7 @@ function makeSubscribeHandler(live: LiveSession): () => void {
   return live.session.subscribe((event: AgentSessionEvent) => {
     live.lastActivityAt = new Date();
     if (event.type === "agent_start") {
+      recordSessionEvent("agent_start", { projectId: live.projectId, sessionId: live.sessionId });
       // Capture BEFORE the SDK appends turn messages, so the index points
       // at the first message of the new turn (the user prompt or the
       // steered/follow-up entry).
@@ -412,6 +414,7 @@ function makeSubscribeHandler(live: LiveSession): () => void {
     // no error banner, and the user sees an empty assistant message.
     let outboundEvent: AgentSessionEvent = event;
     if (e.type === "agent_end") {
+      recordSessionEvent("agent_end", { projectId: live.projectId, sessionId: live.sessionId });
       // Primary: session-level `errorMessage` — the SDK's
       // documented authoritative field. Most failure modes set
       // this (auth failures, validation, etc.).
@@ -608,15 +611,20 @@ export async function createSession(
     settingsManager,
     projectId,
   );
-  const { session } = await createAgentSession({
-    cwd: workspacePath,
-    sessionManager,
-    settingsManager,
-    resourceLoader,
-    agentDir: config.piConfigDir,
-    customTools,
-    tools: await buildToolsAllowlist(customTools, projectId, workspacePath),
-  });
+  const { session } = await withSessionSpan(
+    "pi_forge.session.create",
+    { projectId, sessionId: sessionManager.getSessionId(), operation: "create" },
+    async () =>
+      createAgentSession({
+        cwd: workspacePath,
+        sessionManager,
+        settingsManager,
+        resourceLoader,
+        agentDir: config.piConfigDir,
+        customTools,
+        tools: await buildToolsAllowlist(customTools, projectId, workspacePath),
+      }),
+  );
 
   const now = new Date();
   // Build the LiveSession in two passes so unsubscribe is the real handle by
@@ -667,6 +675,7 @@ export async function createSession(
     projectId: live.projectId,
     workspacePath: live.workspacePath,
   });
+  recordSessionEvent("created", { projectId: live.projectId, sessionId: live.sessionId });
   return live;
 }
 
@@ -844,15 +853,20 @@ export async function resumeSession(
       settingsManager,
       projectId,
     );
-    const { session } = await createAgentSession({
-      cwd: workspacePath,
-      sessionManager,
-      settingsManager,
-      resourceLoader,
-      agentDir: config.piConfigDir,
-      customTools,
-      tools: await buildToolsAllowlist(customTools, projectId, workspacePath),
-    });
+    const { session } = await withSessionSpan(
+      "pi_forge.session.resume",
+      { projectId, sessionId, operation: "resume" },
+      async () =>
+        createAgentSession({
+          cwd: workspacePath,
+          sessionManager,
+          settingsManager,
+          resourceLoader,
+          agentDir: config.piConfigDir,
+          customTools,
+          tools: await buildToolsAllowlist(customTools, projectId, workspacePath),
+        }),
+    );
 
     const now = new Date();
     const live: LiveSession = {
@@ -868,6 +882,7 @@ export async function resumeSession(
     };
     live.unsubscribe = makeSubscribeHandler(live);
     registry.set(live.sessionId, live);
+    recordSessionEvent("resumed", { projectId: live.projectId, sessionId: live.sessionId });
     return live;
   });
 }
@@ -1036,6 +1051,7 @@ export async function disposeSession(sessionId: string): Promise<boolean> {
     await processManager.disposeSession(sessionId).catch(() => undefined);
   } finally {
     registry.delete(sessionId);
+    recordSessionEvent("disposed", { projectId: live.projectId, sessionId: live.sessionId });
     // Tombstone the id so a polling SSE client can't re-resume the
     // session before deleteColdSession's file unlink runs. The
     // tombstone clears itself after TOMBSTONE_MS — long enough for

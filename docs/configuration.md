@@ -50,6 +50,14 @@ in `cli.ts`). The most-touched ones:
 | `TRUST_PROXY` | `false` | Set when behind a reverse proxy so `req.ip` is the real client (required for per-user login rate limits). |
 | `ORCHESTRATION_ENABLED` | `false` | Surface the chat-view `Orch` toggle so sessions can opt in to supervisor mode (`orchestrate_*` tool group, worker spawning, inbox). Hard-disabled under `MINIMAL_UI` regardless. See [`orchestration.md`](./orchestration.md). |
 | `ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR` | `8` | Per-supervisor live-worker cap. Bounded to `[1, 100]`. |
+| `TELEMETRY_ENABLED` | `false` | Opt in to OpenTelemetry export. Off by default for local/single-tenant use. |
+| `OTEL_SERVICE_NAME` | `pi-forge` | OpenTelemetry `service.name` resource attribute. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` (OpenTelemetry SDK default) | Base OTLP/HTTP collector endpoint. Pi-forge appends `/v1/traces` and `/v1/metrics` unless signal-specific endpoints are set. |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | (unset) | Signal-specific OTLP/HTTP traces endpoint. |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | (unset) | Signal-specific OTLP/HTTP metrics endpoint. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | (unset) | Comma- or newline-separated `key=value` headers for OTLP exporters. Use `--otel-exporter-otlp-headers @/path` to avoid shell history. |
+| `OTEL_TRACES_ENABLED` | `true` | Export traces when `TELEMETRY_ENABLED=true`. |
+| `OTEL_METRICS_ENABLED` | `true` | Export metrics when `TELEMETRY_ENABLED=true`. |
 
 Production-tuning knobs (rate limits, JWT lifetime, TLS / proxy posture)
 are documented in [`deployment.md`](./deployment.md).
@@ -191,6 +199,35 @@ input's slash palette without a project switch (cross-tab signal via
 These files are **forge-private**, not pi-side state — pi has no native
 concept of per-project skill/tool toggles. Backups via Settings → Backup
 include them so a restore preserves per-project preferences.
+
+## OpenTelemetry
+
+OpenTelemetry is opt-in and disabled by default:
+
+```bash
+pi-forge \
+  --telemetry-enabled \
+  --otel-service-name pi-forge-dev \
+  --otel-exporter-otlp-endpoint http://otel-collector:4318
+```
+
+Pi-forge uses standards-compatible OTLP/HTTP exporters. You can either set a
+base endpoint (`OTEL_EXPORTER_OTLP_ENDPOINT`) or signal-specific endpoints
+(`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`).
+Exporter headers are supported for collectors that require authentication, but
+header values are never logged by pi-forge.
+
+Telemetry intentionally records only low-cardinality operational data:
+
+- HTTP method, Fastify route pattern, status code, request duration/count
+- server-side errors and exception class names
+- session lifecycle counters/spans (`created`, `resumed`, `disposed`,
+  `agent_start`, `agent_end`)
+
+Telemetry does **not** attach prompt text, assistant output, file contents,
+provider API keys, auth tokens, OTLP headers, raw URLs with query strings, or raw
+workspace/file paths. The pi SDK also has a separate install/update telemetry
+setting; pi-forge OpenTelemetry does not change that SDK behavior.
 
 ## MCP servers
 

@@ -44,6 +44,7 @@ import { disposeAllSessions } from "./session-registry.js";
 import { cleanupArchivedSessions } from "./session-archive.js";
 import { disposeAllPtys, installPtyExitHandler } from "./pty-manager.js";
 import { logSecretHygieneState } from "./agent-resource-loader.js";
+import { installTelemetryHooks, shutdownTelemetry, startTelemetry } from "./telemetry.js";
 
 /**
  * Per-route auth metadata. Routes that should skip the auth preHandler set
@@ -64,6 +65,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   // ECONNREFUSED, etc.) which would otherwise surface as a terse
   // "Connection Error" with no underlying detail.
   installDiagnostics();
+  startTelemetry();
 
   const fastify = Fastify({
     logger: {
@@ -126,6 +128,8 @@ export async function buildServer(): Promise<FastifyInstance> {
     // attachments to disk instead of buffering.
     bodyLimit: 100 * 1024 * 1024,
   });
+
+  installTelemetryHooks(fastify);
 
   // Purge archived sessions whose 7-day retention window has elapsed.
   // Best-effort: cleanup failures should not prevent the server from
@@ -482,6 +486,7 @@ export async function buildServer(): Promise<FastifyInstance> {
     await disposeAllSessions();
     disposeAllPtys();
     await disposeAllMcp();
+    await shutdownTelemetry();
   });
 
   // Boot-time MCP load. Eagerly connects every enabled GLOBAL server

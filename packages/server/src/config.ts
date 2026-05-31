@@ -98,6 +98,11 @@ const CLIENT_DIST_PATH = resolve(
 const UI_PASSWORD = readEnv("UI_PASSWORD");
 const API_KEY = readEnv("API_KEY");
 const CORS_ORIGIN = readEnv("CORS_ORIGIN");
+const OTEL_EXPORTER_OTLP_ENDPOINT = readEnv("OTEL_EXPORTER_OTLP_ENDPOINT");
+const OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = readEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT");
+const OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = readEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT");
+const OTEL_EXPORTER_OTLP_HEADERS = readEnv("OTEL_EXPORTER_OTLP_HEADERS");
+const OTEL_SERVICE_NAME = readEnv("OTEL_SERVICE_NAME") ?? "pi-forge";
 const PASSWORD_HASH_FILE = join(FORGE_DATA_DIR, "password-hash");
 
 /**
@@ -375,6 +380,22 @@ export const config = Object.freeze({
    * close becomes a hard kill); use that deliberately or not at all.
    */
   terminalIdleReapMs: readInt("PTY_IDLE_REAP_MS", 10 * 60 * 1000),
+  /**
+   * Opt-in OpenTelemetry export. Defaults OFF for local single-tenant use.
+   * When enabled, pi-forge emits server/request/session lifecycle spans and
+   * aggregate metrics only; prompt text, file contents, auth tokens, provider
+   * keys, and raw paths are intentionally not attached as attributes.
+   */
+  telemetry: Object.freeze({
+    enabled: readBool("TELEMETRY_ENABLED", false),
+    serviceName: OTEL_SERVICE_NAME,
+    tracesEnabled: readBool("OTEL_TRACES_ENABLED", true),
+    metricsEnabled: readBool("OTEL_METRICS_ENABLED", true),
+    otlpEndpoint: OTEL_EXPORTER_OTLP_ENDPOINT,
+    otlpTracesEndpoint: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+    otlpMetricsEndpoint: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT,
+    otlpHeaders: OTEL_EXPORTER_OTLP_HEADERS,
+  }),
 } as const);
 
 export function authEnabled(): boolean {

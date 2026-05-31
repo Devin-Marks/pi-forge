@@ -239,7 +239,15 @@ console.log("\nhelp + version");
 
   const helpText = buildHelpText("9.9.9");
   assert("buildHelpText embeds the version", helpText.startsWith("pi-forge 9.9.9"));
-  const helpGroups = ["Network", "Paths", "Authentication", "Features", "Rate limits", "Terminal"];
+  const helpGroups = [
+    "Network",
+    "Paths",
+    "Authentication",
+    "Features",
+    "Telemetry",
+    "Rate limits",
+    "Terminal",
+  ];
   assert(
     "buildHelpText lists at least one flag from each group",
     helpGroups.every((g) => helpText.includes(`${g}:`)),
