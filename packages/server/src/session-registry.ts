@@ -288,6 +288,19 @@ function logAgentEvent(level: "info" | "warn", payload: Record<string, unknown>)
   );
 }
 
+function isCodexProvider(provider: string | undefined): boolean {
+  return provider === "openai-codex";
+}
+
+export function isCodexProviderTransportError(
+  provider: string | undefined,
+  errorMessage: string | undefined,
+): boolean {
+  if (!isCodexProvider(provider)) return false;
+  if (errorMessage === undefined || errorMessage === "") return false;
+  return /provider_transport_failure|websocket.*1006|1006.*websocket/i.test(errorMessage);
+}
+
 /**
  * Walk the session's messages newest-to-oldest and return the first
  * assistant message that ended with `stopReason="error"` (capturing
@@ -367,6 +380,7 @@ function makeSubscribeHandler(live: LiveSession): () => void {
       });
     }
 
+    let outboundEvent: AgentSessionEvent = event;
     if (e.type === "message_end") {
       const msg = e.message;
       if (
@@ -374,15 +388,23 @@ function makeSubscribeHandler(live: LiveSession): () => void {
         (msg.stopReason === "error" || msg.stopReason === "aborted")
       ) {
         const modelInfo = typeof msg.model === "object" ? msg.model : undefined;
+        const provider = msg.provider ?? modelInfo?.provider ?? live.session.model?.provider;
         logAgentEvent("warn", {
           msg: "agent turn ended with error stopReason",
           sessionId: live.sessionId,
           projectId: live.projectId,
           stopReason: msg.stopReason,
           errorMessage: msg.errorMessage,
-          provider: msg.provider ?? modelInfo?.provider,
-          modelId: msg.modelId ?? modelInfo?.id,
+          provider,
+          modelId: msg.modelId ?? modelInfo?.id ?? live.session.model?.id,
+          transport: isCodexProvider(provider) ? live.session.agent.transport : undefined,
         });
+        if (isCodexProviderTransportError(provider, msg.errorMessage)) {
+          outboundEvent = {
+            ...(event as object),
+            message: { ...msg, errorMessage: undefined },
+          } as unknown as AgentSessionEvent;
+        }
       }
     }
     if (e.type === "auto_retry_start") {
@@ -410,7 +432,6 @@ function makeSubscribeHandler(live: LiveSession): () => void {
     // enrichment, a context-overflow / 401 / 5xx ends up emitting an
     // `agent_end` with no detail, the chat UI hides its spinner with
     // no error banner, and the user sees an empty assistant message.
-    let outboundEvent: AgentSessionEvent = event;
     if (e.type === "agent_end") {
       // Primary: session-level `errorMessage` — the SDK's
       // documented authoritative field. Most failure modes set
@@ -442,16 +463,28 @@ function makeSubscribeHandler(live: LiveSession): () => void {
           errorMessage: errMsg,
         });
       }
+      const provider = live.session.model?.provider;
       if (errMsg !== undefined && errMsg !== "") {
-        // Forward a merged event that includes the error detail. Cast
-        // through unknown — the SDK's union doesn't declare an
-        // errorMessage field on agent_end (it expects callers to read
-        // session.errorMessage themselves), but the wire shape is what
-        // the browser consumes and it tolerates the extra field.
-        outboundEvent = {
-          ...(event as object),
-          errorMessage: errMsg,
-        } as unknown as AgentSessionEvent;
+        if (isCodexProviderTransportError(provider, errMsg)) {
+          logAgentEvent("warn", {
+            msg: "suppressing Codex provider transport error from web UI",
+            sessionId: live.sessionId,
+            projectId: live.projectId,
+            provider,
+            transport: live.session.agent.transport,
+            errorMessage: errMsg,
+          });
+        } else {
+          // Forward a merged event that includes the error detail. Cast
+          // through unknown — the SDK's union doesn't declare an
+          // errorMessage field on agent_end (it expects callers to read
+          // session.errorMessage themselves), but the wire shape is what
+          // the browser consumes and it tolerates the extra field.
+          outboundEvent = {
+            ...(event as object),
+            errorMessage: errMsg,
+          } as unknown as AgentSessionEvent;
+        }
       } else if (verbose) {
         logAgentEvent("info", {
           msg: "agent_end (no error)",

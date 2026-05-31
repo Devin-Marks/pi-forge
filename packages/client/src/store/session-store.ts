@@ -34,6 +34,10 @@ export const EMPTY_COMPACTIONS: CompactionEvent[] = [];
 const pendingDeltas = new Map<string, string>();
 const pendingRaf = new Map<string, number>();
 
+function isCodexTransportUiNoise(errorMessage: string): boolean {
+  return /provider_transport_failure|websocket.*1006|1006.*websocket/i.test(errorMessage);
+}
+
 /**
  * Inflight messages-refetch state per session. We refetch on intra-turn
  * milestones (message_end, tool_execution_end, tool_result) so toolCall
@@ -781,7 +785,9 @@ function applyEvent(
     // assistant message.
     const agentErr = (event as { errorMessage?: unknown }).errorMessage;
     const errorBanner =
-      typeof agentErr === "string" && agentErr.length > 0 ? `Agent error: ${agentErr}` : undefined;
+      typeof agentErr === "string" && agentErr.length > 0 && !isCodexTransportUiNoise(agentErr)
+        ? `Agent error: ${agentErr}`
+        : undefined;
     // Refetch authoritative messages, then clear streaming state. Order
     // matters — the messages array must be in place before the renderer
     // drops the streamingText bubble or we'd see a momentary gap.

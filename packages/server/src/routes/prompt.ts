@@ -502,6 +502,9 @@ export const promptRoutes: FastifyPluginAsync = async (fastify) => {
       // not responding) is invisible to operators reading
       // `docker logs`. Pino redacts the prompt body itself; the byte
       // count is the safe diagnostic to emit.
+      const activeModel = live.session.model;
+      const activeTransport = live.session.agent.transport;
+      const isCodexPrompt = activeModel?.provider === "openai-codex";
       process.stderr.write(
         `${JSON.stringify({
           level: "info",
@@ -511,6 +514,9 @@ export const promptRoutes: FastifyPluginAsync = async (fastify) => {
           promptBytes,
           imageCount: images.length,
           streamingBehavior,
+          provider: isCodexPrompt ? activeModel?.provider : undefined,
+          modelId: isCodexPrompt ? activeModel?.id : undefined,
+          transport: isCodexPrompt ? activeTransport : undefined,
         })}\n`,
       );
 
@@ -523,6 +529,9 @@ export const promptRoutes: FastifyPluginAsync = async (fastify) => {
               time: new Date().toISOString(),
               msg: "session.prompt rejected",
               sessionId: req.params.id,
+              provider: isCodexPrompt ? activeModel?.provider : undefined,
+              modelId: isCodexPrompt ? activeModel?.id : undefined,
+              transport: isCodexPrompt ? activeTransport : undefined,
               error: f.message,
               chain: f.chain,
               stack: f.stack,
