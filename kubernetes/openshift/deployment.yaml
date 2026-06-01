@@ -131,6 +131,18 @@ spec:
                   name: pi-forge-secret
                   key: API_KEY
                   optional: true
+            # LDAP is opt-in. Set LDAP_ENABLED/LDAP_URL/LDAP_BIND_DN/
+            # LDAP_BASE_DN/LDAP_REQUIRED_GROUP_DN here or via an overlay.
+            # The bind password can come from this OpenShift Secret key,
+            # or from a mounted Secret file by setting LDAP_BIND_PASSWORD_FILE.
+            - name: LDAP_ENABLED
+              value: "false"
+            - name: LDAP_BIND_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pi-forge-secret
+                  key: LDAP_BIND_PASSWORD
+                  optional: true
           livenessProbe:
             httpGet:
               path: /api/v1/health

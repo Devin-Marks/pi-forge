@@ -161,6 +161,87 @@ const FLAGS: readonly FlagDef[] = [
     desc: "Require user to change password on first login (set when --ui-password is sealed-secret)",
     defaultText: "false",
   },
+  {
+    name: "ldap-enabled",
+    env: "LDAP_ENABLED",
+    type: "boolean",
+    group: "auth",
+    desc: "Enable LDAP username/password browser login",
+    defaultText: "false",
+  },
+  {
+    name: "ldap-url",
+    env: "LDAP_URL",
+    type: "string",
+    group: "auth",
+    desc: "LDAP server URL (ldap:// or ldaps://)",
+    defaultText: "(unset)",
+  },
+  {
+    name: "ldap-bind-dn",
+    env: "LDAP_BIND_DN",
+    type: "string",
+    group: "auth",
+    desc: "LDAP service-account bind DN used to search users",
+    defaultText: "(unset)",
+  },
+  {
+    name: "ldap-bind-password",
+    env: "LDAP_BIND_PASSWORD",
+    type: "string",
+    group: "auth",
+    desc: "LDAP service-account bind password. Use @<path> to read from a file.",
+    defaultText: "(unset)",
+    sensitive: true,
+  },
+  {
+    name: "ldap-bind-password-file",
+    env: "LDAP_BIND_PASSWORD_FILE",
+    type: "string",
+    group: "auth",
+    desc: "Path to LDAP bind password file (OpenShift/Kubernetes secret mount)",
+    defaultText: "(unset)",
+  },
+  {
+    name: "ldap-base-dn",
+    env: "LDAP_BASE_DN",
+    type: "string",
+    group: "auth",
+    desc: "LDAP search base DN for users",
+    defaultText: "(unset)",
+  },
+  {
+    name: "ldap-user-filter",
+    env: "LDAP_USER_FILTER",
+    type: "string",
+    group: "auth",
+    desc: "LDAP user search filter; use {{username}} placeholder",
+    defaultText: "(|(uid={{username}})(sAMAccountName={{username}})(mail={{username}}))",
+  },
+  {
+    name: "ldap-required-group-dn",
+    env: "LDAP_REQUIRED_GROUP_DN",
+    type: "string",
+    group: "auth",
+    desc: "Optional required group DN checked against memberOf",
+    defaultText: "(unset)",
+  },
+  {
+    name: "ldap-group-attribute",
+    env: "LDAP_GROUP_ATTRIBUTE",
+    type: "string",
+    group: "auth",
+    desc: "LDAP user attribute containing group DNs",
+    defaultText: "memberOf",
+  },
+  {
+    name: "ldap-timeout-ms",
+    env: "LDAP_TIMEOUT_MS",
+    type: "number",
+    group: "auth",
+    desc: "LDAP connect/operation timeout (ms)",
+    defaultText: "5000",
+  },
   // features
   {
     name: "log-level",
@@ -554,7 +635,7 @@ export function buildHelpText(version: string): string {
   out.push("");
   out.push("Boolean flags accept true/false/on/off/1/0/yes/no, or use --no-<flag> for false.");
   out.push(
-    "Sensitive flags (--ui-password, --api-key, --jwt-secret) accept @<path> to read from file.",
+    "Sensitive flags (--ui-password, --api-key, --jwt-secret, --ldap-bind-password) accept @<path> to read from file.",
   );
   out.push("");
   out.push("Examples:");

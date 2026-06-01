@@ -5,6 +5,7 @@
  *   A) UI_PASSWORD set, JWT_SECRET set, no API_KEY  → password+JWT path
  *   B) API_KEY set, no UI_PASSWORD                  → API-key-only path
  *   C) Neither set                                  → auth fully disabled
+ *   E) LDAP enabled, no local password              → auth enabled; login requires username
  *
  * Asserts the matrix of expected status codes plus a deterministic rate-limit
  * check (RATE_LIMIT_LOGIN_MAX=3 → 4th login attempt returns 429).
@@ -19,7 +20,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import { randomBytes } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -278,6 +279,47 @@ async function scenarioAuthDisabled(): Promise<void> {
   }
 }
 
+async function scenarioLdapEnabledRequiresUsername(): Promise<void> {
+  console.log("\n[scenario E] LDAP enabled without local password");
+  const ldapSecretDir = await mkdtemp(join(tmpdir(), "pi-forge-test-ldap-secret-"));
+  const ldapSecretFile = join(ldapSecretDir, "bind-password");
+  await writeFile(ldapSecretFile, "service-secret\n", "utf8");
+  const srv = await startServer({
+    UI_PASSWORD: undefined,
+    JWT_SECRET: undefined,
+    API_KEY: undefined,
+    LDAP_ENABLED: "true",
+    LDAP_URL: "ldaps://ldap.example.test",
+    LDAP_BIND_DN: "cn=pi-forge,ou=svc,dc=example,dc=test",
+    LDAP_BIND_PASSWORD: undefined,
+    LDAP_BIND_PASSWORD_FILE: ldapSecretFile,
+    LDAP_BASE_DN: "ou=people,dc=example,dc=test",
+  });
+  try {
+    const status = (await (await fetch(`${srv.base}/api/v1/auth/status`)).json()) as {
+      authEnabled: boolean;
+      ldapEnabled?: boolean;
+    };
+    assert("auth/status reports authEnabled=true (ldap)", status.authEnabled === true);
+    assert("auth/status reports ldapEnabled=true", status.ldapEnabled === true);
+
+    const login = await jsonPost(`${srv.base}/api/v1/auth/login`, { password: "anything" });
+    assert("password-only login → 400 when LDAP is the only browser auth", login.status === 400);
+    const body = (await login.json()) as { error?: string };
+    assert(
+      "  error is username_required",
+      body.error === "username_required",
+      JSON.stringify(body),
+    );
+
+    const probeNoToken = await fetch(`${srv.base}/api/v1/__protected_probe`);
+    assert("protected probe with no token → 401", probeNoToken.status === 401);
+  } finally {
+    await srv.stop();
+    await rm(ldapSecretDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 /**
  * Scenario D — persisted password-hash but NO env credentials.
  *
@@ -382,6 +424,7 @@ async function main(): Promise<void> {
   await scenarioApiKeyOnly();
   await scenarioAuthDisabled();
   await scenarioPersistedHashOnly();
+  await scenarioLdapEnabledRequiresUsername();
 
   if (failures > 0) {
     console.log(`\n[test-auth] FAIL — ${failures} assertion(s) failed`);

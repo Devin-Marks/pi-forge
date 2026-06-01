@@ -25,6 +25,7 @@ export class ApiError extends Error {
 
 export interface AuthStatusResponse {
   authEnabled: boolean;
+  ldapEnabled: boolean;
 }
 
 export interface LoginResponse {

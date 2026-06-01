@@ -103,7 +103,10 @@ function vAuthStatus(value: unknown, status: number): AuthStatusResponse {
   if (!isObject(value) || typeof value.authEnabled !== "boolean") {
     fail(status, "expected { authEnabled: boolean }");
   }
-  return { authEnabled: value.authEnabled };
+  return {
+    authEnabled: value.authEnabled,
+    ldapEnabled: typeof value.ldapEnabled === "boolean" ? value.ldapEnabled : false,
+  };
 }
 
 function vLogin(value: unknown, status: number): LoginResponse {
@@ -1514,10 +1517,10 @@ function gitQuery(
 
 export const api = {
   authStatus: () => request("/api/v1/auth/status", vAuthStatus, { skipAuth: true }),
-  login: (password: string) =>
+  login: (password: string, username?: string) =>
     request("/api/v1/auth/login", vLogin, {
       method: "POST",
-      body: { password },
+      body: username === undefined ? { password } : { username, password },
       skipAuth: true,
     }),
   changePassword: (currentPassword: string, newPassword: string) =>

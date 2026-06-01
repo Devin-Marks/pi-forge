@@ -45,7 +45,17 @@ in `cli.ts`). The most-touched ones:
 | `FORGE_DATA_DIR` | `~/.pi-forge` | Pi-forge state — `projects.json`, override files, `jwt-secret`, `password-hash`. |
 | `UI_PASSWORD` | (unset) | Enables browser JWT auth. After the user changes it via the UI, a scrypt hash is persisted to `${FORGE_DATA_DIR}/password-hash` and the env value is ignored. |
 | `API_KEY` | (unset) | Static bearer token for programmatic access. |
-| `JWT_SECRET` | (auto-generated) | HS256 signing key. Auto-generated and persisted to `${FORGE_DATA_DIR}/jwt-secret` (mode 0600) when `UI_PASSWORD` or `password-hash` is in play. Set explicitly (`openssl rand -hex 32`) to override; delete the file to rotate. |
+| `JWT_SECRET` | (auto-generated) | HS256 signing key. Auto-generated and persisted to `${FORGE_DATA_DIR}/jwt-secret` (mode 0600) when `UI_PASSWORD`, LDAP auth, or `password-hash` is in play. Set explicitly (`openssl rand -hex 32`) to override; delete the file to rotate. |
+| `LDAP_ENABLED` | `false` | Enables LDAP username/password browser login. Requires the LDAP variables below. |
+| `LDAP_URL` | (unset) | LDAP server URL, e.g. `ldap://ldap.example.com:389` or `ldaps://ldap.example.com:636`. |
+| `LDAP_BIND_DN` | (unset) | Service-account bind DN used only to search for the user entry. |
+| `LDAP_BIND_PASSWORD` | (unset) | Service-account bind password. Prefer `LDAP_BIND_PASSWORD_FILE` or `--ldap-bind-password @/path` for secret mounts. |
+| `LDAP_BIND_PASSWORD_FILE` | (unset) | File containing the service-account password (for Kubernetes/OpenShift mounted Secrets). Takes precedence over `LDAP_BIND_PASSWORD`. |
+| `LDAP_BASE_DN` | (unset) | Base DN for user searches. |
+| `LDAP_USER_FILTER` | `(|(uid={{username}})(sAMAccountName={{username}})(mail={{username}}))` | Search filter. `{{username}}` is escaped per RFC4515 before substitution. Must match exactly one user. |
+| `LDAP_REQUIRED_GROUP_DN` | (unset) | Optional required group DN. When set, the user's `memberOf` values must include it. |
+| `LDAP_GROUP_ATTRIBUTE` | `memberOf` | User attribute checked for group DNs. Change only for directories that expose group membership under a different attribute. |
+| `LDAP_TIMEOUT_MS` | `5000` | LDAP connect/operation timeout in milliseconds. |
 | `MINIMAL_UI` | `false` | Hide terminal / git / last-turn / providers / agent-settings panels. Frontend gate; server routes unchanged. ALSO hard-disables webhook configuration, session orchestration, and the quick-actions runner. |
 | `TRUST_PROXY` | `false` | Set when behind a reverse proxy so `req.ip` is the real client (required for per-user login rate limits). |
 | `ORCHESTRATION_ENABLED` | `false` | Surface the chat-view `Orch` toggle so sessions can opt in to supervisor mode (`orchestrate_*` tool group, worker spawning, inbox). Hard-disabled under `MINIMAL_UI` regardless. See [`orchestration.md`](./orchestration.md). |
@@ -53,6 +63,41 @@ in `cli.ts`). The most-touched ones:
 
 Production-tuning knobs (rate limits, JWT lifetime, TLS / proxy posture)
 are documented in [`deployment.md`](./deployment.md).
+
+### LDAP browser login
+
+LDAP is opt-in and off by default. When `LDAP_ENABLED=true`, pi-forge's
+login form asks for a username and password. The server binds with the
+configured service account, searches under `LDAP_BASE_DN` using
+`LDAP_USER_FILTER`, optionally checks the returned user's `memberOf`
+(or `LDAP_GROUP_ATTRIBUTE`) against `LDAP_REQUIRED_GROUP_DN`, and then
+binds as the returned user DN with the presented password. A successful
+LDAP bind issues the same pi-forge JWT used by local `UI_PASSWORD`
+login. API-key auth is unchanged, and protected routes still require a
+valid bearer JWT or API key.
+
+Minimal example:
+
+```bash
+LDAP_ENABLED=true
+LDAP_URL=ldaps://ldap.example.com:636
+LDAP_BIND_DN='cn=pi-forge,ou=svc,dc=example,dc=com'
+LDAP_BIND_PASSWORD_FILE=/run/secrets/ldap-bind-password
+LDAP_BASE_DN='ou=people,dc=example,dc=com'
+LDAP_REQUIRED_GROUP_DN='cn=pi-forge-users,ou=groups,dc=example,dc=com'
+```
+
+`LDAP_BIND_PASSWORD_FILE` is intended for Kubernetes/OpenShift mounted
+Secrets and takes precedence over `LDAP_BIND_PASSWORD`. The password is
+read only in `config.ts`, never returned by any API, and redacted from
+request logs. Do not put service-account passwords in container images
+or command-line history; use a mounted secret file or the CLI
+`--ldap-bind-password @/path/to/file` form instead.
+
+If both LDAP and local `UI_PASSWORD` / stored password auth are present,
+username+password login uses LDAP; password-only login continues to use
+the local pi-forge password. This preserves existing single-tenant
+password deployments while allowing LDAP to be enabled during migration.
 
 ## Pi SDK config files
 
