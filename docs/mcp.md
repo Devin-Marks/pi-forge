@@ -211,6 +211,19 @@ The badge next to **Settings** shows a colored dot + `MCP X/Y`:
 
 Hidden when no servers are configured and in `MINIMAL_UI` mode.
 
+The header summary and any Settings → MCP project status list already opened by
+this browser tab refresh automatically on the shared MCP ticker. Unchanged status
+payloads keep their existing UI state to avoid unnecessary churn.
+
+## Tool result truncation
+
+Very large text results from MCP tools are capped before they enter the agent
+context. When truncation happens, the returned text starts with a concise
+`MCP_RESULT_TRUNCATED` warning that includes the omitted size and tells the model
+to retry with a smaller scope, narrower filter, or pagination. The visible payload
+then keeps the start and end of the original result with a marker where the middle
+was omitted.
+
 ## Troubleshooting
 
 **Status stuck in `error`** — Settings → MCP, expand the row, read

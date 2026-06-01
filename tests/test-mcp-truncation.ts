@@ -8,9 +8,9 @@
  * Coverage:
  *   - Under-cap text: pass-through, no marker injected.
  *   - Exact-cap text (length === cap): pass-through, no marker.
- *   - Over-cap single text block: head + marker + tail; total length
- *     equals cap + marker length; head/tail slice math is correct;
- *     marker contains the truncated-byte count.
+ *   - Over-cap single text block: leading warning + head + marker + tail;
+ *     total length equals cap + warning/marker length; head/tail slice math
+ *     is correct; warning contains the truncated-byte count and guidance.
  *   - Over-cap multiple text blocks: flattened into one block
  *     containing head + marker + tail (sourced from the
  *     newline-joined original).
@@ -107,9 +107,14 @@ async function main(): Promise<void> {
     if (out[0]?.type === "text") {
       const t = out[0].text;
       assert(
+        "over-cap: leading warning is first thing models see",
+        t.startsWith("MCP_RESULT_TRUNCATED:"),
+        `prefix=${t.slice(0, 80)}`,
+      );
+      assert(
         "over-cap: head preserved (all A's)",
-        t.startsWith("A".repeat(headLen)),
-        `head=${t.slice(0, 16)}... headLen=${headLen}`,
+        t.includes("\n\n" + "A".repeat(100)),
+        `head sample not found; headLen=${headLen}`,
       );
       assert(
         "over-cap: tail preserved (all Z's)",
@@ -122,16 +127,20 @@ async function main(): Promise<void> {
         "marker fell INSIDE the original M run — slice math is off",
       );
       assert(
-        "over-cap: marker contains 'truncated'",
-        t.includes("truncated"),
-        `truncated text: ${t.slice(headLen, headLen + 200)}`,
+        "over-cap: warning contains machine-readable truncation marker",
+        t.includes("MCP_RESULT_TRUNCATED"),
+        `truncated text: ${t.slice(0, 200)}`,
       );
       assert(
-        "over-cap: marker reports the omitted byte count",
+        "over-cap: warning reports the omitted byte count",
         t.includes("50,000"),
         "expected 50,000 char count in marker",
       );
-      assert("over-cap: marker says 'refine'", t.toLowerCase().includes("refine"));
+      assert("over-cap: warning says 'Next step'", t.includes("Next step:"));
+      assert(
+        "over-cap: warning says paginate/filter",
+        t.includes("pagination") && t.includes("filter"),
+      );
     }
   }
 
@@ -149,11 +158,12 @@ async function main(): Promise<void> {
     if (out[0]?.type === "text") {
       const t = out[0].text;
       assert(
-        "multi-block: total length is cap + marker",
+        "multi-block: total length is cap + warning/marker",
         t.length > MCP_TEXT_CAP_CHARS && t.length < MCP_TEXT_CAP_CHARS + 1000,
-        `len=${t.length}, expected ~${MCP_TEXT_CAP_CHARS} + marker`,
+        `len=${t.length}, expected ~${MCP_TEXT_CAP_CHARS} + warning/marker`,
       );
-      assert("multi-block: head still 'P's", t.startsWith("P".repeat(100)));
+      assert("multi-block: leading warning present", t.startsWith("MCP_RESULT_TRUNCATED:"));
+      assert("multi-block: head still 'P's", t.includes("\n\n" + "P".repeat(100)));
       assert("multi-block: tail still 'P's", t.endsWith("P".repeat(100)));
     }
   }
@@ -177,7 +187,7 @@ async function main(): Promise<void> {
     assert("images-with-truncation: exactly one text block remains", textBlocks.length === 1);
     assert(
       "images-with-truncation: text block has truncation marker",
-      textBlocks[0]?.type === "text" && textBlocks[0].text.includes("truncated"),
+      textBlocks[0]?.type === "text" && textBlocks[0].text.includes("MCP_RESULT_TRUNCATED"),
     );
   }
 
@@ -203,8 +213,9 @@ async function main(): Promise<void> {
     if (out.content[0]?.type === "text") {
       const t = out.content[0].text;
       assert("e2e: under cap+marker overhead", t.length < MCP_TEXT_CAP_CHARS + 1000);
-      assert("e2e: contains truncation marker", t.includes("truncated"));
-      assert("e2e: head is Q's", t.startsWith("QQQQQQ"));
+      assert("e2e: contains truncation marker", t.includes("MCP_RESULT_TRUNCATED"));
+      assert("e2e: leading warning is first", t.startsWith("MCP_RESULT_TRUNCATED:"));
+      assert("e2e: head is Q's", t.includes("\n\nQQQQQQ"));
       assert("e2e: tail is Q's", t.endsWith("QQQQQQ"));
     }
   }
@@ -218,8 +229,10 @@ async function main(): Promise<void> {
     };
     const out = mcpResultToAgentResult(mcpResult);
     assert(
-      "isError + oversize: leading [error] marker preserved on truncated text",
-      out.content[0]?.type === "text" && out.content[0].text.startsWith("[error]"),
+      "isError + oversize: truncation warning remains first and [error] is preserved in visible head",
+      out.content[0]?.type === "text" &&
+        out.content[0].text.startsWith("MCP_RESULT_TRUNCATED:") &&
+        out.content[0].text.includes("[error]"),
     );
   }
 

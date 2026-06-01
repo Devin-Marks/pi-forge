@@ -164,10 +164,11 @@ export function mcpResultToAgentResult(res: unknown): AgentToolResult<unknown> {
  * usually has the most recent / most relevant items in time-ordered
  * lists.
  *
- * Marker text is read by the agent and tells it (a) truncation
- * happened, (b) by how much, (c) what to do about it. Imperative
- * phrasing nudges the model to narrow scope rather than re-running
- * the same call.
+ * Warning text is placed at the very start of the returned text so
+ * even simple models notice it before consuming a large head/tail
+ * payload. It tells the agent (a) truncation happened, (b) by how
+ * much, and (c) what to do next. Imperative phrasing nudges the
+ * model to narrow scope rather than re-running the same call.
  *
  * No per-tool override yet — add when a real workload needs a higher
  * or lower cap. Hardcoded constant is the deliberate first cut.
@@ -197,11 +198,15 @@ export function capTextContent(blocks: ContentBlock[]): ContentBlock[] {
   const head = flat.slice(0, headLen);
   const tail = flat.slice(flat.length - tailLen);
   const omitted = flat.length - headLen - tailLen;
+  const warning =
+    `MCP_RESULT_TRUNCATED: ${omitted.toLocaleString()} characters ` +
+    `(~${Math.round(omitted / 4).toLocaleString()} tokens) were omitted from the middle of this tool result. ` +
+    `Do not assume the missing content was irrelevant. Next step: call the MCP tool again with a smaller scope, ` +
+    `narrower filter, or pagination to inspect the omitted content.\n\n`;
   const marker =
-    `\n\n[--- ${omitted.toLocaleString()} characters (~${Math.round(omitted / 4).toLocaleString()} tokens) ` +
-    `truncated to keep the result under the ${MCP_TEXT_CAP_CHARS.toLocaleString()}-char cap. ` +
-    `Refine the query (smaller scope, narrower filter, paginate if available) to see the missing middle. ---]\n\n`;
-  const truncatedText = head + marker + tail;
+    `\n\n[--- MCP_RESULT_TRUNCATED: omitted middle content. Use a smaller scope, narrower filter, ` +
+    `or pagination to inspect it. ---]\n\n`;
+  const truncatedText = warning + head + marker + tail;
   // Keep one text block with the truncated payload + every image
   // block from the original (in its original relative order). Drop
   // duplicate text blocks since they were already absorbed into
