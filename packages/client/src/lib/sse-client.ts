@@ -18,8 +18,8 @@ import { clearStoredToken, getStoredToken } from "./auth-client";
  *     suppresses reconnect.
  *
  * Reconnect policy:
- *   - 401 / 404 are treated as terminal (auth gone, session deleted) — do
- *     not retry; reject immediately.
+ *   - 401 / 404 / 410 are treated as terminal (auth gone, session deleted,
+ *     or recently disposed/tombstoned) — do not retry; reject immediately.
  *   - Any other non-2xx, network-level error, or post-200 stream EOF
  *     triggers a backoff (1s → 2s → 4s → 8s → 16s, capped at 30s).
  *     `onReconnect` is invoked between attempts so the UI can show a
@@ -45,7 +45,7 @@ export interface StreamSSEOptions<T> {
   maxReconnects?: number;
 }
 
-const TERMINAL_STATUS = new Set([401, 404]);
+const TERMINAL_STATUS = new Set([401, 404, 410]);
 const MAX_BACKOFF_MS = 30_000;
 
 function backoffDelay(attempt: number): number {

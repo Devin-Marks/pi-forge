@@ -48,7 +48,7 @@ import type { InboxEventType, InboxItem } from "./types.js";
  *   - On supervisor dispose (handled in session-registry) — clear
  *     so a re-resumed session can wake again.
  */
-const pendingWakePush = new Set<string>();
+const pendingWakePush = new Map<string, number>();
 
 /**
  * Per-supervisor sequence number for wake-up prompts. Surfaces in
@@ -61,6 +61,20 @@ function nextWakeCounter(supervisorId: string): number {
   const n = (wakeCounters.get(supervisorId) ?? 0) + 1;
   wakeCounters.set(supervisorId, n);
   return n;
+}
+
+function clearPendingWakeIfCurrent(supervisorId: string, seq: number): boolean {
+  if (pendingWakePush.get(supervisorId) !== seq) return false;
+  pendingWakePush.delete(supervisorId);
+  return true;
+}
+
+/**
+ * Diagnostic/test helper: true when a supervisor already has a wake-up
+ * prompt in flight for the current idle window.
+ */
+export function hasPendingWakePush(supervisorId: string): boolean {
+  return pendingWakePush.has(supervisorId);
 }
 
 function logInbox(level: "info" | "warn", payload: Record<string, unknown>): void {
@@ -114,9 +128,15 @@ async function tryWakeSupervisor(supervisorId: string): Promise<boolean> {
   const pending = await pendingInboxCount(supervisorId);
   if (pending === 0) return false;
 
-  pendingWakePush.add(supervisorId);
   const seq = nextWakeCounter(supervisorId);
+  pendingWakePush.set(supervisorId, seq);
   const text = buildWakeText(pending);
+  logInbox("info", {
+    msg: "orchestration-wake-started",
+    supervisorId,
+    pending,
+    seq,
+  });
   // Fire-and-forget. The SDK's session.prompt is async; we let it
   // run in the background so the event-bridge caller (often the
   // hot path of an AgentSessionEvent subscriber) returns
@@ -127,19 +147,29 @@ async function tryWakeSupervisor(supervisorId: string): Promise<boolean> {
   live.session
     .prompt(text)
     .then(() => {
+      const cleared = clearPendingWakeIfCurrent(supervisorId, seq);
       logInbox("info", {
         msg: "orchestration-wake-delivered",
         supervisorId,
         pending,
         seq,
+        clearedPendingWake: cleared,
       });
+      // Defense in depth: agent_end normally calls notifySupervisorIdle,
+      // clears the same marker, and re-wakes when pending items remain.
+      // Some SDK/extension failure paths can resolve/reject prompt()
+      // without an agent_end; re-run the idle check here so async worker
+      // completions do not get stranded behind a stale dedupe marker.
+      void tryWakeSupervisor(supervisorId);
     })
     .catch((err: unknown) => {
+      const cleared = clearPendingWakeIfCurrent(supervisorId, seq);
       logInbox("warn", {
         msg: "orchestration-wake-failed",
         supervisorId,
         pending,
         seq,
+        clearedPendingWake: cleared,
         err: err instanceof Error ? err.message : String(err),
       });
     });

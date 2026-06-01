@@ -73,6 +73,15 @@ interface InboxModule {
     type: string,
     data: Record<string, unknown>,
   ) => Promise<{ id: string } | undefined>;
+  hasPendingWakePush: (supervisorId: string) => boolean;
+}
+
+interface RegistryModule {
+  createSession: (
+    projectId: string,
+    workspacePath: string,
+  ) => Promise<{ sessionId: string; session: { prompt: (text: string) => Promise<unknown> } }>;
+  disposeAllSessions: () => Promise<void>;
 }
 
 interface ProcessInfoStub {
@@ -140,6 +149,15 @@ async function waitFor(url: string, timeoutMs = 10_000): Promise<void> {
     }
   }
   throw new Error(`timeout waiting for ${url}`);
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 2_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return predicate();
 }
 
 interface RunningServer {
@@ -238,6 +256,7 @@ async function main(): Promise<void> {
   process.env.WORKSPACE_PATH = sharedWs;
   process.env.PI_CONFIG_DIR = sharedCfg;
   process.env.FORGE_DATA_DIR = sharedData;
+  process.env.SESSION_DIR = join(sharedWs, ".pi", "sessions");
 
   console.log("[test-orchestration] store layer");
   const store = (await import(
@@ -249,6 +268,9 @@ async function main(): Promise<void> {
   const eventBridge = (await import(
     resolve(repoRoot, "packages/server/dist/orchestration/event-bridge.js")
   )) as unknown as EventBridgeModule;
+  const registry = (await import(
+    resolve(repoRoot, "packages/server/dist/session-registry.js")
+  )) as unknown as RegistryModule;
 
   // ===== enable / disable supervisor =====
   await store.enableSupervisor("sup-1");
@@ -371,6 +393,45 @@ async function main(): Promise<void> {
   await store.clearInbox("sup-1");
   const allAfterClear = await store.readAllInbox("sup-1");
   assert("clearInbox wipes history", allAfterClear.length === 0);
+
+  // ===== Wake-up dedupe recovery =====
+  // A rejected wake prompt used to leave the per-supervisor dedupe flag
+  // stuck forever, so later async worker completions stayed queued in the
+  // inbox without ever nudging the supervisor again. Use a real live
+  // session whose prompt method is stubbed to deterministically reject,
+  // then assert the dedupe marker clears.
+  const wakeSup = await registry.createSession("wake-proj", sharedWs);
+  let wakePromptCalls = 0;
+  wakeSup.session.prompt = async () => {
+    wakePromptCalls += 1;
+    await new Promise((r) => setTimeout(r, 75));
+    throw new Error("test wake rejection");
+  };
+  await store.enableSupervisor(wakeSup.sessionId);
+  await store.registerWorker({ supervisorId: wakeSup.sessionId, workerId: "wake-worker" });
+  await inbox.bridgeWorkerEvent("wake-worker", "worker.ended", { stopReason: "end_turn" });
+  const wakeStarted = await waitUntil(() => inbox.hasPendingWakePush(wakeSup.sessionId), 1_000);
+  assert(
+    "wake prompt dedupe marker is set while prompt is in flight",
+    wakeStarted && wakePromptCalls === 1,
+    `pending=${inbox.hasPendingWakePush(wakeSup.sessionId)} calls=${wakePromptCalls}`,
+  );
+  const wakeCleared = await waitUntil(() => !inbox.hasPendingWakePush(wakeSup.sessionId), 2_000);
+  assert(
+    "wake prompt rejection clears dedupe marker",
+    wakeCleared,
+    "pending wake marker stayed set after rejected prompt",
+  );
+  await inbox.bridgeWorkerEvent("wake-worker", "worker.ended", { stopReason: "second" });
+  const wakeRetried = await waitUntil(() => wakePromptCalls >= 2, 1_000);
+  assert(
+    "later worker event can wake supervisor again after rejection",
+    wakeRetried,
+    `calls=${wakePromptCalls}`,
+  );
+  await waitUntil(() => !inbox.hasPendingWakePush(wakeSup.sessionId), 2_000);
+  await store.disableSupervisor(wakeSup.sessionId);
+  await registry.disposeAllSessions();
 
   // ===== Tool-result text carries the data (not just details) =====
   // The supervisor LLM reads `content[0].text`; `details` is for

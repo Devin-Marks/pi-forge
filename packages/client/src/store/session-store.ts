@@ -547,12 +547,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // errors reach here.
       // Cross-tab session deletion: another tab (or a script) called
       // DELETE /sessions/:id, the server disposed, our SSE attempt
-      // got a 404 on reconnect. Drop the session from local state so
-      // the sidebar list / chat view clear immediately, matching the
-      // experience of a same-tab delete. Without this the deleted
-      // session lingered in the list with a stale "stream error"
-      // banner until the user manually refreshed.
-      if (err instanceof ApiError && err.status === 404) {
+      // got a 404 (archived/not found) or 410 (dispose tombstone) on
+      // reconnect. Drop the session from local state so the sidebar
+      // list / chat view clear immediately, matching the experience
+      // of a same-tab delete. Without this the deleted session
+      // lingered in the list with a stale "stream error" banner until
+      // the user manually refreshed.
+      if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
         set((s) => removeSessionFromState(s, sessionId));
         if (get().activeSessionId === undefined) {
           localStorage.removeItem(ACTIVE_SESSION_KEY);
