@@ -1101,6 +1101,16 @@ function Message({
     return <ToolResult message={message} />;
   }
 
+  // Forge lifecycle/status notifications are custom SDK messages, not
+  // user-authored chat. Render them as compact status cards so they don't
+  // look like the user asked the agent something.
+  if (message.role === "custom" && message.customType === "process-notify") {
+    return <LifecycleStatusCard message={message} kind="process" />;
+  }
+  if (message.role === "custom" && message.customType === "orchestration-notify") {
+    return <LifecycleStatusCard message={message} kind="worker" />;
+  }
+
   // Bash execution messages — surface via either the SDK's native
   // `role: "bashExecution"` BashExecutionMessage (the `!` chat input
   // path appends these via session.sessionManager.appendMessage) or
@@ -1124,6 +1134,90 @@ function Message({
       </pre>
     </details>
   );
+}
+
+function LifecycleStatusCard({
+  message,
+  kind,
+}: {
+  message: AgentMessageLike;
+  kind: "process" | "worker";
+}) {
+  const details =
+    typeof message.details === "object" && message.details !== null
+      ? (message.details as Record<string, unknown>)
+      : {};
+  const state = typeof details.state === "string" ? details.state : "status";
+  const isFailure =
+    state === "failure" ||
+    state === "failed" ||
+    state === "errored" ||
+    state === "killed" ||
+    state === "process_alert";
+  const isSuccess = state === "success" || state === "ended";
+  const title =
+    kind === "process" ? processStatusTitle(details, state) : workerStatusTitle(details, state);
+  const content = stringifyCustomContent(message.content);
+  const border = isFailure
+    ? "border-red-800/60 bg-red-950/20 light:border-red-300 light:bg-red-50"
+    : isSuccess
+      ? "border-emerald-800/60 bg-emerald-950/20 light:border-emerald-300 light:bg-emerald-50"
+      : "border-sky-800/60 bg-sky-950/20 light:border-sky-300 light:bg-sky-50";
+  const iconClass = isFailure
+    ? "text-red-300 light:text-red-700"
+    : isSuccess
+      ? "text-emerald-300 light:text-emerald-700"
+      : "text-sky-300 light:text-sky-700";
+  return (
+    <details className={`rounded-lg border ${border} px-3 py-2 text-xs`}>
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-neutral-200 light:text-neutral-800 [&::-webkit-details-marker]:hidden">
+        {isFailure ? (
+          <X size={14} className={iconClass} />
+        ) : (
+          <Check size={14} className={iconClass} />
+        )}
+        <span className="font-medium">{title}</span>
+        <span className="ml-auto rounded bg-neutral-900/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-neutral-400 light:bg-white/70 light:text-neutral-600">
+          {state}
+        </span>
+      </summary>
+      {content.length > 0 && (
+        <p className="mt-2 text-neutral-300 light:text-neutral-700">{content}</p>
+      )}
+      <pre className="mt-2 overflow-auto rounded bg-neutral-950/70 p-2 text-[10px] text-neutral-500 light:bg-white/70 light:text-neutral-600">
+        {JSON.stringify(details, null, 2)}
+      </pre>
+    </details>
+  );
+}
+
+function processStatusTitle(details: Record<string, unknown>, state: string): string {
+  const name = typeof details.name === "string" ? details.name : "process";
+  if (state === "success") return `Process completed: ${name}`;
+  if (state === "failure") return `Process failed: ${name}`;
+  if (state === "killed") return `Process killed: ${name}`;
+  return `Process update: ${name}`;
+}
+
+function workerStatusTitle(details: Record<string, unknown>, state: string): string {
+  const workerId = typeof details.workerId === "string" ? details.workerId : "worker";
+  if (state === "ended") return `Worker completed: ${workerId}`;
+  if (state === "failed" || state === "errored") return `Worker failed: ${workerId}`;
+  if (state === "deleted") return `Worker removed: ${workerId}`;
+  if (state === "awaiting_question") return `Worker needs input: ${workerId}`;
+  return `Worker update: ${workerId}`;
+}
+
+function stringifyCustomContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      const p = part as { type?: unknown; text?: unknown };
+      return p.type === "text" && typeof p.text === "string" ? p.text : "";
+    })
+    .filter((text) => text.length > 0)
+    .join("\n");
 }
 
 function shouldSuppressCodexProviderError(

@@ -69,7 +69,15 @@ interface OrchestrationStoreModule {
   readPendingInbox: (
     supervisorId: string,
     opts?: { markDelivered?: boolean },
-  ) => Promise<{ id: string; type: string; delivered: boolean }[]>;
+  ) => Promise<
+    {
+      id: string;
+      type: string;
+      delivered: boolean;
+      workerId: string;
+      data: Record<string, unknown>;
+    }[]
+  >;
   readAllInbox: (supervisorId: string) => Promise<
     {
       id: string;
@@ -90,6 +98,7 @@ interface InboxModule {
     type: string,
     data: Record<string, unknown>,
   ) => Promise<{ id: string } | undefined>;
+  shouldTriggerWorkerTurn: (type: string) => boolean;
 }
 
 interface ProcessInfoStub {
@@ -140,6 +149,28 @@ function assert(label: string, ok: boolean, detail?: string): void {
     failures += 1;
     console.log(`  FAIL  ${label}${detail ? ` — ${detail}` : ""}`);
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolveFn) => setTimeout(resolveFn, ms));
+}
+
+async function waitForMessage(
+  base: string,
+  sessionId: string,
+  predicate: (message: Record<string, unknown>) => boolean,
+): Promise<Record<string, unknown> | undefined> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const res = await jsend(base, "GET", `/api/v1/sessions/${sessionId}/messages`);
+    if (res.status === 200) {
+      const messages = (res.body as { messages?: Record<string, unknown>[] }).messages ?? [];
+      const match = messages.find(predicate);
+      if (match !== undefined) return match;
+    }
+    await sleep(50);
+  }
+  return undefined;
 }
 
 function pickFreePort(): Promise<number> {
@@ -333,27 +364,36 @@ async function main(): Promise<void> {
     questionCount: 1,
   });
   const pending = await store.readPendingInbox("sup-1");
-  assert("inbox enqueued 2 pending", pending.length === 2);
+  const history = await store.readAllInbox("sup-1");
+  assert("bridge records 2 history items", history.length === 2);
+  assert("bridge-created history is not pending", pending.length === 0);
+  assert(
+    "worker completion triggers supervisor turn",
+    inbox.shouldTriggerWorkerTurn("worker.ended"),
+  );
+  assert(
+    "worker deletion does NOT trigger supervisor turn",
+    !inbox.shouldTriggerWorkerTurn("worker.deleted"),
+  );
+  assert(
+    "worker ask_user triggers supervisor turn",
+    inbox.shouldTriggerWorkerTurn("worker.ask_user"),
+  );
+  assert(
+    "worker stopped-without-agent_end triggers supervisor turn",
+    inbox.shouldTriggerWorkerTurn("worker.execution_stopped_without_agent_end"),
+  );
   // Orphan worker — no enqueue
   await inbox.bridgeWorkerEvent("not-a-worker", "worker.ended", {});
-  const pendingAfterOrphan = await store.readPendingInbox("sup-1");
+  const historyAfterOrphan = await store.readAllInbox("sup-1");
   assert(
     "orphan worker event ignored",
-    pendingAfterOrphan.length === 2,
-    `got ${pendingAfterOrphan.length}`,
+    historyAfterOrphan.length === 2,
+    `got ${historyAfterOrphan.length}`,
   );
 
-  // Drain marks delivered
-  const drained = await store.readPendingInbox("sup-1", { markDelivered: true });
-  assert("drain returns 2", drained.length === 2);
-  const pendingAfterDrain = await store.readPendingInbox("sup-1");
-  assert("after drain no pending", pendingAfterDrain.length === 0);
-  const all = await store.readAllInbox("sup-1");
-  assert("history retains drained items", all.length === 2);
-
-  // pendingInboxCount + process alert noise reduction
   const cnt = await store.pendingInboxCount("sup-1");
-  assert("pendingInboxCount = 0 after drain", cnt === 0);
+  assert("pendingInboxCount = 0 for bridge history", cnt === 0);
   assert(
     "success process alerts are not supervisor-worthy",
     !eventBridge.shouldBridgeWorkerProcessAlert("success"),
@@ -401,12 +441,13 @@ async function main(): Promise<void> {
   // agent_end is delivered, ask_user_question wakes, and explicit
   // delete/kill while a turn is open emits a stopped-without-agent_end item.
   await store.registerWorker({ supervisorId: "sup-1", workerId: "w-state" });
+  const fullFinalMessage = "Done with the worker task.\n" + "x".repeat(900);
   const fakeSession = {
     messages: [
       {
         role: "assistant",
         stopReason: "end_turn",
-        content: [{ type: "text", text: "Done with the worker task." }],
+        content: [{ type: "text", text: fullFinalMessage }],
       },
     ],
   };
@@ -433,11 +474,20 @@ async function main(): Promise<void> {
     { sessionId: "w-state", session: fakeSession },
     { type: "agent_end" },
   );
-  let lifecycleItems = await store.readPendingInbox("sup-1");
+  let lifecycleItems = await store.readAllInbox("sup-1");
+  const endedItem = lifecycleItems.find(
+    (item) => item.workerId === "w-state" && item.type === "worker.ended",
+  );
   assert(
-    "final agent_end enqueues worker.ended",
-    lifecycleItems.length === 1 && lifecycleItems[0]?.type === "worker.ended",
+    "final agent_end records worker.ended history",
+    endedItem !== undefined,
     JSON.stringify(lifecycleItems),
+  );
+  assert(
+    "worker.ended payload includes full final assistant message",
+    endedItem?.data.assistantText === fullFinalMessage &&
+      !("assistantTextPreview" in (endedItem?.data ?? {})),
+    JSON.stringify(endedItem?.data),
   );
   const endedRec = await store.getWorkerRecord("w-state");
   assert(
@@ -452,10 +502,10 @@ async function main(): Promise<void> {
     [{ header: "Decision", question: "Which branch should I use?" }],
     "rq-state",
   );
-  lifecycleItems = await store.readPendingInbox("sup-1");
+  lifecycleItems = await store.readAllInbox("sup-1");
   assert(
-    "pending question enqueues worker.ask_user",
-    lifecycleItems.length === 1 && lifecycleItems[0]?.type === "worker.ask_user",
+    "pending question records worker.ask_user history",
+    lifecycleItems.some((item) => item.workerId === "w-state" && item.type === "worker.ask_user"),
     JSON.stringify(lifecycleItems),
   );
   assert(
@@ -469,12 +519,14 @@ async function main(): Promise<void> {
     { type: "agent_start" },
   );
   await eventBridge.bridgeWorkerDeleted("w-state", { wasLive: true, reason: "killed" });
-  lifecycleItems = await store.readPendingInbox("sup-1");
+  lifecycleItems = await store.readAllInbox("sup-1");
   assert(
-    "explicit stop without agent_end enqueues authoritative stop item",
-    lifecycleItems.length === 2 &&
-      lifecycleItems[0]?.type === "worker.execution_stopped_without_agent_end" &&
-      lifecycleItems[1]?.type === "worker.deleted",
+    "explicit stop without agent_end records authoritative stop item",
+    lifecycleItems.some(
+      (item) =>
+        item.workerId === "w-state" && item.type === "worker.execution_stopped_without_agent_end",
+    ) &&
+      lifecycleItems.some((item) => item.workerId === "w-state" && item.type === "worker.deleted"),
     JSON.stringify(lifecycleItems),
   );
   assert(
@@ -483,7 +535,7 @@ async function main(): Promise<void> {
       (await store.getWorkerRecord("w-state"))?.state === "deleted",
   );
 
-  // Clear inbox
+  // Clear worker-event history
   await store.clearInbox("sup-1");
   const allAfterClear = await store.readAllInbox("sup-1");
   assert("clearInbox wipes history", allAfterClear.length === 0);
@@ -491,10 +543,10 @@ async function main(): Promise<void> {
   // ===== Tool-result text carries the data (not just details) =====
   // The supervisor LLM reads `content[0].text`; `details` is for
   // downstream consumers (REST, tests) and DOES NOT reach the
-  // model's context. The previous bug shipped the messages/inbox/
-  // workers payloads in `details` only, so the orchestrator couldn't
-  // see worker state. Regression-test the serializer for all three
-  // read tools.
+  // model's context. The previous bug shipped the worker payloads in
+  // `details` only, so the orchestrator couldn't see worker state.
+  // Regression-test the remaining agent-facing read tools and verify
+  // the old read_inbox tool is gone.
   console.log("\n[test-orchestration] tool-result text serialization");
   const tools = (await import(
     resolve(repoRoot, "packages/server/dist/orchestration/tools.js")
@@ -507,7 +559,7 @@ async function main(): Promise<void> {
   await inbox.bridgeWorkerEvent("ser-w1", "worker.ended", {
     stopReason: "end_turn",
     errorMessage: null,
-    assistantTextPreview: "Implemented the /auth route and added unit tests.",
+    assistantText: "Implemented the /auth route and added unit tests.",
   });
   await inbox.bridgeWorkerEvent("ser-w2", "worker.ask_user", {
     requestId: "rq1",
@@ -520,7 +572,7 @@ async function main(): Promise<void> {
   const listTool = serTools.find((t) => t.name === "orchestrate_list_workers");
   const inboxTool = serTools.find((t) => t.name === "orchestrate_read_inbox");
   assert("createOrchestrationTools returns list_workers", listTool !== undefined);
-  assert("createOrchestrationTools returns read_inbox", inboxTool !== undefined);
+  assert("createOrchestrationTools omits read_inbox", inboxTool === undefined);
 
   if (listTool !== undefined) {
     const res = await listTool.execute("call-1", {});
@@ -536,26 +588,6 @@ async function main(): Promise<void> {
       `got: ${text.slice(0, 300)}`,
     );
   }
-  if (inboxTool !== undefined) {
-    const res = await inboxTool.execute("call-2", {});
-    const text = res.content[0]?.text ?? "";
-    assert(
-      "read_inbox content text includes ended assistantText preview",
-      text.includes("Implemented the /auth route"),
-      `got: ${text.slice(0, 300)}`,
-    );
-    assert(
-      "read_inbox content text includes ask_user question preview",
-      text.includes("bcrypt") || text.includes("Auth method"),
-      `got: ${text.slice(0, 300)}`,
-    );
-    assert(
-      "read_inbox content text tags worker ids",
-      text.includes("ser-w1") && text.includes("ser-w2"),
-      `got: ${text.slice(0, 300)}`,
-    );
-  }
-
   // Clean up store state for the REST tests
   await store.disableSupervisor("sup-1");
   await store.disableSupervisor("ser-sup");
@@ -869,6 +901,20 @@ async function main(): Promise<void> {
     assert(
       "kill worker records stopped-without-agent_end reason=killed",
       killStopItem?.data.reason === "killed",
+      JSON.stringify(killInboxItems),
+    );
+    const killNotify = await waitForMessage(onSrv.base, realSid, (message) => {
+      const details = message.details as { workerId?: unknown; state?: unknown } | undefined;
+      return (
+        message.role === "custom" &&
+        message.customType === "orchestration-notify" &&
+        details?.workerId === realWorkerId &&
+        details.state === "failed"
+      );
+    });
+    assert(
+      "worker failure posts orchestration-notify custom card",
+      killNotify !== undefined,
       JSON.stringify(killInboxItems),
     );
     const afterKillList = await jsend(
@@ -1213,11 +1259,11 @@ async function main(): Promise<void> {
       inboxRes.status === 200 && (inboxRes.body as { items: unknown[] }).items.length === 2,
     );
 
-    // pendingInbox in the link summary
+    // Worker-event history no longer creates pending model work.
     const linkSum = await jsend(onSrv.base, "GET", "/api/v1/orchestration/sessions/rest-sup");
     assert(
-      "pendingInbox reflected in link",
-      (linkSum.body as { pendingInbox: number }).pendingInbox === 2,
+      "pendingInbox stays 0 for pushed worker-event history",
+      (linkSum.body as { pendingInbox: number }).pendingInbox === 0,
     );
 
     // Worker side: GET on rest-w1 reports worker role
@@ -1254,7 +1300,7 @@ async function main(): Promise<void> {
         (detMissing.body as { error: string }).error === "worker_not_linked",
     );
 
-    // Clear inbox
+    // Clear worker-event history
     const clr = await jsend(
       onSrv.base,
       "POST",

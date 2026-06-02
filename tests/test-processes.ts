@@ -75,6 +75,10 @@ interface RegistryModule {
   ) => Promise<{
     sessionId: string;
     session: {
+      sendCustomMessage: (
+        message: { customType: string; content: unknown; display: boolean; details?: unknown },
+        options?: { triggerTurn?: boolean; deliverAs?: string },
+      ) => Promise<void>;
       getToolDefinition: (name: string) =>
         | {
             execute: (
@@ -92,6 +96,21 @@ interface RegistryModule {
     };
   }>;
   disposeSession: (id: string) => Promise<boolean>;
+}
+
+interface LifecycleModule {
+  sendCustomLifecycleMessage: (
+    session: {
+      isStreaming: boolean;
+      messages: readonly unknown[];
+      sendCustomMessage: (
+        message: { customType: string; content: unknown; display: boolean; details?: unknown },
+        options?: { triggerTurn?: boolean; deliverAs?: string },
+      ) => Promise<void>;
+    },
+    message: { customType: string; content: unknown; display: boolean; details?: unknown },
+    options: { triggerTurn: boolean },
+  ) => void;
 }
 
 interface ManagerModule {
@@ -238,6 +257,58 @@ async function main(): Promise<void> {
   const managerMod = (await import(
     resolve(repoRoot, "packages/server/dist/processes/manager.js")
   )) as unknown as ManagerModule;
+  const lifecycleMod = (await import(
+    resolve(repoRoot, "packages/server/dist/lifecycle-notifications.js")
+  )) as unknown as LifecycleModule;
+
+  {
+    const sent: { deliverAs?: string; triggerTurn?: boolean }[] = [];
+    const fakeSession = {
+      isStreaming: true,
+      messages: [],
+      async sendCustomMessage(
+        _message: { customType: string; content: unknown; display: boolean; details?: unknown },
+        options?: { triggerTurn?: boolean; deliverAs?: string },
+      ) {
+        const captured: { deliverAs?: string; triggerTurn?: boolean } = {};
+        if (options?.deliverAs !== undefined) captured.deliverAs = options.deliverAs;
+        if (options?.triggerTurn !== undefined) captured.triggerTurn = options.triggerTurn;
+        sent.push(captured);
+      },
+    };
+    lifecycleMod.sendCustomLifecycleMessage(
+      fakeSession,
+      { customType: "process-notify", content: "ok", display: true },
+      { triggerTurn: false },
+    );
+    assert(
+      "non-triggering lifecycle message steers active run instead of followUp",
+      sent.length === 1 && sent[0]?.triggerTurn === false && sent[0]?.deliverAs === "steer",
+      JSON.stringify(sent),
+    );
+    lifecycleMod.sendCustomLifecycleMessage(
+      fakeSession,
+      { customType: "process-notify", content: "fail", display: true },
+      { triggerTurn: true },
+    );
+    assert(
+      "triggering lifecycle message steers active run",
+      sent[1]?.triggerTurn === true && sent[1]?.deliverAs === "steer",
+      JSON.stringify(sent),
+    );
+
+    fakeSession.isStreaming = false;
+    lifecycleMod.sendCustomLifecycleMessage(
+      fakeSession,
+      { customType: "process-notify", content: "idle fail", display: true },
+      { triggerTurn: true },
+    );
+    assert(
+      "triggering lifecycle message starts turn when idle",
+      sent[2]?.triggerTurn === true && sent[2]?.deliverAs === undefined,
+      JSON.stringify(sent),
+    );
+  }
 
   const fastify = await serverModule.buildServer();
   const base = await fastify.listen({ port: 0, host: "127.0.0.1" });
@@ -537,17 +608,32 @@ async function main(): Promise<void> {
     // -------- agent alerts on process completion --------
     // alertOnSuccess, alertOnFailure, alertOnKill fire `process_alert`
     // events on the manager; the SSE bridge translates those into
-    // session.sendUserMessage so the agent gets a turn to react.
-    // Here we just subscribe to the manager directly and assert the
-    // events come out in the expected shape — the
-    // sendUserMessage hand-off is exercised end-to-end by manual
-    // smoke + the live-prompt branch in CI when enabled.
+    // custom status messages. Clean exit cards do not trigger a parent
+    // turn; non-zero failures do.
     {
       const alerts: {
         reason: string;
         id: string;
         exitCode: number | null;
       }[] = [];
+      const customMessages: {
+        customType: string;
+        details?: { processId?: string; state?: string };
+        triggerTurn?: boolean;
+      }[] = [];
+      const originalSendCustom = live.session.sendCustomMessage;
+      live.session.sendCustomMessage = async (message, options) => {
+        const captured: {
+          customType: string;
+          details?: { processId?: string; state?: string };
+          triggerTurn?: boolean;
+        } = { customType: message.customType };
+        if (message.details !== undefined) {
+          captured.details = message.details as { processId?: string; state?: string };
+        }
+        if (options?.triggerTurn !== undefined) captured.triggerTurn = options.triggerTurn;
+        customMessages.push(captured);
+      };
       const unsub = managerMod.processManager.subscribe((e) => {
         if (e.type === "process_alert") {
           const ev = e as unknown as {
@@ -584,6 +670,20 @@ async function main(): Promise<void> {
           "  carries non-zero exitCode",
           failAlert !== undefined && failAlert.exitCode !== null && failAlert.exitCode !== 0,
         );
+        const okCustom = customMessages.find((m) => m.details?.processId === okId);
+        const failCustom = customMessages.find((m) => m.details?.processId === failId);
+        assert(
+          "clean process alert becomes process-notify custom card",
+          okCustom?.customType === "process-notify" && okCustom.details?.state === "success",
+          JSON.stringify(customMessages),
+        );
+        assert("clean process alert does NOT trigger turn", okCustom?.triggerTurn === false);
+        assert(
+          "failed process alert becomes process-notify custom card",
+          failCustom?.customType === "process-notify" && failCustom.details?.state === "failure",
+          JSON.stringify(customMessages),
+        );
+        assert("failed process alert DOES trigger turn", failCustom?.triggerTurn === true);
         // killing via the tool should NOT alert (the agent did it on
         // purpose; would be redundant noise)
         const k = await call({
@@ -599,6 +699,7 @@ async function main(): Promise<void> {
         assert("tool-initiated kill does NOT alert", killAlert === undefined);
       } finally {
         unsub();
+        live.session.sendCustomMessage = originalSendCustom;
       }
     }
 

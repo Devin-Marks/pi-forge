@@ -299,7 +299,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       schema: {
         description:
           "Remove supervisor mode. Detaches every linked worker (they survive " +
-          "as standalone sessions), clears the supervisor's inbox, AND " +
+          "as standalone sessions), clears the supervisor's worker-event history, AND " +
           "rebuilds the supervisor's live agent session in-place so the " +
           "orchestrate_* tools disappear immediately. Same rebuild rationale " +
           "as /enable — the SDK's tool list is fixed at agent-session " +
@@ -409,7 +409,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     {
       schema: {
         description:
-          "Return the supervisor's inbox history — every event the bridge " +
+          "Return the supervisor's worker-event history — every event the bridge " +
           "captured (delivered + pending), newest first. Capped at 200 items " +
           "per supervisor via FIFO eviction.",
         tags: ["orchestration"],
@@ -440,7 +440,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     "/orchestration/sessions/:id/inbox/clear",
     {
       schema: {
-        description: "Wipe the supervisor's inbox (history + pending).",
+        description: "Wipe the supervisor's worker-event history (history + pending).",
         tags: ["orchestration"],
         params: {
           type: "object",

@@ -26,7 +26,7 @@ interface Props {
  * controls:
  *
  *   - standalone: button to enable supervisor mode
- *   - supervisor: worker list + inbox history + disable button
+ *   - supervisor: worker list + event history + disable button
  *   - worker:     supervisor back-link
  *
  * Side effects (enable/disable/kill/detach) reload the link state
@@ -298,7 +298,7 @@ function SupervisorControls({
   };
 
   const onClearInbox = async (): Promise<void> => {
-    if (!confirm("Clear inbox history?")) return;
+    if (!confirm("Clear worker event history?")) return;
     setBusy(true);
     setError(undefined);
     try {
@@ -311,18 +311,11 @@ function SupervisorControls({
     }
   };
 
-  const pendingCount = link.pendingInbox ?? 0;
-
   return (
     <div className="mt-2 space-y-2">
       <div className="flex items-center justify-between">
         <div className="text-xs text-zinc-600 dark:text-zinc-400">
           {workers.length} worker{workers.length === 1 ? "" : "s"}
-          {pendingCount > 0 ? (
-            <span className="ml-2 rounded bg-amber-200 dark:bg-amber-700/50 text-amber-900 dark:text-amber-100 px-1.5 py-0.5">
-              {pendingCount} pending inbox
-            </span>
-          ) : null}
         </div>
         <button
           type="button"
@@ -399,10 +392,10 @@ function SupervisorControls({
 
       <details open={showInbox} onToggle={(e) => setShowInbox(e.currentTarget.open)}>
         <summary className="cursor-pointer text-xs text-zinc-600 dark:text-zinc-400 select-none">
-          Inbox history ({inbox.length}) {pendingCount > 0 && `— ${pendingCount} pending`}
+          Worker event history ({inbox.length})
         </summary>
         {inbox.length === 0 ? (
-          <p className="text-xs italic text-zinc-500 dark:text-zinc-400 mt-1">No inbox items.</p>
+          <p className="text-xs italic text-zinc-500 dark:text-zinc-400 mt-1">No worker events.</p>
         ) : (
           <div className="mt-1 space-y-1">
             <ul className="divide-y divide-zinc-200 dark:divide-zinc-800 rounded border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 max-h-48 overflow-auto">
@@ -418,7 +411,7 @@ function SupervisorControls({
               disabled={busy}
               className="text-[11px] text-zinc-500 dark:text-zinc-400 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50"
             >
-              Clear inbox
+              Clear event history
             </button>
           </div>
         )}
