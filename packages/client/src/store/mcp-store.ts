@@ -9,6 +9,22 @@ import {
 
 const POLL_INTERVAL_MS = 30_000;
 
+function stableJson(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function sameSettings(a: McpSettingsResponse | undefined, b: McpSettingsResponse): boolean {
+  return a?.enabled === b.enabled && a.connected === b.connected && a.total === b.total;
+}
+
+function sameProjectData(a: ProjectScopeData | undefined, b: ProjectScopeData): boolean {
+  return (
+    a !== undefined &&
+    stableJson(a.status) === stableJson(b.status) &&
+    stableJson(a.stdioTrust) === stableJson(b.stdioTrust)
+  );
+}
+
 /**
  * Module-level stable empty array. Zustand selectors compare return
  * values by reference; returning a fresh `[]` from a `useMcpStore(s
@@ -49,7 +65,10 @@ export const EMPTY_STATUS: McpServerStatus[] = [];
  * Lifecycle: `startPolling()` is idempotent — called once from
  * App.tsx after auth. The interval is cleared on `stopPolling()`
  * (logout / unmount). Polling skips when `document.hidden` is true
- * so a backgrounded tab doesn't keep the pi-forge warm.
+ * so a backgrounded tab doesn't keep the pi-forge warm. Each tick
+ * refreshes the header summary plus any project status slices that
+ * a consumer has already loaded; unchanged payloads keep their
+ * existing references to avoid UI churn.
  */
 
 interface ProjectScopeData {
@@ -100,11 +119,22 @@ export const useMcpStore = create<McpState>((set, get) => ({
 
   startPolling: () => {
     if (get().pollHandle !== undefined) return;
+    let inFlight = false;
     const tick = (): void => {
       // Skip when the tab is in the background — don't burn cycles
       // (or our 30-call/min API budget) keeping a hidden tab warm.
       if (typeof document !== "undefined" && document.hidden) return;
-      void get().refreshSettings();
+      if (inFlight) return;
+      inFlight = true;
+      void (async () => {
+        try {
+          const projectIds = Object.keys(get().byProject);
+          await get().refreshSettings();
+          await Promise.all(projectIds.map((pid) => get().refreshProject(pid)));
+        } finally {
+          inFlight = false;
+        }
+      })();
     };
     void tick();
     const handle = window.setInterval(tick, POLL_INTERVAL_MS);
@@ -122,7 +152,9 @@ export const useMcpStore = create<McpState>((set, get) => ({
   refreshSettings: async () => {
     try {
       const r = await api.getMcpSettings();
-      set({ settings: r, error: undefined });
+      set((state) =>
+        sameSettings(state.settings, r) ? { error: undefined } : { settings: r, error: undefined },
+      );
     } catch (err) {
       // Network blips / 401 leave the prior `settings` value in place
       // so the badge doesn't flicker red on a transient error. The
@@ -142,14 +174,18 @@ export const useMcpStore = create<McpState>((set, get) => ({
       // so the Settings tab works without a project selected.
       try {
         const list = await api.listMcpServers();
-        set({ globalServers: list.servers, error: undefined });
+        set((state) =>
+          stableJson(state.globalServers) === stableJson(list.servers)
+            ? { error: undefined }
+            : { globalServers: list.servers, error: undefined },
+        );
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) return;
         set({ error: describeError(err) });
       }
       return;
     }
-    set({ loading: true });
+    if (get().byProject[projectId] === undefined) set({ loading: true });
     try {
       const list = await api.listMcpServers(projectId);
       set((state) => {
@@ -158,11 +194,13 @@ export const useMcpStore = create<McpState>((set, get) => ({
           loadedAt: Date.now(),
         };
         if (list.stdioTrust !== undefined) entry.stdioTrust = list.stdioTrust;
+        const sameGlobal = stableJson(state.globalServers) === stableJson(list.servers);
+        const sameProject = sameProjectData(state.byProject[projectId], entry);
         return {
           loading: false,
           error: undefined,
-          globalServers: list.servers,
-          byProject: { ...state.byProject, [projectId]: entry },
+          ...(sameGlobal ? {} : { globalServers: list.servers }),
+          ...(sameProject ? {} : { byProject: { ...state.byProject, [projectId]: entry } }),
         };
       });
     } catch (err) {
