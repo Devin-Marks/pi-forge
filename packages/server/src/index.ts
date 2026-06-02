@@ -33,6 +33,7 @@ import { searchRoutes } from "./routes/search.js";
 import { terminalRoutes } from "./routes/terminal.js";
 import { disposeAll as disposeAllMcp, loadGlobal as loadGlobalMcp } from "./mcp/manager.js";
 import { initAskUserQuestionFanout, initProcessesFanout, initTodoFanout } from "./sse-bridge.js";
+import { startExternalSubagentsWatcher } from "./subagents-external.js";
 import { webhookRoutes } from "./routes/webhooks.js";
 import { initAskUserQuestionWebhookBridge, initProcessesWebhookBridge } from "./webhooks/init.js";
 import { orchestrationRoutes } from "./routes/orchestration.js";
@@ -500,6 +501,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   initAskUserQuestionFanout();
   initTodoFanout();
   initProcessesFanout();
+  startExternalSubagentsWatcher();
 
   // Webhook bridges for the same forge-native event channels. Each
   // subscribes alongside the SSE fanout so webhooks see the same

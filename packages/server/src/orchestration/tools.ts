@@ -2,8 +2,8 @@
  * Agent-facing tool surface for supervisor sessions.
  *
  * Seven `orchestrate_*` tools, registered onto a session ONLY when
- * that session has supervisor mode enabled AND the instance-level
- * `ORCHESTRATION_ENABLED` flag is on AND MINIMAL_UI is off. Wired
+ * that session has supervisor mode enabled AND instance-level
+ * orchestration is not disabled AND MINIMAL_UI is off. Wired
  * through `createAgentSession({ customTools })` in session-registry.
  *
  * Topology is hub-and-spoke by tool surface: workers don't get

@@ -103,7 +103,10 @@ function vAuthStatus(value: unknown, status: number): AuthStatusResponse {
   if (!isObject(value) || typeof value.authEnabled !== "boolean") {
     fail(status, "expected { authEnabled: boolean }");
   }
-  return { authEnabled: value.authEnabled };
+  return {
+    authEnabled: value.authEnabled,
+    ldapEnabled: typeof value.ldapEnabled === "boolean" ? value.ldapEnabled : false,
+  };
 }
 
 function vLogin(value: unknown, status: number): LoginResponse {
@@ -143,8 +146,8 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
   const version = typeof value.version === "string" ? value.version : "unknown";
   const passwordAuthEnabled =
     typeof value.passwordAuthEnabled === "boolean" ? value.passwordAuthEnabled : true;
-  // Default to false on older servers — orchestration is gated by
-  // an explicit env flag, so absence === disabled.
+  // Default to false on older servers that predate the field — those
+  // builds kept orchestration behind an explicit opt-in flag.
   const orchestrationEnabled =
     typeof value.orchestrationEnabled === "boolean" ? value.orchestrationEnabled : false;
   return {
@@ -267,6 +270,16 @@ function vUnifiedSession(value: unknown, status: number): UnifiedSession {
   if (typeof value.name === "string") out.name = value.name;
   if (typeof value.parentSessionId === "string") out.parentSessionId = value.parentSessionId;
   if (typeof value.runId === "string") out.runId = value.runId;
+  if (typeof value.isExternalLive === "boolean") out.isExternalLive = value.isExternalLive;
+  if (
+    value.externalState === "queued" ||
+    value.externalState === "running" ||
+    value.externalState === "complete" ||
+    value.externalState === "failed" ||
+    value.externalState === "paused"
+  ) {
+    out.externalState = value.externalState;
+  }
   if (typeof value.path === "string") out.path = value.path;
   return out;
 }
@@ -1513,10 +1526,10 @@ function gitQuery(
 
 export const api = {
   authStatus: () => request("/api/v1/auth/status", vAuthStatus, { skipAuth: true }),
-  login: (password: string) =>
+  login: (password: string, username?: string) =>
     request("/api/v1/auth/login", vLogin, {
       method: "POST",
-      body: { password },
+      body: username === undefined ? { password } : { username, password },
       skipAuth: true,
     }),
   changePassword: (currentPassword: string, newPassword: string) =>

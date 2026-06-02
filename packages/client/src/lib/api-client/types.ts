@@ -25,6 +25,7 @@ export class ApiError extends Error {
 
 export interface AuthStatusResponse {
   authEnabled: boolean;
+  ldapEnabled: boolean;
 }
 
 export interface LoginResponse {
@@ -272,10 +273,10 @@ export interface UiConfigResponse {
    */
   passwordAuthEnabled: boolean;
   /**
-   * True when the server has `ORCHESTRATION_ENABLED=true` AND is
-   * NOT in MINIMAL_UI mode. Controls whether the supervisor-mode
-   * toggle and Workers panel render at all. Defaults to false on
-   * older servers (forward-compatible).
+   * True when the server has orchestration available (enabled by
+   * default unless disabled by config) AND is NOT in MINIMAL_UI mode.
+   * Controls whether the supervisor-mode toggle and Workers panel
+   * render at all. Defaults to false on older servers (forward-compatible).
    */
   orchestrationEnabled: boolean;
 }
@@ -299,6 +300,10 @@ export interface UnifiedSession {
   parentSessionId?: string;
   /** pi-subagents run id when this is a child session. */
   runId?: string;
+  /** True when pi-subagents status.json says this child is queued/running externally. */
+  isExternalLive?: boolean;
+  /** Authoritative pi-subagents async status state when known. */
+  externalState?: "queued" | "running" | "complete" | "failed" | "paused";
   /**
    * Absolute disk path to the session JSONL. Set for disk-discovered
    * sessions; undefined for live-only sessions that haven't flushed

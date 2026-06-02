@@ -124,10 +124,9 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
               // deployments report false; the Settings → General
               // password change section hides in that case.
               passwordAuthEnabled: { type: "boolean" },
-              // True iff session orchestration is reachable. Off
-              // when ORCHESTRATION_ENABLED is unset OR MINIMAL_UI
-              // is true (orchestration is hard-disabled under
-              // MINIMAL_UI regardless of the env flag).
+              // True iff session orchestration is reachable. Enabled
+              // by default, but false when disabled by instance config
+              // OR when MINIMAL_UI is true (MINIMAL_UI is a hard gate).
               orchestrationEnabled: { type: "boolean" },
             },
           },

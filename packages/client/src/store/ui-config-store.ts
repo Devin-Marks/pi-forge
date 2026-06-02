@@ -31,9 +31,9 @@ interface UiConfigState {
   passwordAuthEnabled: boolean;
   /**
    * True when the server has session orchestration available
-   * (ORCHESTRATION_ENABLED set AND not MINIMAL_UI). Default false —
-   * orchestration is an opt-in feature; rendering its UI on a
-   * server that doesn't have it on would be confusing.
+   * (enabled by default unless disabled by config, and not MINIMAL_UI).
+   * Default false until /ui-config loads so older servers that do not
+   * expose the field keep the old hidden posture.
    */
   orchestrationEnabled: boolean;
   /** Last load error (sticky until a retry succeeds), for diagnostics. */

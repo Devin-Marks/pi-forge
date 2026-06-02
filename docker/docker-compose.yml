@@ -43,9 +43,12 @@ services:
       - TRUST_PROXY=${TRUST_PROXY:-false}
       - CORS_ORIGIN=${CORS_ORIGIN:-}
       - MINIMAL_UI=${MINIMAL_UI:-false}
-      # Session orchestration — off by default. Hard-disabled under
-      # MINIMAL_UI regardless of this flag. See docs/orchestration.md.
-      - ORCHESTRATION_ENABLED=${ORCHESTRATION_ENABLED:-false}
+      # Session orchestration — enabled by default. Hard-disabled under
+      # MINIMAL_UI; set ORCHESTRATION_DISABLED=true to remove the surface.
+      # ORCHESTRATION_ENABLED=false remains a compatibility disable switch.
+      # See docs/orchestration.md.
+      - ORCHESTRATION_DISABLED=${ORCHESTRATION_DISABLED:-false}
+      - ORCHESTRATION_ENABLED=${ORCHESTRATION_ENABLED:-}
       - ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR=${ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR:-8}
     # Hardening (mirrors the k8s manifests). Not read-only because the
     # agent's bash tool needs to write to /home/pi/.npm, /tmp, etc.

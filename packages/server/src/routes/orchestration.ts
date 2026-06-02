@@ -52,7 +52,7 @@ function gate(reply: FastifyReply): FastifyReply | undefined {
   const message =
     reason === "minimal_ui_disabled"
       ? "Session orchestration is disabled under MINIMAL_UI."
-      : "Session orchestration is disabled. Set ORCHESTRATION_ENABLED=true to enable.";
+      : "Session orchestration is disabled by instance configuration.";
   return reply.code(403).send({ error: reason, message });
 }
 

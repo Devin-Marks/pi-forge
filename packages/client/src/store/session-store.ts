@@ -164,11 +164,20 @@ function revokeOptimisticBlobUrls(messages: readonly AgentMessageLike[]): void {
  * Revokes blob URLs in the soon-to-be-discarded messages so optimistic
  * image attachments that never got refetched don't leak.
  */
-function findProjectIdForSession(state: SessionState, sessionId: string): string | undefined {
-  for (const [pid, list] of Object.entries(state.byProject)) {
-    if (list.some((u) => u.sessionId === sessionId)) return pid;
+function findSessionInState(state: SessionState, sessionId: string): UnifiedSession | undefined {
+  for (const list of Object.values(state.byProject)) {
+    const match = list.find((u) => u.sessionId === sessionId);
+    if (match !== undefined) return match;
   }
   return undefined;
+}
+
+function findProjectIdForSession(state: SessionState, sessionId: string): string | undefined {
+  return findSessionInState(state, sessionId)?.projectId;
+}
+
+function readOnlyExternalBanner(state?: string): string {
+  return `Read-only: pi-subagents child is ${state ?? "running"} externally`;
 }
 
 function removeSessionFromState(current: SessionState, sessionId: string): Partial<SessionState> {
@@ -504,6 +513,38 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   openStream: (sessionId) => {
+    const row = findSessionInState(get(), sessionId);
+    const loadReadOnly = (state?: string): void => {
+      void api
+        .getMessages(sessionId)
+        .then(({ messages }) => {
+          set((s) => ({
+            messagesBySession: { ...s.messagesBySession, [sessionId]: messages },
+            streamingBySession: { ...s.streamingBySession, [sessionId]: false },
+            bannerBySession: {
+              ...s.bannerBySession,
+              [sessionId]: readOnlyExternalBanner(state),
+            },
+          }));
+        })
+        .catch((err: unknown) => {
+          const code = err instanceof ApiError ? err.code : (err as Error).message;
+          set((s) => ({
+            bannerBySession: {
+              ...s.bannerBySession,
+              [sessionId]: `read-only snapshot failed: ${code}`,
+            },
+          }));
+        });
+    };
+    if (row?.isExternalLive === true) {
+      set((s) => ({
+        bannerBySession: {
+          ...s.bannerBySession,
+          [sessionId]: readOnlyExternalBanner(row.externalState),
+        },
+      }));
+    }
     const existing = controllers.get(sessionId);
     if (existing !== undefined) return; // already open
     const ctrl = new AbortController();
@@ -552,6 +593,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // experience of a same-tab delete. Without this the deleted
       // session lingered in the list with a stale "stream error"
       // banner until the user manually refreshed.
+      if (
+        err instanceof ApiError &&
+        err.status === 409 &&
+        err.code === "external_subagent_active"
+      ) {
+        onTerminate();
+        loadReadOnly("running");
+        void Promise.all(
+          Object.keys(get().byProject).map((projectId) => get().loadSessionsForProject(projectId)),
+        );
+        return;
+      }
       if (err instanceof ApiError && err.status === 404) {
         set((s) => removeSessionFromState(s, sessionId));
         if (get().activeSessionId === undefined) {
@@ -745,7 +798,15 @@ function applyEvent(
         ...s.streamingBySession,
         [sessionId]: event.isStreaming ?? false,
       },
-      bannerBySession: { ...s.bannerBySession, [sessionId]: undefined },
+      bannerBySession: {
+        ...s.bannerBySession,
+        [sessionId]:
+          event.readOnly === true || event.isExternalLive === true
+            ? readOnlyExternalBanner(
+                typeof event.externalState === "string" ? event.externalState : undefined,
+              )
+            : undefined,
+      },
       activeToolBySession: { ...s.activeToolBySession, [sessionId]: undefined },
     }));
     return;

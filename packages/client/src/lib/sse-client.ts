@@ -18,8 +18,8 @@ import { clearStoredToken, getStoredToken } from "./auth-client";
  *     suppresses reconnect.
  *
  * Reconnect policy:
- *   - 401 / 404 are treated as terminal (auth gone, session deleted) — do
- *     not retry; reject immediately.
+ *   - 401 / 404 / 409 are treated as terminal (auth gone, session deleted,
+ *     or externally active read-only subagent) — do not retry; reject immediately.
  *   - Any other non-2xx, network-level error, or post-200 stream EOF
  *     triggers a backoff (1s → 2s → 4s → 8s → 16s, capped at 30s).
  *     `onReconnect` is invoked between attempts so the UI can show a
@@ -45,7 +45,7 @@ export interface StreamSSEOptions<T> {
   maxReconnects?: number;
 }
 
-const TERMINAL_STATUS = new Set([401, 404]);
+const TERMINAL_STATUS = new Set([401, 404, 409]);
 const MAX_BACKOFF_MS = 30_000;
 
 function backoffDelay(attempt: number): number {
@@ -103,7 +103,14 @@ async function runOneAttempt<T extends { type: string }>(
   }
 
   if (!res.ok || res.body === null) {
-    throw new ApiError(res.status, "stream_open_failed");
+    let code = "stream_open_failed";
+    try {
+      const body = (await res.clone().json()) as { error?: unknown };
+      if (typeof body.error === "string") code = body.error;
+    } catch {
+      // Non-JSON error body: keep generic stream_open_failed.
+    }
+    throw new ApiError(res.status, code);
   }
 
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();

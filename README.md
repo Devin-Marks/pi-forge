@@ -104,7 +104,7 @@ For source builds and a development setup see
   separately): rich tool card for parent calls, child sessions in the project
   sidebar with cascade-delete on parent removal.
 - **Session orchestration** — opt-in supervisor mode for a session
-  (`ORCHESTRATION_ENABLED=true`, then toggle per-session): adds an
+  (available by default; toggle per-session): adds an
   `orchestrate_*` tool group so the agent can spawn, observe, message,
   interrupt, and kill worker sessions in the same project. Worker
   events stream back into the supervisor's inbox; the supervisor's

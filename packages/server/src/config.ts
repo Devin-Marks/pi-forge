@@ -31,12 +31,43 @@ function readStringList(key: string): string[] {
     .filter((s) => s.length > 0);
 }
 
+function readSecretFile(path: string, envKey: string): string {
+  try {
+    const value = readFileSync(path, "utf8").trim();
+    if (value.length === 0) {
+      throw new Error("file is empty");
+    }
+    return value;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`config: failed to read ${envKey} from file ${path}: ${message}`, {
+      cause: err,
+    });
+  }
+}
+
 function readBool(key: string, fallback: boolean): boolean {
   const v = readEnv(key)?.toLowerCase();
   if (v === undefined) return fallback;
   if (["1", "true", "yes", "on"].includes(v)) return true;
   if (["0", "false", "no", "off"].includes(v)) return false;
   throw new Error(`config: ${key} must be a boolean-ish value (got ${v})`);
+}
+
+function readBoundedInt(key: string, fallback: number, min: number, max: number): number {
+  const v = readEnv(key);
+  if (v === undefined) return fallback;
+  const n = Number.parseInt(v, 10);
+  if (!Number.isFinite(n) || n < min || n > max) return fallback;
+  return n;
+}
+
+function readOrchestrationEnabled(): boolean {
+  if (readBool("ORCHESTRATION_DISABLED", false)) return false;
+  // Backward compatibility: the old opt-in flag now only acts as a
+  // disable switch when explicitly false. `true` and unset both keep
+  // the new default (enabled) behavior.
+  return readBool("ORCHESTRATION_ENABLED", true);
 }
 
 /**
@@ -95,10 +126,18 @@ const CLIENT_DIST_PATH = resolve(
     join(dirname(fileURLToPath(import.meta.url)), "..", "..", "client", "dist"),
 );
 
-const UI_PASSWORD = readEnv("UI_PASSWORD");
+const UI_PASSWORD_FILE = readEnv("UI_PASSWORD_FILE");
+const UI_PASSWORD = UI_PASSWORD_FILE
+  ? readSecretFile(UI_PASSWORD_FILE, "UI_PASSWORD_FILE")
+  : readEnv("UI_PASSWORD");
 const API_KEY = readEnv("API_KEY");
 const CORS_ORIGIN = readEnv("CORS_ORIGIN");
 const PASSWORD_HASH_FILE = join(FORGE_DATA_DIR, "password-hash");
+const LDAP_ENABLED = readBool("LDAP_ENABLED", false);
+const LDAP_BIND_PASSWORD_FILE = readEnv("LDAP_BIND_PASSWORD_FILE");
+const LDAP_BIND_PASSWORD = LDAP_BIND_PASSWORD_FILE
+  ? readSecretFile(LDAP_BIND_PASSWORD_FILE, "LDAP_BIND_PASSWORD_FILE")
+  : readEnv("LDAP_BIND_PASSWORD");
 
 /**
  * Load a JWT signing key from `${FORGE_DATA_DIR}/jwt-secret`, or
@@ -108,8 +147,8 @@ const PASSWORD_HASH_FILE = join(FORGE_DATA_DIR, "password-hash");
  * valid. Setting `JWT_SECRET` env explicitly skips this entirely.
  *
  * Invoked when ANY browser-auth credential is in play: an env-supplied
- * `UI_PASSWORD`, or a previously-persisted password-hash file (the
- * latter survives env rotation, the same way jwt-secret does).
+ * `UI_PASSWORD`, LDAP login, or a previously-persisted password-hash
+ * file (the latter survives env rotation, the same way jwt-secret does).
  * Without this, a deployment that booted with `UI_PASSWORD` once and
  * then dropped it after the user changed their password would be left
  * with a hash on disk but no signing key — login would 500 trying to
@@ -138,7 +177,7 @@ function loadOrGenerateJwtSecret(dataDir: string): string {
 
 const JWT_SECRET =
   readEnv("JWT_SECRET") ??
-  (UI_PASSWORD !== undefined || existsSync(PASSWORD_HASH_FILE)
+  (UI_PASSWORD !== undefined || LDAP_ENABLED || existsSync(PASSWORD_HASH_FILE)
     ? loadOrGenerateJwtSecret(FORGE_DATA_DIR)
     : undefined);
 
@@ -253,6 +292,20 @@ export const config = Object.freeze({
    */
   quickActionsFile: join(FORGE_DATA_DIR, "quick-actions.json"),
   /**
+   * Instance-level session orchestration availability. Enabled by
+   * default; operators disable it with `ORCHESTRATION_DISABLED=true`
+   * (or, for compatibility with the historical opt-in flag,
+   * `ORCHESTRATION_ENABLED=false`). MINIMAL_UI remains a separate hard
+   * gate in `orchestration/config.ts`.
+   */
+  orchestrationEnabled: readOrchestrationEnabled(),
+  orchestrationMaxWorkersPerSupervisor: readBoundedInt(
+    "ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR",
+    8,
+    1,
+    100,
+  ),
+  /**
    * Whether `/api/docs` (Swagger UI + OpenAPI JSON spec) is reachable.
    * Defaults to true so Docker / production deploys keep working without
    * extra config (the README quickstart documents `/api/docs`). When
@@ -266,8 +319,24 @@ export const config = Object.freeze({
   exposeDocs: readBool("EXPOSE_DOCS", true),
   auth: Object.freeze({
     uiPassword: UI_PASSWORD,
+    uiPasswordFile: UI_PASSWORD_FILE,
     jwtSecret: JWT_SECRET,
     apiKey: API_KEY,
+    ldap: Object.freeze({
+      enabled: LDAP_ENABLED,
+      url: readEnv("LDAP_URL"),
+      bindDn: readEnv("LDAP_BIND_DN"),
+      bindPassword: LDAP_BIND_PASSWORD,
+      bindPasswordFile: LDAP_BIND_PASSWORD_FILE,
+      baseDn: readEnv("LDAP_BASE_DN"),
+      userFilter:
+        readEnv("LDAP_USER_FILTER") ??
+        "(|(uid={{username}})(sAMAccountName={{username}})(mail={{username}}))",
+      requiredGroupDn: readEnv("LDAP_REQUIRED_GROUP_DN"),
+      groupAttribute: readEnv("LDAP_GROUP_ATTRIBUTE") ?? "memberOf",
+      timeoutMs: readInt("LDAP_TIMEOUT_MS", 5000),
+      tlsRejectUnauthorized: readBool("LDAP_TLS_REJECT_UNAUTHORIZED", true),
+    }),
     jwtExpiresInSeconds: readInt("JWT_EXPIRES_IN_SECONDS", 60 * 60 * 24 * 7),
     loginRateLimitMax: readInt("RATE_LIMIT_LOGIN_MAX", 10),
     loginRateLimitWindowMs: readInt("RATE_LIMIT_LOGIN_WINDOW_MS", 60_000),
@@ -381,6 +450,7 @@ export function authEnabled(): boolean {
   return (
     config.auth.uiPassword !== undefined ||
     config.auth.apiKey !== undefined ||
+    config.auth.ldap.enabled ||
     existsSync(config.auth.passwordHashFile)
   );
 }

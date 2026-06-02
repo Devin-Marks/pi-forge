@@ -125,7 +125,9 @@ in [`docs/configuration.md`](../docs/configuration.md) and
 
 - **Secrets are managed via `pi-forge-secret`.** Edit with
   `kubectl edit secret pi-forge-secret -n pi-forge` and roll the
-  deployment to pick up changes.
+  deployment to pick up changes. Browser admin passwords can be supplied
+  as the `UI_PASSWORD` env key or as a mounted Secret file with
+  `UI_PASSWORD_FILE` pointing at the mount path.
 - **`TRUST_PROXY=true`** is appropriate when traffic flows through
   ingress / Route. The shipped manifests default `false` to avoid
   trusting a header from upstream that hasn't been validated.
@@ -133,6 +135,13 @@ in [`docs/configuration.md`](../docs/configuration.md) and
   `${FORGE_DATA_DIR}/jwt-secret` on the data PVC, so tokens survive
   pod restarts. Override by adding a `JWT_SECRET` key to the secret
   if you want to manage rotation out-of-band.
+- **LDAP / OpenShift credentials.** For LDAP login, add the non-secret
+  settings (`LDAP_ENABLED`, `LDAP_URL`, `LDAP_BIND_DN`, `LDAP_BASE_DN`,
+  optional `LDAP_REQUIRED_GROUP_DN`) as env vars and provide the service
+  account password either as a Secret env key (`LDAP_BIND_PASSWORD`) or,
+  preferably, as a mounted Secret file with `LDAP_BIND_PASSWORD_FILE`
+  pointing at the mount path. `LDAP_BIND_PASSWORD` itself is a literal
+  env value; it does not expand `@/path`. See `docs/configuration.md#ldap-browser-login`.
 - **Resource defaults** per pod: requests 512 Mi / 250 m CPU; limits
   2 Gi / 1 CPU. Memory is the typical ceiling for long agent
   contexts or compiling inside the integrated terminal.

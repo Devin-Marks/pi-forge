@@ -356,7 +356,7 @@ ${HEADER_NAV_LANDING}
       <div class="feature-card">
         <div class="feature-icon">&#128104;&#8205;&#128104;&#8205;&#128103;</div>
         <h3>Session orchestration</h3>
-        <p>Opt-in supervisor mode lets one session spawn, observe, and coordinate worker sessions in the same project. Worker events stream into the supervisor's inbox.</p>
+        <p>Default-available supervisor mode lets one session spawn, observe, and coordinate worker sessions in the same project. Worker events stream into the supervisor's inbox.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#128268;</div>
