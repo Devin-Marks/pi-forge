@@ -806,11 +806,62 @@ function getForkLock(sessionId: string): Lock {
  * Concurrent calls for the same sessionId share a single in-flight
  * AgentSession creation — see resumeInflight.
  */
+async function externallyActiveDiscoveredSession(
+  sessionId: string,
+  projectId: string,
+  workspacePath: string,
+): Promise<DiscoveredSession | undefined> {
+  const discovered = await discoverSessionsOnDisk(projectId, workspacePath);
+  const match = discovered.find((s) => s.sessionId === sessionId);
+  if (match === undefined) return undefined;
+  const external = await getExternalSubagentStatusForSession({
+    runId: match.runId,
+    path: match.path,
+  });
+  return external?.isExternalLive === true ? match : undefined;
+}
+
+function detachExternallyActiveLiveSession(sessionId: string): void {
+  const live = registry.get(sessionId);
+  if (live === undefined) return;
+
+  // Do NOT call disposeSession(), AgentSession.abort(), AgentSession.dispose(),
+  // or processManager.disposeSession() here. If pi-subagents is already running
+  // this child externally, pi-forge must stop managing its in-memory view without
+  // sending any lifecycle signal that could abort/kill the external execution.
+  try {
+    live.unsubscribe();
+  } catch {
+    // ignore
+  }
+  for (const client of live.clients) {
+    try {
+      client.close();
+    } catch {
+      // ignore
+    }
+  }
+  live.clients.clear();
+  registry.delete(sessionId);
+}
+
+export async function rejectOrDisposeExternallyActiveSession(
+  sessionId: string,
+  projectId: string,
+  workspacePath: string,
+): Promise<void> {
+  const match = await externallyActiveDiscoveredSession(sessionId, projectId, workspacePath);
+  if (match === undefined) return;
+  detachExternallyActiveLiveSession(sessionId);
+  throw new ExternalSubagentActiveError(sessionId);
+}
+
 export async function resumeSession(
   sessionId: string,
   projectId: string,
   workspacePath: string,
 ): Promise<LiveSession> {
+  await rejectOrDisposeExternallyActiveSession(sessionId, projectId, workspacePath);
   const existing = registry.get(sessionId);
   if (existing) return existing;
 
@@ -823,6 +874,7 @@ export async function resumeSession(
   return resumeInflight(sessionId, async () => {
     // Re-check after lock acquisition: another resume may have raced
     // ahead and populated the registry while we were queued.
+    await rejectOrDisposeExternallyActiveSession(sessionId, projectId, workspacePath);
     const raced = registry.get(sessionId);
     if (raced) return raced;
 
@@ -1481,10 +1533,11 @@ export async function findSessionLocation(
  * receive projectId in the URL (the stream route specifically).
  */
 export async function resumeSessionById(sessionId: string): Promise<LiveSession> {
-  const existing = registry.get(sessionId);
-  if (existing) return existing;
   const loc = await findSessionLocation(sessionId);
   if (loc === undefined) throw new SessionNotFoundError(sessionId);
+  await rejectOrDisposeExternallyActiveSession(sessionId, loc.projectId, loc.workspacePath);
+  const existing = registry.get(sessionId);
+  if (existing) return existing;
   return resumeSession(sessionId, loc.projectId, loc.workspacePath);
 }
 

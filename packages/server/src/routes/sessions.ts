@@ -4,10 +4,12 @@ import {
   createSession,
   deleteColdSession,
   disposeSession,
+  ExternalSubagentActiveError,
   findProjectIdForSession,
   findSessionLocation,
   getSession,
   listSessionsForProject,
+  rejectOrDisposeExternallyActiveSession,
   resumeSessionById,
   type UnifiedSession,
 } from "../session-registry.js";
@@ -120,6 +122,25 @@ function previewOfMessageContent(content: unknown): string | undefined {
 
 function notFound(reply: FastifyReply): FastifyReply {
   return reply.code(404).send({ error: "session_not_found" });
+}
+
+async function rejectExternalIfNeeded(
+  sessionId: string,
+  projectId: string,
+  workspacePath: string,
+  reply: FastifyReply,
+): Promise<boolean> {
+  try {
+    await rejectOrDisposeExternallyActiveSession(sessionId, projectId, workspacePath);
+    return false;
+  } catch (err) {
+    if (!(err instanceof ExternalSubagentActiveError)) throw err;
+    reply.code(409).send({
+      error: "external_subagent_active",
+      message: "This pi-subagents child is still running externally and is read-only in pi-forge.",
+    });
+    return true;
+  }
 }
 
 export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
@@ -246,6 +267,40 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
     async (req, reply) => {
       const live = getSession(req.params.id);
       if (live !== undefined) {
+        try {
+          await rejectOrDisposeExternallyActiveSession(
+            req.params.id,
+            live.projectId,
+            live.workspacePath,
+          );
+        } catch (err) {
+          if (!(err instanceof ExternalSubagentActiveError)) throw err;
+          const loc = await findSessionLocation(req.params.id);
+          if (loc === undefined) return notFound(reply);
+          const list = await listSessionsForProject(loc.projectId, loc.workspacePath);
+          const match = list.find((s) => s.sessionId === req.params.id);
+          if (match === undefined) return notFound(reply);
+          const external = await getExternalSubagentStatusForSession({
+            runId: match.runId,
+            path: match.path,
+          });
+          const bodyArgs: Parameters<typeof liveSummaryBody>[0] = {
+            sessionId: match.sessionId,
+            projectId: match.projectId,
+            workspacePath: match.workspacePath,
+            createdAt: match.createdAt,
+            lastActivityAt: match.lastActivityAt,
+            name: match.name,
+            messageCount: match.messageCount,
+            isStreaming: false,
+            isLive: false,
+          };
+          if (external !== undefined) {
+            bodyArgs.isExternalLive = external.isExternalLive;
+            bodyArgs.externalState = external.state;
+          }
+          return liveSummaryBody(bodyArgs);
+        }
         return liveSummaryBody({
           sessionId: live.sessionId,
           projectId: live.projectId,
@@ -321,7 +376,18 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const live = getSession(req.params.id);
-      if (live !== undefined) return { messages: live.session.messages };
+      if (live !== undefined) {
+        try {
+          await rejectOrDisposeExternallyActiveSession(
+            req.params.id,
+            live.projectId,
+            live.workspacePath,
+          );
+          return { messages: live.session.messages };
+        } catch (err) {
+          if (!(err instanceof ExternalSubagentActiveError)) throw err;
+        }
+      }
       const loc = await findSessionLocation(req.params.id);
       if (loc === undefined) return notFound(reply);
       const list = await listSessionsForProject(loc.projectId, loc.workspacePath);
@@ -400,6 +466,9 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
     async (req, reply) => {
       const live = getSession(req.params.id);
       if (live === undefined) return notFound(reply);
+      if (await rejectExternalIfNeeded(req.params.id, live.projectId, live.workspacePath, reply)) {
+        return reply;
+      }
       return { compactions: buildCompactionHistory(live.session) };
     },
   );
@@ -450,6 +519,9 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
     async (req, reply) => {
       const live = getSession(req.params.id);
       if (live === undefined) return notFound(reply);
+      if (await rejectExternalIfNeeded(req.params.id, live.projectId, live.workspacePath, reply)) {
+        return reply;
+      }
       const entries = await buildTurnDiff(
         live.session,
         live.workspacePath,
@@ -513,6 +585,13 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       let live = getSession(req.params.id);
+      if (live !== undefined) {
+        if (
+          await rejectExternalIfNeeded(req.params.id, live.projectId, live.workspacePath, reply)
+        ) {
+          return reply;
+        }
+      }
       if (live === undefined) {
         try {
           live = await resumeSessionById(req.params.id);
@@ -658,6 +737,13 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       let live = getSession(req.params.id);
+      if (live !== undefined) {
+        if (
+          await rejectExternalIfNeeded(req.params.id, live.projectId, live.workspacePath, reply)
+        ) {
+          return reply;
+        }
+      }
       if (live === undefined) {
         try {
           live = await resumeSessionById(req.params.id);
@@ -781,6 +867,9 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
     async (req, reply) => {
       const live = getSession(req.params.id);
       if (live === undefined) return notFound(reply);
+      if (await rejectExternalIfNeeded(req.params.id, live.projectId, live.workspacePath, reply)) {
+        return reply;
+      }
       live.session.setSessionName(req.body.name);
       return liveSummaryBody({
         sessionId: live.sessionId,

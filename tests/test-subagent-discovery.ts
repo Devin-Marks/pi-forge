@@ -102,6 +102,7 @@ interface TestRegistry {
   disposeSession: (id: string) => Promise<boolean>;
   disposeAllSessions: () => Promise<void>;
   resumeSession: (id: string, projectId: string, workspacePath: string) => Promise<TestLive>;
+  resumeSessionById: (id: string) => Promise<TestLive>;
   discoverSessionsOnDisk: (projectId: string, workspacePath: string) => Promise<TestDiscovered[]>;
   listSessionsForProject: (
     projectId: string,
@@ -349,6 +350,43 @@ async function main(): Promise<void> {
       "resumeSession returns a LiveSession for the child",
       resumed.sessionId === childA,
       `got ${resumed.sessionId}`,
+    );
+
+    await writeFile(
+      join(subagentsExternal.SUBAGENTS_ASYNC_DIR, runId, "status.json"),
+      JSON.stringify({
+        runId,
+        sessionId: parent.sessionId,
+        state: "running",
+        sessionFile: childAPath,
+      }),
+      "utf8",
+    );
+    try {
+      await registry.resumeSessionById(childA);
+      assert(
+        "resumeSessionById rejects and removes existing live child when status becomes running",
+        false,
+        "resume unexpectedly succeeded",
+      );
+    } catch (err) {
+      assert(
+        "resumeSessionById rejects and removes existing live child when status becomes running",
+        err instanceof Error &&
+          err.name === "ExternalSubagentActiveError" &&
+          registry.getSession(childA) === undefined,
+        `err=${err instanceof Error ? err.name : String(err)} live=${registry.getSession(childA) !== undefined}`,
+      );
+    }
+    await writeFile(
+      join(subagentsExternal.SUBAGENTS_ASYNC_DIR, runId, "status.json"),
+      JSON.stringify({
+        runId,
+        sessionId: parent.sessionId,
+        state: "complete",
+        sessionFile: childAPath,
+      }),
+      "utf8",
     );
 
     // 7. REALISTIC pi-subagents layout: the plugin's

@@ -1,10 +1,12 @@
 import type { FastifyPluginAsync, FastifyReply } from "fastify";
 import {
   EntryNotFoundError,
+  ExternalSubagentActiveError,
   findSessionLocation,
   forkSession,
   getSession,
   listSessionsForProject,
+  rejectOrDisposeExternallyActiveSession,
   SessionNotFoundError,
   type LiveSession,
 } from "../session-registry.js";
@@ -65,7 +67,22 @@ async function requireLiveOrRejectExternal(
   reply: FastifyReply,
 ): Promise<LiveSession | undefined> {
   const live = getSession(sessionId);
-  if (live !== undefined) return live;
+  if (live !== undefined) {
+    try {
+      await rejectOrDisposeExternallyActiveSession(sessionId, live.projectId, live.workspacePath);
+      return live;
+    } catch (err) {
+      if (err instanceof ExternalSubagentActiveError) {
+        reply.code(409).send({
+          error: "external_subagent_active",
+          message:
+            "This pi-subagents child is still running externally and is read-only in pi-forge.",
+        });
+        return undefined;
+      }
+      throw err;
+    }
+  }
   const loc = await findSessionLocation(sessionId);
   if (loc !== undefined) {
     const match = (await listSessionsForProject(loc.projectId, loc.workspacePath)).find(

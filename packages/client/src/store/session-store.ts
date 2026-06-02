@@ -176,6 +176,10 @@ function findProjectIdForSession(state: SessionState, sessionId: string): string
   return findSessionInState(state, sessionId)?.projectId;
 }
 
+function readOnlyExternalBanner(state?: string): string {
+  return `Read-only: pi-subagents child is ${state ?? "running"} externally`;
+}
+
 function removeSessionFromState(current: SessionState, sessionId: string): Partial<SessionState> {
   const stale = current.messagesBySession[sessionId];
   if (stale !== undefined) revokeOptimisticBlobUrls(stale);
@@ -510,7 +514,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   openStream: (sessionId) => {
     const row = findSessionInState(get(), sessionId);
-    if (row?.isExternalLive === true) {
+    const loadReadOnly = (state?: string): void => {
       void api
         .getMessages(sessionId)
         .then(({ messages }) => {
@@ -519,7 +523,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             streamingBySession: { ...s.streamingBySession, [sessionId]: false },
             bannerBySession: {
               ...s.bannerBySession,
-              [sessionId]: `Read-only: pi-subagents child is ${row.externalState ?? "running"} externally`,
+              [sessionId]: readOnlyExternalBanner(state),
             },
           }));
         })
@@ -532,7 +536,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             },
           }));
         });
-      return;
+    };
+    if (row?.isExternalLive === true) {
+      set((s) => ({
+        bannerBySession: {
+          ...s.bannerBySession,
+          [sessionId]: readOnlyExternalBanner(row.externalState),
+        },
+      }));
     }
     const existing = controllers.get(sessionId);
     if (existing !== undefined) return; // already open
@@ -582,6 +593,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // experience of a same-tab delete. Without this the deleted
       // session lingered in the list with a stale "stream error"
       // banner until the user manually refreshed.
+      if (
+        err instanceof ApiError &&
+        err.status === 409 &&
+        err.code === "external_subagent_active"
+      ) {
+        onTerminate();
+        loadReadOnly("running");
+        void Promise.all(
+          Object.keys(get().byProject).map((projectId) => get().loadSessionsForProject(projectId)),
+        );
+        return;
+      }
       if (err instanceof ApiError && err.status === 404) {
         set((s) => removeSessionFromState(s, sessionId));
         if (get().activeSessionId === undefined) {
@@ -775,7 +798,15 @@ function applyEvent(
         ...s.streamingBySession,
         [sessionId]: event.isStreaming ?? false,
       },
-      bannerBySession: { ...s.bannerBySession, [sessionId]: undefined },
+      bannerBySession: {
+        ...s.bannerBySession,
+        [sessionId]:
+          event.readOnly === true || event.isExternalLive === true
+            ? readOnlyExternalBanner(
+                typeof event.externalState === "string" ? event.externalState : undefined,
+              )
+            : undefined,
+      },
       activeToolBySession: { ...s.activeToolBySession, [sessionId]: undefined },
     }));
     return;

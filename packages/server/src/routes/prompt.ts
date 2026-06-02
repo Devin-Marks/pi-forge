@@ -4,9 +4,11 @@ import { config } from "../config.js";
 import { formatErrorChain } from "../diagnostics.js";
 import { expandFileReferences, languageHintForPath } from "../file-references.js";
 import {
+  ExternalSubagentActiveError,
   findSessionLocation,
   getSession,
   listSessionsForProject,
+  rejectOrDisposeExternallyActiveSession,
   type LiveSession,
 } from "../session-registry.js";
 import { errorSchema } from "./_schemas.js";
@@ -299,9 +301,24 @@ async function preflight(
   req: FastifyRequest,
   reply: FastifyReply,
 ): Promise<LiveSession | undefined> {
-  const live = getSession((req.params as { id: string }).id);
+  const sessionId = (req.params as { id: string }).id;
+  const live = getSession(sessionId);
+  if (live !== undefined) {
+    try {
+      await rejectOrDisposeExternallyActiveSession(sessionId, live.projectId, live.workspacePath);
+    } catch (err) {
+      if (err instanceof ExternalSubagentActiveError) {
+        await reply.code(409).send({
+          error: "external_subagent_active",
+          message:
+            "This pi-subagents child is still running externally and is read-only in pi-forge.",
+        });
+        return undefined;
+      }
+      throw err;
+    }
+  }
   if (live === undefined) {
-    const sessionId = (req.params as { id: string }).id;
     const loc = await findSessionLocation(sessionId);
     if (loc !== undefined) {
       const match = (await listSessionsForProject(loc.projectId, loc.workspacePath)).find(
