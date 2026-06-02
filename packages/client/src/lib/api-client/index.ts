@@ -303,6 +303,7 @@ function vSessionSummary(value: unknown, status: number): SessionSummary {
     messageCount: value.messageCount,
     isStreaming: value.isStreaming,
   };
+  if (typeof value.isExternalLive === "boolean") out.isExternalLive = value.isExternalLive;
   if (typeof value.name === "string") out.name = value.name;
   if (typeof value.thinkingLevel === "string") out.thinkingLevel = value.thinkingLevel;
   if (typeof value.modelProvider === "string") out.modelProvider = value.modelProvider;

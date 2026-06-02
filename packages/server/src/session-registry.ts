@@ -1,4 +1,6 @@
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { mkdir, readFile, readdir } from "node:fs/promises";
+import { tmpdir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
   AgentSession,
@@ -165,30 +167,94 @@ export class EntryNotFoundError extends Error {
 
 const registry = new Map<string, LiveSession>();
 
-const SUBAGENT_CHILD_ACTIVE_TTL_MS = 10 * 60 * 1000;
-const SUBAGENT_ASYNC_PARENT_TTL_MS = 12 * 60 * 60 * 1000;
-const activeSubagentParentTimers = new Map<string, NodeJS.Timeout>();
+const activeSubagentParents = new Set<string>();
 
-function clearActiveSubagentParent(parentSessionId: string): void {
-  const existing = activeSubagentParentTimers.get(parentSessionId);
-  if (existing !== undefined) clearTimeout(existing);
-  activeSubagentParentTimers.delete(parentSessionId);
+export function clearActiveSubagentParent(parentSessionId: string): void {
+  activeSubagentParents.delete(parentSessionId);
 }
 
-export function markActiveSubagentParent(
-  parentSessionId: string,
-  ttlMs = SUBAGENT_CHILD_ACTIVE_TTL_MS,
-): void {
-  clearActiveSubagentParent(parentSessionId);
-  const timer = setTimeout(() => activeSubagentParentTimers.delete(parentSessionId), ttlMs);
-  timer.unref?.();
-  activeSubagentParentTimers.set(parentSessionId, timer);
+export function markActiveSubagentParent(parentSessionId: string): void {
+  activeSubagentParents.add(parentSessionId);
+}
+
+function sanitizeTempScopeSegment(value: string): string {
+  const sanitized = value
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return sanitized || "unknown";
+}
+
+function resolvePiSubagentsTempRoot(): string {
+  if (typeof process.getuid === "function")
+    return join(tmpdir(), `pi-subagents-uid-${process.getuid()}`);
+  for (const key of ["USERNAME", "USER", "LOGNAME"] as const) {
+    const value = process.env[key];
+    if (value) return join(tmpdir(), `pi-subagents-user-${sanitizeTempScopeSegment(value)}`);
+  }
+  try {
+    const username = userInfo().username;
+    if (username) return join(tmpdir(), `pi-subagents-user-${sanitizeTempScopeSegment(username)}`);
+  } catch {
+    // Fall through to HOME-based scoping.
+  }
+  const homedir = process.env.USERPROFILE ?? process.env.HOME;
+  if (homedir) return join(tmpdir(), `pi-subagents-home-${sanitizeTempScopeSegment(homedir)}`);
+  return join(tmpdir(), "pi-subagents-shared");
+}
+
+function normalizePathForCompare(value: string): string {
+  return value.replace(/\\/g, "/");
+}
+
+function isMatchingSessionFile(candidate: unknown, child: DiscoveredSession): boolean {
+  if (typeof candidate !== "string" || candidate.length === 0) return false;
+  const normalizedCandidate = normalizePathForCompare(candidate);
+  const normalizedChildPath = normalizePathForCompare(child.path);
+  return (
+    normalizedCandidate === normalizedChildPath ||
+    basename(normalizedCandidate) === `${child.sessionId}.jsonl`
+  );
+}
+
+function hasCompletedSubagentResultFile(child: DiscoveredSession): boolean {
+  if (child.parentSessionId === undefined) return false;
+  const resultsDir = join(resolvePiSubagentsTempRoot(), "async-subagent-results");
+  if (!existsSync(resultsDir)) return false;
+  const resultFiles = child.runId !== undefined ? [`${child.runId}.json`] : readdirSync(resultsDir);
+  for (const file of resultFiles) {
+    if (!file.endsWith(".json")) continue;
+    const resultPath = join(resultsDir, file);
+    if (!existsSync(resultPath)) continue;
+    try {
+      const data = JSON.parse(readFileSync(resultPath, "utf8")) as {
+        sessionId?: unknown;
+        sessionFile?: unknown;
+        results?: { sessionFile?: unknown }[];
+      };
+      if (typeof data.sessionId === "string" && data.sessionId !== child.parentSessionId) continue;
+      if (isMatchingSessionFile(data.sessionFile, child)) return true;
+      if (
+        Array.isArray(data.results) &&
+        data.results.some((r) => isMatchingSessionFile(r.sessionFile, child))
+      ) {
+        return true;
+      }
+    } catch {
+      // Ignore partial/non-JSON files; pi-subagents writes authoritative completion as JSON.
+    }
+  }
+  return false;
 }
 
 function isSubagentChildExternallyLive(child: DiscoveredSession): boolean {
   if (child.parentSessionId === undefined) return false;
-  if (!activeSubagentParentTimers.has(child.parentSessionId)) return false;
-  return Date.now() - child.modifiedAt.getTime() <= SUBAGENT_CHILD_ACTIVE_TTL_MS;
+  if (!activeSubagentParents.has(child.parentSessionId)) return false;
+  if (hasCompletedSubagentResultFile(child)) {
+    clearActiveSubagentParent(child.parentSessionId);
+    return false;
+  }
+  return true;
 }
 
 export interface ExternallyActiveSubagentChild {
@@ -228,6 +294,20 @@ export async function readSessionMessagesFromDisk(sessionFile: string): Promise<
     (entry): entry is SessionEntry => entry.type !== "session",
   );
   return buildSessionContext(entries).messages;
+}
+
+export async function readSessionMessagesSnapshotById(
+  sessionId: string,
+): Promise<unknown[] | undefined> {
+  const live = getSession(sessionId);
+  if (live !== undefined) return live.session.messages;
+  const projects = await readProjects();
+  for (const project of projects) {
+    const discovered = await discoverSessionsOnDisk(project.id, project.path);
+    const found = discovered.find((s) => s.sessionId === sessionId);
+    if (found !== undefined) return readSessionMessagesFromDisk(found.path);
+  }
+  return undefined;
 }
 
 function isAsyncSubagentToolResult(result: unknown): boolean {
@@ -648,9 +728,9 @@ function makeSubscribeHandler(live: LiveSession): () => void {
     } else if (toolEv.type === "tool_execution_end" && toolEv.toolName === "subagent") {
       const isAsync = isAsyncSubagentToolResult(toolEv.result);
       if (isAsync) {
-        markActiveSubagentParent(live.sessionId, SUBAGENT_ASYNC_PARENT_TTL_MS);
+        markActiveSubagentParent(live.sessionId);
       } else {
-        markActiveSubagentParent(live.sessionId, 3000);
+        clearActiveSubagentParent(live.sessionId);
       }
       scheduleSubagentSessionListChanged(
         live,
@@ -658,8 +738,8 @@ function makeSubscribeHandler(live: LiveSession): () => void {
         [500, 1500],
       );
     } else if (isSubagentCompletionCustomMessage(event)) {
-      markActiveSubagentParent(live.sessionId, 3000);
-      scheduleSubagentSessionListChanged(live, "subagent_async_complete", [500, 1500]);
+      clearActiveSubagentParent(live.sessionId);
+      scheduleSubagentSessionListChanged(live, "subagent_async_complete", [250, 1000, 2500]);
     }
 
     // Webhook fan-out. Filters internally for the 3 SDK events

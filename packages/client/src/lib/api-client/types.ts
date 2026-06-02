@@ -320,6 +320,7 @@ export interface SessionSummary {
   createdAt: string;
   lastActivityAt: string;
   isLive: boolean;
+  isExternalLive?: boolean;
   name?: string;
   messageCount: number;
   isStreaming: boolean;

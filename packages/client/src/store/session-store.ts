@@ -65,6 +65,13 @@ const refetchState = new Map<string, RefetchState>();
  * through `set()`.
  */
 const controllers = new Map<string, AbortController>();
+const readOnlySnapshotIntervals = new Map<string, ReturnType<typeof setInterval>>();
+
+function stopReadOnlySnapshotRefresh(sessionId: string): void {
+  const interval = readOnlySnapshotIntervals.get(sessionId);
+  if (interval !== undefined) clearInterval(interval);
+  readOnlySnapshotIntervals.delete(sessionId);
+}
 
 /**
  * Phase 8 keeps the message type loose — pi's AgentMessage union is rich
@@ -172,6 +179,7 @@ function findProjectIdForSession(state: SessionState, sessionId: string): string
 }
 
 function removeSessionFromState(current: SessionState, sessionId: string): Partial<SessionState> {
+  stopReadOnlySnapshotRefresh(sessionId);
   const stale = current.messagesBySession[sessionId];
   if (stale !== undefined) revokeOptimisticBlobUrls(stale);
   const nextMessages = { ...current.messagesBySession };
@@ -561,30 +569,55 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         return;
       }
       if (err instanceof ApiError && err.status === 409) {
-        void api
-          .getMessages(sessionId)
-          .then(({ messages }) => {
-            set((s) => ({
-              messagesBySession: { ...s.messagesBySession, [sessionId]: messages },
-              streamingBySession: { ...s.streamingBySession, [sessionId]: false },
-              activeToolBySession: { ...s.activeToolBySession, [sessionId]: undefined },
-              bannerBySession: {
-                ...s.bannerBySession,
-                [sessionId]:
-                  "This sub-agent is still running in an external pi-subagents process. Showing a read-only snapshot; reopen it after completion for live controls.",
-              },
-            }));
-          })
-          .catch(() => {
-            set((s) => ({
-              bannerBySession: {
-                ...s.bannerBySession,
-                [sessionId]:
-                  "This sub-agent is still running externally. Wait for it to finish, then reopen the session.",
-              },
-            }));
-          });
         onTerminate();
+        const refreshReadOnlySnapshot = async (): Promise<void> => {
+          const [{ messages }, summary] = await Promise.all([
+            api.getMessages(sessionId),
+            api.getSession(sessionId).catch(() => undefined),
+          ]);
+          const stillExternal = summary?.isExternalLive === true;
+          set((s) => ({
+            messagesBySession: { ...s.messagesBySession, [sessionId]: messages },
+            streamingBySession: { ...s.streamingBySession, [sessionId]: stillExternal },
+            activeToolBySession: {
+              ...s.activeToolBySession,
+              [sessionId]: stillExternal
+                ? { name: "subagent", summary: "externally executing" }
+                : undefined,
+            },
+            bannerBySession: {
+              ...s.bannerBySession,
+              [sessionId]: stillExternal
+                ? "External sub-agent is still running. Showing a read-only snapshot and refreshing it automatically…"
+                : undefined,
+            },
+          }));
+          if (!stillExternal) {
+            stopReadOnlySnapshotRefresh(sessionId);
+            get().openStream(sessionId);
+          }
+        };
+        void refreshReadOnlySnapshot().catch(() => {
+          set((s) => ({
+            streamingBySession: { ...s.streamingBySession, [sessionId]: true },
+            activeToolBySession: {
+              ...s.activeToolBySession,
+              [sessionId]: { name: "subagent", summary: "externally executing" },
+            },
+            bannerBySession: {
+              ...s.bannerBySession,
+              [sessionId]:
+                "External sub-agent is still running. Waiting for the next read-only snapshot refresh…",
+            },
+          }));
+        });
+        stopReadOnlySnapshotRefresh(sessionId);
+        readOnlySnapshotIntervals.set(
+          sessionId,
+          setInterval(() => {
+            void refreshReadOnlySnapshot().catch(() => undefined);
+          }, 2000),
+        );
         return;
       }
       const code = err instanceof ApiError ? err.code : (err as Error).message;
@@ -596,6 +629,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   closeStream: (sessionId) => {
+    stopReadOnlySnapshotRefresh(sessionId);
     const ctrl = controllers.get(sessionId);
     if (ctrl !== undefined) {
       ctrl.abort();

@@ -44,6 +44,7 @@ export const liveSummarySchema = {
     createdAt: { type: "string", format: "date-time" },
     lastActivityAt: { type: "string", format: "date-time" },
     isLive: { type: "boolean" },
+    isExternalLive: { type: "boolean" },
     name: { type: "string" },
     messageCount: { type: "integer", minimum: 0 },
     isStreaming: { type: "boolean" },
@@ -85,6 +86,7 @@ export function liveSummaryBody(args: {
   messageCount: number;
   isStreaming: boolean;
   isLive?: boolean;
+  isExternalLive?: boolean | undefined;
   thinkingLevel?: string;
   // `string | undefined` (not just `?: string`) so callers can pass
   // `session.model?.provider` directly without an upstream guard —
@@ -103,6 +105,7 @@ export function liveSummaryBody(args: {
     messageCount: args.messageCount,
     isStreaming: args.isStreaming,
   };
+  if (args.isExternalLive === true) out.isExternalLive = true;
   if (args.name !== undefined) out.name = args.name;
   if (args.thinkingLevel !== undefined) out.thinkingLevel = args.thinkingLevel;
   if (args.modelProvider !== undefined) out.modelProvider = args.modelProvider;

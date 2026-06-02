@@ -22,7 +22,7 @@
  * project session dir as a child.
  */
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -30,6 +30,47 @@ import { randomUUID } from "node:crypto";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const repoRoot = resolve(__dirname, "..");
+
+function sanitizeTempScopeSegment(value: string): string {
+  const sanitized = value
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return sanitized || "unknown";
+}
+
+function piSubagentsResultsDir(): string {
+  if (typeof process.getuid === "function")
+    return join(tmpdir(), `pi-subagents-uid-${process.getuid()}`, "async-subagent-results");
+  for (const key of ["USERNAME", "USER", "LOGNAME"] as const) {
+    const value = process.env[key];
+    if (value)
+      return join(
+        tmpdir(),
+        `pi-subagents-user-${sanitizeTempScopeSegment(value)}`,
+        "async-subagent-results",
+      );
+  }
+  try {
+    const username = userInfo().username;
+    if (username)
+      return join(
+        tmpdir(),
+        `pi-subagents-user-${sanitizeTempScopeSegment(username)}`,
+        "async-subagent-results",
+      );
+  } catch {
+    // Fall through to HOME-based scoping.
+  }
+  const homedir = process.env.USERPROFILE ?? process.env.HOME;
+  if (homedir)
+    return join(
+      tmpdir(),
+      `pi-subagents-home-${sanitizeTempScopeSegment(homedir)}`,
+      "async-subagent-results",
+    );
+  return join(tmpdir(), "pi-subagents-shared", "async-subagent-results");
+}
 
 let failures = 0;
 function assert(label: string, ok: boolean, detail?: string): void {
@@ -100,7 +141,8 @@ interface TestRegistry {
   disposeAllSessions: () => Promise<void>;
   resumeSession: (id: string, projectId: string, workspacePath: string) => Promise<TestLive>;
   resumeSessionById: (id: string) => Promise<TestLive>;
-  markActiveSubagentParent: (parentSessionId: string, ttlMs?: number) => void;
+  markActiveSubagentParent: (parentSessionId: string) => void;
+  clearActiveSubagentParent: (parentSessionId: string) => void;
   discoverSessionsOnDisk: (projectId: string, workspacePath: string) => Promise<TestDiscovered[]>;
   listSessionsForProject: (
     projectId: string,
@@ -267,7 +309,7 @@ async function main(): Promise<void> {
     //    create a pi-forge AgentSession for the same JSONL. The stream
     //    route blocks live SSE resume with 409, while /messages offers
     //    a read-only snapshot for the chat view.
-    registry.markActiveSubagentParent(parent.sessionId, 60_000);
+    registry.markActiveSubagentParent(parent.sessionId);
     const activeList = await registry.listSessionsForProject(project.id, project.path);
     const activeChild = activeList.find((s) => s.sessionId === childB);
     assert(
@@ -312,6 +354,42 @@ async function main(): Promise<void> {
       "read-only snapshot did not live-resume the child",
       registry.getSession(childB) === undefined,
     );
+
+    const resultsDir = piSubagentsResultsDir();
+    await mkdir(resultsDir, { recursive: true });
+    await writeFile(
+      join(resultsDir, `${runId}.json`),
+      `${JSON.stringify({
+        id: runId,
+        runId,
+        sessionId: parent.sessionId,
+        success: true,
+        summary: "done",
+        results: [{ agent: "worker", success: true, output: "done", sessionFile: childBPath }],
+      })}\n`,
+    );
+    const completedList = await registry.listSessionsForProject(project.id, project.path);
+    const completedChild = completedList.find((s) => s.sessionId === childB);
+    assert(
+      "authoritative result file clears external-live child state",
+      completedChild?.isExternalLive !== true,
+      `isExternalLive=${completedChild?.isExternalLive}`,
+    );
+    const streamAfterComplete = await fetch(`${listenAddr}/api/v1/sessions/${childB}/stream`, {
+      headers: { Accept: "text/event-stream" },
+    });
+    assert(
+      "stream route no longer blocks after authoritative result file",
+      streamAfterComplete.status === 200,
+      `status=${streamAfterComplete.status}`,
+    );
+    await streamAfterComplete.body?.cancel();
+    assert(
+      "stream after completion resumes the child normally",
+      registry.getSession(childB) !== undefined,
+    );
+    await registry.disposeSession(childB);
+    await rm(resultsDir, { recursive: true, force: true });
 
     // 6. resumeSession opens the child as a LiveSession (registry hit)
     //    once called directly for a child that is not under test for
