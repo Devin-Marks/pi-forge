@@ -10,6 +10,8 @@ import {
   listSessionsForProject,
   readSessionMessagesSnapshotById,
   resumeSessionById,
+  ExternallyActiveSubagentChildError,
+  getExternallyActiveSubagentChild,
   type UnifiedSession,
 } from "../session-registry.js";
 import { bridgeSessionDeleted } from "../webhooks/event-bridge.js";
@@ -239,6 +241,24 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
+      const activeChild = await getExternallyActiveSubagentChild(req.params.id);
+      if (activeChild !== undefined) {
+        const list = await listSessionsForProject(activeChild.projectId, activeChild.workspacePath);
+        const match = list.find((s) => s.sessionId === req.params.id);
+        if (match === undefined) return notFound(reply);
+        return liveSummaryBody({
+          sessionId: match.sessionId,
+          projectId: match.projectId,
+          workspacePath: match.workspacePath,
+          createdAt: match.createdAt,
+          lastActivityAt: match.lastActivityAt,
+          name: match.name,
+          messageCount: match.messageCount,
+          isStreaming: false,
+          isLive: false,
+          isExternalLive: true,
+        });
+      }
       const live = getSession(req.params.id);
       if (live !== undefined) {
         return liveSummaryBody({
@@ -375,6 +395,9 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
+      if ((await getExternallyActiveSubagentChild(req.params.id)) !== undefined) {
+        return reply.code(409).send({ error: "subagent_child_externally_active" });
+      }
       const live = getSession(req.params.id);
       if (live === undefined) return notFound(reply);
       return { compactions: buildCompactionHistory(live.session) };
@@ -425,6 +448,9 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
+      if ((await getExternallyActiveSubagentChild(req.params.id)) !== undefined) {
+        return reply.code(409).send({ error: "subagent_child_externally_active" });
+      }
       const live = getSession(req.params.id);
       if (live === undefined) return notFound(reply);
       const entries = await buildTurnDiff(
@@ -489,17 +515,20 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
+      if ((await getExternallyActiveSubagentChild(req.params.id)) !== undefined) {
+        return reply.code(409).send({ error: "subagent_child_externally_active" });
+      }
       let live = getSession(req.params.id);
       if (live === undefined) {
         try {
           live = await resumeSessionById(req.params.id);
-        } catch {
+        } catch (err) {
+          if (err instanceof ExternallyActiveSubagentChildError) {
+            return reply.code(409).send({ error: "subagent_child_externally_active" });
+          }
           // SessionNotFoundError, SessionTombstonedError, or SDK
-          // resume failure all collapse to 404 here — the tree route
-          // doesn't need to distinguish (clients can't act on it
-          // differently). The SSE stream route DOES distinguish
-          // (it returns 410 on tombstone) since that signals "stop
-          // reconnecting" specifically.
+          // resume failure all collapse to 404 here. The SSE stream route
+          // distinguishes tombstones since that signals "stop reconnecting".
           return notFound(reply);
         }
       }
@@ -634,15 +663,17 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
+      if ((await getExternallyActiveSubagentChild(req.params.id)) !== undefined) {
+        return reply.code(409).send({ error: "subagent_child_externally_active" });
+      }
       let live = getSession(req.params.id);
       if (live === undefined) {
         try {
           live = await resumeSessionById(req.params.id);
-        } catch {
-          // Same handling as the /tree route above — collapse all
-          // resume failures (not_found, tombstoned, SDK throw) to a
-          // 404. The /context route's caller can't act on the
-          // distinction.
+        } catch (err) {
+          if (err instanceof ExternallyActiveSubagentChildError) {
+            return reply.code(409).send({ error: "subagent_child_externally_active" });
+          }
           return notFound(reply);
         }
       }

@@ -157,6 +157,7 @@ interface TestRegistry {
   ) => Promise<{ projectId: string; workspacePath: string } | undefined>;
   deleteColdSession: (id: string) => Promise<"deleted" | "live" | "not_found">;
   getSession: (id: string) => TestLive | undefined;
+  sessionCount: () => number;
 }
 interface TestProjectManager {
   createProject: (name: string, path: string) => Promise<{ id: string; path: string }>;
@@ -455,6 +456,25 @@ async function main(): Promise<void> {
       statusOnlySummary.isExternalLive === true && statusOnlySummary.isLive === false,
       `summary=${JSON.stringify(statusOnlySummary)}`,
     );
+    const statusOnlySessionCount = registry.sessionCount();
+    assert(
+      "session metadata does not live-resume status-only child",
+      registry.getSession(statusOnlyChildId) === undefined &&
+        registry.sessionCount() === statusOnlySessionCount,
+      `sessionCount=${registry.sessionCount()} before=${statusOnlySessionCount}`,
+    );
+    let directResumeBlocked = false;
+    try {
+      await registry.resumeSession(statusOnlyChildId, project.id, project.path);
+    } catch (err) {
+      directResumeBlocked =
+        err instanceof Error && err.name === "ExternallyActiveSubagentChildError";
+    }
+    assert(
+      "direct resumeSession blocks status-only externally active child",
+      directResumeBlocked && registry.getSession(statusOnlyChildId) === undefined,
+      `sessionCount=${registry.sessionCount()} before=${statusOnlySessionCount}`,
+    );
     const statusOnlyStreamBlocked = await fetch(
       `${listenAddr}/api/v1/sessions/${statusOnlyChildId}/stream`,
       { headers: { Accept: "text/event-stream" } },
@@ -473,9 +493,46 @@ async function main(): Promise<void> {
       statusOnlyMessages.status === 200,
       `status=${statusOnlyMessages.status}`,
     );
+    const statusOnlyTree = await fetch(`${listenAddr}/api/v1/sessions/${statusOnlyChildId}/tree`);
     assert(
-      "status-only read-only open did not live-resume child",
-      registry.getSession(statusOnlyChildId) === undefined,
+      "tree route rejects status-only active child without live-resume",
+      statusOnlyTree.status === 409,
+      `status=${statusOnlyTree.status}`,
+    );
+    const statusOnlyContext = await fetch(
+      `${listenAddr}/api/v1/sessions/${statusOnlyChildId}/context`,
+    );
+    assert(
+      "context route rejects status-only active child without live-resume",
+      statusOnlyContext.status === 409,
+      `status=${statusOnlyContext.status}`,
+    );
+    const statusOnlyCompactions = await fetch(
+      `${listenAddr}/api/v1/sessions/${statusOnlyChildId}/compactions`,
+    );
+    assert(
+      "compactions route rejects status-only active child without live-resume",
+      statusOnlyCompactions.status === 409,
+      `status=${statusOnlyCompactions.status}`,
+    );
+    const statusOnlyTurnDiff = await fetch(
+      `${listenAddr}/api/v1/sessions/${statusOnlyChildId}/turn-diff`,
+    );
+    assert(
+      "turn-diff route rejects status-only active child without live-resume",
+      statusOnlyTurnDiff.status === 409,
+      `status=${statusOnlyTurnDiff.status}`,
+    );
+    const statusOnlyAfterViewList = await registry.listSessionsForProject(project.id, project.path);
+    const statusOnlyAfterViewChild = statusOnlyAfterViewList.find(
+      (s) => s.sessionId === statusOnlyChildId,
+    );
+    assert(
+      "status-only UI view routes did not live-resume child",
+      registry.getSession(statusOnlyChildId) === undefined &&
+        registry.sessionCount() === statusOnlySessionCount &&
+        statusOnlyAfterViewChild?.isExternalLive === true,
+      `sessionCount=${registry.sessionCount()} before=${statusOnlySessionCount} isExternalLive=${statusOnlyAfterViewChild?.isExternalLive}`,
     );
     await writeFile(
       join(statusOnlyDir, "status.json"),

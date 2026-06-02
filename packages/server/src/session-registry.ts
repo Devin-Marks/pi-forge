@@ -398,6 +398,8 @@ export async function readSessionMessagesFromDisk(sessionFile: string): Promise<
 export async function readSessionMessagesSnapshotById(
   sessionId: string,
 ): Promise<unknown[] | undefined> {
+  const activeChild = await getExternallyActiveSubagentChild(sessionId);
+  if (activeChild !== undefined) return readSessionMessagesFromDisk(activeChild.path);
   const live = getSession(sessionId);
   if (live !== undefined) return live.session.messages;
   const projects = await readProjects();
@@ -1454,6 +1456,9 @@ export async function resumeSession(
   projectId: string,
   workspacePath: string,
 ): Promise<LiveSession> {
+  const activeChild = await getExternallyActiveSubagentChild(sessionId);
+  if (activeChild !== undefined) throw new ExternallyActiveSubagentChildError(sessionId);
+
   const existing = registry.get(sessionId);
   if (existing) return existing;
 
@@ -1464,6 +1469,9 @@ export async function resumeSession(
   }
 
   return resumeInflight(sessionId, async () => {
+    const lockedActiveChild = await getExternallyActiveSubagentChild(sessionId);
+    if (lockedActiveChild !== undefined) throw new ExternallyActiveSubagentChildError(sessionId);
+
     // Re-check after lock acquisition: another resume may have raced
     // ahead and populated the registry while we were queued.
     const raced = registry.get(sessionId);
@@ -2002,7 +2010,10 @@ export async function listSessionsForProject(
       merged.firstMessage = d.firstMessage;
       if (d.parentSessionId !== undefined) merged.parentSessionId = d.parentSessionId;
       if (d.runId !== undefined) merged.runId = d.runId;
-      if (isSubagentChildExternallyLive(d)) merged.isExternalLive = true;
+      if (isSubagentChildExternallyLive(d)) {
+        merged.isExternalLive = true;
+        merged.isLive = false;
+      }
       merged.path = d.path;
       continue;
     }
@@ -2109,10 +2120,10 @@ export async function findSessionLocation(
  * receive projectId in the URL (the stream route specifically).
  */
 export async function resumeSessionById(sessionId: string): Promise<LiveSession> {
-  const existing = registry.get(sessionId);
-  if (existing) return existing;
   const activeChild = await getExternallyActiveSubagentChild(sessionId);
   if (activeChild !== undefined) throw new ExternallyActiveSubagentChildError(sessionId);
+  const existing = registry.get(sessionId);
+  if (existing) return existing;
   const loc = await findSessionLocation(sessionId);
   if (loc === undefined) throw new SessionNotFoundError(sessionId);
   return resumeSession(sessionId, loc.projectId, loc.workspacePath);
