@@ -4,8 +4,9 @@
 #
 #   ./kubernetes/openshift/secret.sh
 #
-# Defaults: empty UI_PASSWORD and API_KEY (auth disabled). JWT_SECRET
-# is intentionally NOT set here — when UI_PASSWORD is enabled, the
+# Defaults: empty UI_PASSWORD/API_KEY/LDAP_BIND_PASSWORD (auth disabled
+# unless you set UI_PASSWORD, API_KEY, or LDAP_ENABLED plus LDAP_* settings).
+# JWT_SECRET is intentionally NOT set here — when UI_PASSWORD or LDAP is enabled, the
 # server auto-generates one on first boot and persists it to
 # ${FORGE_DATA_DIR}/jwt-secret on the data-dir PVC, so issued
 # tokens survive pod restarts.
@@ -21,4 +22,5 @@ kubectl create secret generic pi-forge-secret \
   --namespace=pi-forge \
   --from-literal=UI_PASSWORD="" \
   --from-literal=API_KEY="" \
+  --from-literal=LDAP_BIND_PASSWORD="" \
   --dry-run=client -o yaml | oc apply -f -

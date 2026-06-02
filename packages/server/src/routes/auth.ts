@@ -8,9 +8,11 @@ import {
   verifyPasswordWithSource,
   verifyToken,
 } from "../auth.js";
+import { verifyLdapLogin } from "../ldap-auth.js";
 import { errorSchema } from "./_schemas.js";
 
 interface LoginBody {
+  username?: string;
   password: string;
 }
 
@@ -34,15 +36,16 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         response: {
           200: {
             type: "object",
-            required: ["authEnabled"],
+            required: ["authEnabled", "ldapEnabled"],
             properties: {
               authEnabled: { type: "boolean" },
+              ldapEnabled: { type: "boolean" },
             },
           },
         },
       },
     },
-    async () => ({ authEnabled: authEnabled() }),
+    async () => ({ authEnabled: authEnabled(), ldapEnabled: config.auth.ldap.enabled }),
   );
 
   fastify.post<{ Body: LoginBody }>(
@@ -57,11 +60,10 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       },
       schema: {
         description:
-          "Exchange a password for a short-lived JWT. Returns 401 if the password is wrong, " +
-          "or 503 if browser password auth is not configured (no UI_PASSWORD set and no " +
-          "stored password hash). When the password matched the env-supplied " +
-          "UI_PASSWORD AND no stored hash exists yet, `mustChangePassword` is true on " +
-          "the response and the issued token may only call POST /auth/change-password.",
+          "Exchange a local admin password or LDAP username/password for a short-lived JWT. " +
+          "LDAP is opt-in; username `admin` and password-only requests use local " +
+          "UI_PASSWORD / stored-hash auth, while other usernames use LDAP. Returns 401 if the " +
+          "credentials are wrong, or 503 if the selected auth backend is not configured.",
         tags: ["auth"],
         security: [],
         body: {
@@ -69,6 +71,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
           required: ["password"],
           additionalProperties: false,
           properties: {
+            username: { type: "string", minLength: 1, maxLength: 256 },
             password: { type: "string", minLength: 1, maxLength: MAX_PASSWORD_LENGTH },
           },
         },
@@ -82,19 +85,43 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
               mustChangePassword: { type: "boolean" },
             },
           },
+          400: errorSchema,
           401: errorSchema,
           503: errorSchema,
         },
       },
     },
     async (req, reply) => {
+      const { username, password } = req.body;
+      const loginAsLocalAdmin = username === undefined || username.toLowerCase() === "admin";
+
+      if (config.auth.ldap.enabled && !loginAsLocalAdmin) {
+        const result = await verifyLdapLogin(username, password);
+        if (result.error === "misconfigured") {
+          return reply.code(503).send({
+            error: "ldap_not_configured",
+            message:
+              "LDAP login is enabled but LDAP_URL, LDAP_BIND_DN, " +
+              "LDAP_BIND_PASSWORD(_FILE), or LDAP_BASE_DN is missing",
+          });
+        }
+        if (!result.ok) {
+          return reply.code(401).send({
+            error: "invalid_password",
+            message: "the username or password did not match, or the user is not authorized",
+          });
+        }
+        const issued = generateToken({ mustChangePassword: false });
+        return { ...issued, mustChangePassword: false };
+      }
+
       if (!passwordConfigured()) {
         return reply.code(503).send({
           error: "ui_password_not_configured",
-          message: "browser login is disabled (no UI_PASSWORD set and no stored password hash)",
+          message:
+            "browser local admin login is disabled (no UI_PASSWORD set and no stored password hash)",
         });
       }
-      const { password } = req.body;
       const result = await verifyPasswordWithSource(password);
       if (!result.ok) {
         return reply.code(401).send({

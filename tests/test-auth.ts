@@ -5,6 +5,8 @@
  *   A) UI_PASSWORD set, JWT_SECRET set, no API_KEY  → password+JWT path
  *   B) API_KEY set, no UI_PASSWORD                  → API-key-only path
  *   C) Neither set                                  → auth fully disabled
+ *   E) LDAP enabled, no local password              → auth enabled; local login unavailable
+ *   F) LDAP enabled + UI_PASSWORD_FILE              → admin/password-only use local auth
  *
  * Asserts the matrix of expected status codes plus a deterministic rate-limit
  * check (RATE_LIMIT_LOGIN_MAX=3 → 4th login attempt returns 429).
@@ -19,7 +21,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import { randomBytes } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -278,6 +280,100 @@ async function scenarioAuthDisabled(): Promise<void> {
   }
 }
 
+async function scenarioLdapEnabledWithoutLocalPassword(): Promise<void> {
+  console.log("\n[scenario E] LDAP enabled without local password");
+  const ldapSecretDir = await mkdtemp(join(tmpdir(), "pi-forge-test-ldap-secret-"));
+  const ldapSecretFile = join(ldapSecretDir, "bind-password");
+  await writeFile(ldapSecretFile, "service-secret\n", "utf8");
+  const srv = await startServer({
+    UI_PASSWORD: undefined,
+    JWT_SECRET: undefined,
+    API_KEY: undefined,
+    LDAP_ENABLED: "true",
+    LDAP_URL: "ldaps://ldap.example.test",
+    LDAP_BIND_DN: "cn=pi-forge,ou=svc,dc=example,dc=test",
+    LDAP_BIND_PASSWORD: undefined,
+    LDAP_BIND_PASSWORD_FILE: ldapSecretFile,
+    LDAP_BASE_DN: "ou=people,dc=example,dc=test",
+  });
+  try {
+    const status = (await (await fetch(`${srv.base}/api/v1/auth/status`)).json()) as {
+      authEnabled: boolean;
+      ldapEnabled?: boolean;
+    };
+    assert("auth/status reports authEnabled=true (ldap)", status.authEnabled === true);
+    assert("auth/status reports ldapEnabled=true", status.ldapEnabled === true);
+
+    const login = await jsonPost(`${srv.base}/api/v1/auth/login`, { password: "anything" });
+    assert("password-only local login → 503 when no local password exists", login.status === 503);
+    const body = (await login.json()) as { error?: string };
+    assert(
+      "  error is ui_password_not_configured",
+      body.error === "ui_password_not_configured",
+      JSON.stringify(body),
+    );
+
+    const probeNoToken = await fetch(`${srv.base}/api/v1/__protected_probe`);
+    assert("protected probe with no token → 401", probeNoToken.status === 401);
+  } finally {
+    await srv.stop();
+    await rm(ldapSecretDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function scenarioLdapAdminUsesLocalPassword(): Promise<void> {
+  console.log("\n[scenario F] LDAP enabled, admin username uses local password file");
+  const secretDir = await mkdtemp(join(tmpdir(), "pi-forge-test-ui-secret-"));
+  const uiPasswordFile = join(secretDir, "ui-password");
+  const localPassword = "local-admin-secret";
+  await writeFile(uiPasswordFile, `${localPassword}\n`, "utf8");
+  const srv = await startServer({
+    UI_PASSWORD: undefined,
+    UI_PASSWORD_FILE: uiPasswordFile,
+    JWT_SECRET: undefined,
+    API_KEY: undefined,
+    // Deliberately omit LDAP_URL/BIND_DN/BIND_PASSWORD/BASE_DN:
+    // username "admin" and password-only login must stay local and
+    // must not depend on LDAP being fully configured.
+    LDAP_ENABLED: "true",
+    REQUIRE_PASSWORD_CHANGE: "false",
+  });
+  try {
+    const passwordOnly = await jsonPost(`${srv.base}/api/v1/auth/login`, {
+      password: localPassword,
+    });
+    assert("password-only login uses local admin password", passwordOnly.status === 200);
+
+    const admin = await jsonPost(`${srv.base}/api/v1/auth/login`, {
+      username: "admin",
+      password: localPassword,
+    });
+    assert("username admin uses local admin password", admin.status === 200);
+    const issued = (await admin.json()) as { token: string };
+    assert("admin login issued a JWT", typeof issued.token === "string" && issued.token.length > 0);
+
+    const adminWrong = await jsonPost(`${srv.base}/api/v1/auth/login`, {
+      username: "admin",
+      password: "wrong",
+    });
+    assert("username admin with wrong local password → 401", adminWrong.status === 401);
+
+    const ldapUser = await jsonPost(`${srv.base}/api/v1/auth/login`, {
+      username: "alice",
+      password: localPassword,
+    });
+    assert(
+      "non-admin username still uses LDAP → 503 when LDAP config missing",
+      ldapUser.status === 503,
+    );
+    const ldapBody = (await ldapUser.json()) as { error?: string };
+    assert("  error is ldap_not_configured", ldapBody.error === "ldap_not_configured");
+  } finally {
+    await srv.stop();
+    await rm(secretDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 /**
  * Scenario D — persisted password-hash but NO env credentials.
  *
@@ -382,6 +478,8 @@ async function main(): Promise<void> {
   await scenarioApiKeyOnly();
   await scenarioAuthDisabled();
   await scenarioPersistedHashOnly();
+  await scenarioLdapEnabledWithoutLocalPassword();
+  await scenarioLdapAdminUsesLocalPassword();
 
   if (failures > 0) {
     console.log(`\n[test-auth] FAIL — ${failures} assertion(s) failed`);

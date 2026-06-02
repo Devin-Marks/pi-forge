@@ -7,6 +7,8 @@ interface AuthState {
   ready: boolean;
   /** True when the server reports auth is required. */
   authRequired: boolean;
+  /** True when the server has LDAP username/password login enabled. */
+  ldapEnabled: boolean;
   /** True when we have a valid stored token (or auth is not required). */
   isAuthenticated: boolean;
   /**
@@ -21,7 +23,7 @@ interface AuthState {
   changePasswordError: string | undefined;
   changePasswordPending: boolean;
   bootstrap: () => Promise<void>;
-  login: (password: string) => Promise<void>;
+  login: (password: string, username?: string) => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   logout: () => void;
 }
@@ -29,6 +31,7 @@ interface AuthState {
 export const useAuthStore = create<AuthState>((set, get) => ({
   ready: false,
   authRequired: false,
+  ldapEnabled: false,
   isAuthenticated: false,
   mustChangePassword: false,
   loginError: undefined,
@@ -37,11 +40,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   changePasswordPending: false,
   bootstrap: async () => {
     try {
-      const { authEnabled } = await api.authStatus();
+      const { authEnabled, ldapEnabled } = await api.authStatus();
       if (!authEnabled) {
         set({
           ready: true,
           authRequired: false,
+          ldapEnabled,
           isAuthenticated: true,
           mustChangePassword: false,
         });
@@ -51,6 +55,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({
         ready: true,
         authRequired: true,
+        ldapEnabled,
         isAuthenticated: stored !== undefined,
         mustChangePassword: stored?.mustChangePassword ?? false,
       });
@@ -58,17 +63,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({
         ready: true,
         authRequired: true,
+        ldapEnabled: false,
         isAuthenticated: false,
         mustChangePassword: false,
         loginError: err instanceof Error ? err.message : "bootstrap_failed",
       });
     }
   },
-  login: async (password: string) => {
+  login: async (password: string, username?: string) => {
     if (get().loginPending) return;
     set({ loginPending: true, loginError: undefined });
     try {
-      const res = await api.login(password);
+      const res = await api.login(password, username);
       setStoredToken({
         token: res.token,
         expiresAt: res.expiresAt,
