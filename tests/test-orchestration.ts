@@ -70,9 +70,15 @@ interface OrchestrationStoreModule {
     supervisorId: string,
     opts?: { markDelivered?: boolean },
   ) => Promise<{ id: string; type: string; delivered: boolean }[]>;
-  readAllInbox: (
-    supervisorId: string,
-  ) => Promise<{ id: string; type: string; delivered: boolean }[]>;
+  readAllInbox: (supervisorId: string) => Promise<
+    {
+      id: string;
+      type: string;
+      delivered: boolean;
+      data: Record<string, unknown>;
+      workerId: string;
+    }[]
+  >;
   pendingInboxCount: (supervisorId: string) => Promise<number>;
   clearInbox: (supervisorId: string) => Promise<void>;
   OrchestrationError: new (code: string, message: string) => Error & { code: string };
@@ -812,6 +818,10 @@ async function main(): Promise<void> {
       "utf8",
     );
     await store.registerWorker({ supervisorId: realSid, workerId: realWorkerId });
+    await eventBridge.bridgeWorkerAgentEvent(
+      { sessionId: realWorkerId, session: { messages: [] } },
+      { type: "agent_start" },
+    );
     const preKillNestedList = await jsend(
       onSrv.base,
       "GET",
@@ -849,6 +859,17 @@ async function main(): Promise<void> {
         (killRes.body as { wasLive?: boolean; archiveStatus?: string }).archiveStatus ===
           "archived",
       JSON.stringify(killRes.body),
+    );
+    const killInboxItems = await store.readAllInbox(realSid);
+    const killStopItem = killInboxItems.find(
+      (item) =>
+        item.workerId === realWorkerId &&
+        item.type === "worker.execution_stopped_without_agent_end",
+    );
+    assert(
+      "kill worker records stopped-without-agent_end reason=killed",
+      killStopItem?.data.reason === "killed",
+      JSON.stringify(killInboxItems),
     );
     const afterKillList = await jsend(
       onSrv.base,

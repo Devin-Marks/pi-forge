@@ -66,7 +66,7 @@ export async function killWorkerAndArchive(args: {
   }
 
   // Fire before unregistering so the bridge can still resolve the supervisor.
-  await bridgeWorkerDeleted(args.workerId, { wasLive }).catch(() => undefined);
+  await bridgeWorkerDeleted(args.workerId, { wasLive, reason: "killed" }).catch(() => undefined);
   await unregisterWorker(args.workerId);
   notifySupervisorSessionListChanged({
     supervisorId: args.supervisorId,
