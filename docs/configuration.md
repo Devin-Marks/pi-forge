@@ -70,10 +70,11 @@ are documented in [`deployment.md`](./deployment.md).
 ### LDAP browser login
 
 LDAP is opt-in and off by default. When `LDAP_ENABLED=true`, pi-forge's
-login form asks for a username and password. Username `admin` (and
-password-only API calls) always use the local pi-forge admin password
-from `UI_PASSWORD`, `UI_PASSWORD_FILE`, or the persisted password hash;
-all other usernames use LDAP. The server binds with the
+login form defaults the username to `admin` so the regular local
+pi-forge admin password remains the first-class login path. Username
+`admin` (and password-only API calls) always use the local pi-forge
+admin password from `UI_PASSWORD`, `UI_PASSWORD_FILE`, or the persisted
+password hash; all other usernames use LDAP. The server binds with the
 configured service account, searches under `LDAP_BASE_DN` using
 `LDAP_USER_FILTER`, optionally checks the returned user's `memberOf`
 (or `LDAP_GROUP_ATTRIBUTE`) against `LDAP_REQUIRED_GROUP_DN`, and then
@@ -104,9 +105,11 @@ form instead.
 
 If both LDAP and local `UI_PASSWORD` / `UI_PASSWORD_FILE` / stored-password
 auth are present, username `admin` and password-only login use the local
-pi-forge password. Other usernames use LDAP. This preserves existing
-single-tenant admin access while allowing LDAP to be enabled during
-migration.
+pi-forge password. Other usernames use LDAP. The username `admin` is
+reserved for local pi-forge admin auth while LDAP is enabled; an LDAP
+account named `admin` cannot be used unless this policy changes later.
+This preserves existing single-tenant admin access while allowing LDAP
+to be enabled during migration.
 
 ## Pi SDK config files
 

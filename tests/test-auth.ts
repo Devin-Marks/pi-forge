@@ -332,11 +332,10 @@ async function scenarioLdapAdminUsesLocalPassword(): Promise<void> {
     UI_PASSWORD_FILE: uiPasswordFile,
     JWT_SECRET: undefined,
     API_KEY: undefined,
+    // Deliberately omit LDAP_URL/BIND_DN/BIND_PASSWORD/BASE_DN:
+    // username "admin" and password-only login must stay local and
+    // must not depend on LDAP being fully configured.
     LDAP_ENABLED: "true",
-    LDAP_URL: "ldaps://ldap.example.test",
-    LDAP_BIND_DN: "cn=pi-forge,ou=svc,dc=example,dc=test",
-    LDAP_BIND_PASSWORD: "service-secret",
-    LDAP_BASE_DN: "ou=people,dc=example,dc=test",
     REQUIRE_PASSWORD_CHANGE: "false",
   });
   try {
@@ -358,6 +357,17 @@ async function scenarioLdapAdminUsesLocalPassword(): Promise<void> {
       password: "wrong",
     });
     assert("username admin with wrong local password → 401", adminWrong.status === 401);
+
+    const ldapUser = await jsonPost(`${srv.base}/api/v1/auth/login`, {
+      username: "alice",
+      password: localPassword,
+    });
+    assert(
+      "non-admin username still uses LDAP → 503 when LDAP config missing",
+      ldapUser.status === 503,
+    );
+    const ldapBody = (await ldapUser.json()) as { error?: string };
+    assert("  error is ldap_not_configured", ldapBody.error === "ldap_not_configured");
   } finally {
     await srv.stop();
     await rm(secretDir, { recursive: true, force: true }).catch(() => undefined);
