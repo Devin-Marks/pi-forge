@@ -55,13 +55,13 @@ pi-forge/
 │   │   │   │   ├── event-bridge.ts      # SDK/forge events → dispatcher
 │   │   │   │   ├── init.ts              # Boot-time wiring of ask-user-question + processes
 │   │   │   │   └── types.ts             # WebhookConfig, DeliveryRecord, event union
-│   │   │   ├── orchestration/            # Session-as-supervisor / session-as-worker (opt-in)
+│   │   │   ├── orchestration/            # Session-as-supervisor / session-as-worker
 │   │   │   │   ├── store.ts             # session-orchestration.json + orchestrator-inbox.json
 │   │   │   │   ├── tools.ts             # orchestrate_* ToolDefinition factory (8 tools)
 │   │   │   │   ├── inbox.ts             # PUSH wakeup when supervisor idle + PULL drain
 │   │   │   │   ├── event-bridge.ts      # Worker SDK/forge events → supervisor inbox
 │   │   │   │   ├── init.ts              # Boot-time wiring of ask-user-question + processes
-│   │   │   │   ├── config.ts            # ORCHESTRATION_ENABLED env + fanout cap
+│   │   │   │   ├── config.ts            # orchestration enable/disable gate + fanout cap
 │   │   │   │   └── types.ts             # InboxItem, SupervisorRecord, WorkerRecord
 │   │   │   └── routes/                  # auth, config, control, exec, files, git, health,
 │   │   │                                #   mcp, projects, prompt, sessions, stream, terminal,

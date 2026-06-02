@@ -272,10 +272,10 @@ export interface UiConfigResponse {
    */
   passwordAuthEnabled: boolean;
   /**
-   * True when the server has `ORCHESTRATION_ENABLED=true` AND is
-   * NOT in MINIMAL_UI mode. Controls whether the supervisor-mode
-   * toggle and Workers panel render at all. Defaults to false on
-   * older servers (forward-compatible).
+   * True when the server has orchestration available (enabled by
+   * default unless disabled by config) AND is NOT in MINIMAL_UI mode.
+   * Controls whether the supervisor-mode toggle and Workers panel
+   * render at all. Defaults to false on older servers (forward-compatible).
    */
   orchestrationEnabled: boolean;
 }

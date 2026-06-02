@@ -581,7 +581,7 @@ function makeSubscribeHandler(live: LiveSession): () => void {
 /**
  * Resolve the orchestration tools for a given session. Returns the
  * empty array when:
- *   - the instance-level orchestration flag is off (env or
+ *   - instance-level orchestration is disabled (config or
  *     MINIMAL_UI gate), OR
  *   - the session isn't a registered supervisor.
  *
@@ -596,7 +596,7 @@ async function resolveOrchestrationTools(sessionId: string): Promise<ToolDefinit
     if (!(await isSupervisor(sessionId))) return [];
   } catch {
     // If the store is unreadable, skip — orchestration is
-    // experimental + opt-in; a missing/corrupt file should not
+    // feature-gated; a missing/corrupt file should not
     // break session creation.
     return [];
   }

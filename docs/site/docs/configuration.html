@@ -152,9 +152,14 @@ in <code>cli.ts</code>). The most-touched ones:</p>
 <td>Set when behind a reverse proxy so <code>req.ip</code> is the real client (required for per-user login rate limits).</td>
 </tr>
 <tr>
-<td><code>ORCHESTRATION_ENABLED</code></td>
+<td><code>ORCHESTRATION_DISABLED</code></td>
 <td><code>false</code></td>
-<td>Surface the chat-view <code>Orch</code> toggle so sessions can opt in to supervisor mode (<code>orchestrate_*</code> tool group, worker spawning, inbox). Hard-disabled under <code>MINIMAL_UI</code> regardless. See <a href="./orchestration.md"><code>orchestration.md</code></a>.</td>
+<td>Disable the chat-view <code>Orch</code> toggle and orchestration REST/tool surface. Orchestration is enabled by default; hard-disabled under <code>MINIMAL_UI</code> regardless. See <a href="./orchestration.md"><code>orchestration.md</code></a>.</td>
+</tr>
+<tr>
+<td><code>ORCHESTRATION_ENABLED</code></td>
+<td><code>true</code></td>
+<td>Legacy compatibility switch. <code>false</code> disables orchestration; <code>true</code>/unset keep the default enabled behavior. Prefer <code>ORCHESTRATION_DISABLED=true</code> for new deployments.</td>
 </tr>
 <tr>
 <td><code>ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR</code></td>

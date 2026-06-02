@@ -39,6 +39,22 @@ function readBool(key: string, fallback: boolean): boolean {
   throw new Error(`config: ${key} must be a boolean-ish value (got ${v})`);
 }
 
+function readBoundedInt(key: string, fallback: number, min: number, max: number): number {
+  const v = readEnv(key);
+  if (v === undefined) return fallback;
+  const n = Number.parseInt(v, 10);
+  if (!Number.isFinite(n) || n < min || n > max) return fallback;
+  return n;
+}
+
+function readOrchestrationEnabled(): boolean {
+  if (readBool("ORCHESTRATION_DISABLED", false)) return false;
+  // Backward compatibility: the old opt-in flag now only acts as a
+  // disable switch when explicitly false. `true` and unset both keep
+  // the new default (enabled) behavior.
+  return readBool("ORCHESTRATION_ENABLED", true);
+}
+
 /**
  * Forge-owned root. `~/.pi-forge` is the single dotdir we own.
  * By default it holds both the project registry and the workspace where
@@ -252,6 +268,20 @@ export const config = Object.freeze({
    * forge-owned files.
    */
   quickActionsFile: join(FORGE_DATA_DIR, "quick-actions.json"),
+  /**
+   * Instance-level session orchestration availability. Enabled by
+   * default; operators disable it with `ORCHESTRATION_DISABLED=true`
+   * (or, for compatibility with the historical opt-in flag,
+   * `ORCHESTRATION_ENABLED=false`). MINIMAL_UI remains a separate hard
+   * gate in `orchestration/config.ts`.
+   */
+  orchestrationEnabled: readOrchestrationEnabled(),
+  orchestrationMaxWorkersPerSupervisor: readBoundedInt(
+    "ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR",
+    8,
+    1,
+    100,
+  ),
   /**
    * Whether `/api/docs` (Swagger UI + OpenAPI JSON spec) is reachable.
    * Defaults to true so Docker / production deploys keep working without
