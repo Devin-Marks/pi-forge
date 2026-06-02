@@ -1113,6 +1113,10 @@ function Message({
     return <BashExecution message={message} />;
   }
 
+  if (message.role === "custom" && message.customType === "subagent-notify") {
+    return <SubagentNotify message={message} />;
+  }
+
   // Fallback: stringify so we can see what we missed.
   return (
     <details className="rounded-lg border border-neutral-800 bg-neutral-900/40 px-3 py-2 text-xs text-neutral-400">
@@ -2071,6 +2075,28 @@ function SubagentResultRow({
         </button>
       )}
     </div>
+  );
+}
+
+function SubagentNotify({ message }: { message: AgentMessageLike }) {
+  const text = extractText(message).trim() || "Background subagent update";
+  const firstLine = text.split(/\r?\n/, 1)[0]?.trim();
+  const summary =
+    firstLine && firstLine.length > 0
+      ? firstLine.replace(/\*\*/g, "")
+      : "Background subagent update";
+  return (
+    <details className="rounded border border-amber-700/40 bg-amber-950/30 text-xs text-amber-100 light:border-amber-300 light:bg-amber-50 light:text-amber-900">
+      <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-amber-200 light:text-amber-800">
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="text-amber-400 light:text-amber-700">subagent</span>
+          <span className="truncate text-[11px]">{summary}</span>
+        </span>
+      </summary>
+      <div className="border-t border-amber-900/30 px-3 py-2 text-sm light:border-amber-200">
+        <ChatMarkdown text={text} />
+      </div>
+    </details>
   );
 }
 

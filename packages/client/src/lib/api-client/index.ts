@@ -267,6 +267,16 @@ function vUnifiedSession(value: unknown, status: number): UnifiedSession {
   if (typeof value.name === "string") out.name = value.name;
   if (typeof value.parentSessionId === "string") out.parentSessionId = value.parentSessionId;
   if (typeof value.runId === "string") out.runId = value.runId;
+  if (typeof value.isExternalLive === "boolean") out.isExternalLive = value.isExternalLive;
+  if (
+    value.externalState === "queued" ||
+    value.externalState === "running" ||
+    value.externalState === "complete" ||
+    value.externalState === "failed" ||
+    value.externalState === "paused"
+  ) {
+    out.externalState = value.externalState;
+  }
   if (typeof value.path === "string") out.path = value.path;
   return out;
 }

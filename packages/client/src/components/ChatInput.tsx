@@ -229,6 +229,13 @@ const DOUBLE_ESC_WINDOW_MS = 600;
 
 export function ChatInput({ sessionId }: Props) {
   const isStreaming = useSessionStore((s) => s.streamingBySession[sessionId] ?? false);
+  const isReadOnlyExternal = useSessionStore((s) =>
+    Object.values(s.byProject).some((sessions) =>
+      sessions.some(
+        (session) => session.sessionId === sessionId && session.isExternalLive === true,
+      ),
+    ),
+  );
   // Minimal-mode deploys disable the chat-input bash exec (`!` /
   // `!!`) — locked-down installs can't justify giving end users a
   // direct shell. The agent's own `bash` tool is unaffected; the
@@ -1173,6 +1180,10 @@ export function ChatInput({ sessionId }: Props) {
     // Allow empty text only when there's at least one attachment —
     // sending "look at this" with an image but no caption is a
     // common path. Server still rejects entirely-empty prompts.
+    if (isReadOnlyExternal) {
+      setAttachmentError("This pi-subagents child is running externally and is read-only.");
+      return;
+    }
     if ((value.length === 0 && attachments.length === 0) || submitting) return;
     // Record EVERY submission (slash command, bash exec, prompt,
     // steer) in the per-session input history so up-arrow recall
@@ -1862,7 +1873,7 @@ export function ChatInput({ sessionId }: Props) {
             <div className="relative" ref={attachMenuRef}>
               <button
                 onClick={() => setAttachMenuOpen((o) => !o)}
-                disabled={submitting || isStreaming}
+                disabled={submitting || isStreaming || isReadOnlyExternal}
                 aria-label="Attach"
                 aria-expanded={attachMenuOpen}
                 className="inline-flex min-h-11 min-w-11 items-center justify-center self-stretch rounded-md border border-neutral-700 bg-neutral-900 px-2 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1902,7 +1913,7 @@ export function ChatInput({ sessionId }: Props) {
           ) : (
             <button
               onClick={() => fileInputRef.current?.click()}
-              disabled={submitting || isStreaming}
+              disabled={submitting || isStreaming || isReadOnlyExternal}
               aria-label="Attach files"
               className="inline-flex items-center justify-center self-stretch rounded-md border border-neutral-700 bg-neutral-900 px-2 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-50"
               title={
@@ -2022,19 +2033,21 @@ export function ChatInput({ sessionId }: Props) {
                 }, 0);
               }}
               placeholder={
-                isAutoRetrying
-                  ? "Auto-retry in progress — your message will be queued and sent after the retry completes…"
-                  : isStreaming
-                    ? isMobile
-                      ? "Steer the agent…"
-                      : "Steer the agent (Enter to send, Shift+Enter for newline)…"
-                    : isMobile
-                      ? minimalUi
-                        ? "Ask pi — `/` runs commands, `@path` references files…"
-                        : "Ask pi — `/` runs commands, `!` runs bash, `@path` references files…"
-                      : minimalUi
-                        ? "Ask pi (Enter to send, Shift+Enter for newline) — `/` runs commands, `@path` references files…"
-                        : "Ask pi (Enter to send, Shift+Enter for newline) — `/` runs commands, `!` runs bash, `@path` references files…"
+                isReadOnlyExternal
+                  ? "Read-only while this pi-subagents child is running externally…"
+                  : isAutoRetrying
+                    ? "Auto-retry in progress — your message will be queued and sent after the retry completes…"
+                    : isStreaming
+                      ? isMobile
+                        ? "Steer the agent…"
+                        : "Steer the agent (Enter to send, Shift+Enter for newline)…"
+                      : isMobile
+                        ? minimalUi
+                          ? "Ask pi — `/` runs commands, `@path` references files…"
+                          : "Ask pi — `/` runs commands, `!` runs bash, `@path` references files…"
+                        : minimalUi
+                          ? "Ask pi (Enter to send, Shift+Enter for newline) — `/` runs commands, `@path` references files…"
+                          : "Ask pi (Enter to send, Shift+Enter for newline) — `/` runs commands, `!` runs bash, `@path` references files…"
               }
               title={
                 isAutoRetrying
@@ -2049,6 +2062,7 @@ export function ChatInput({ sessionId }: Props) {
               // desktop so the inline style only applies the
               // user-dragged value.
               rows={isMobile ? 2 : 3}
+              disabled={isReadOnlyExternal}
               style={
                 isMobile && autoHeight !== undefined
                   ? { height: `${autoHeight}px`, maxHeight: "30vh" }
@@ -2056,7 +2070,7 @@ export function ChatInput({ sessionId }: Props) {
                     ? { height: `${textareaHeight}px` }
                     : undefined
               }
-              className={`block w-full resize-none rounded-md border bg-neutral-900 px-3 py-2 text-sm text-neutral-100 outline-none ${
+              className={`block w-full resize-none rounded-md border bg-neutral-900 px-3 py-2 text-sm text-neutral-100 outline-none disabled:cursor-not-allowed disabled:opacity-60 ${
                 // Match attach + send button min-height on mobile so
                 // every child of the row renders at the same baseline
                 // height. Without this the textarea collapses to its
@@ -2106,7 +2120,11 @@ export function ChatInput({ sessionId }: Props) {
           <div className="flex flex-col-reverse gap-1 self-stretch md:flex-row md:items-end md:self-auto">
             <button
               onClick={() => void submit()}
-              disabled={(text.trim().length === 0 && attachments.length === 0) || submitting}
+              disabled={
+                (text.trim().length === 0 && attachments.length === 0) ||
+                submitting ||
+                isReadOnlyExternal
+              }
               className="flex-1 rounded-md bg-neutral-100 px-4 text-sm font-medium text-neutral-900 disabled:cursor-not-allowed disabled:opacity-50 md:flex-none md:py-2"
               title={
                 isStreaming

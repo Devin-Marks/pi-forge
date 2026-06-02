@@ -299,6 +299,10 @@ export interface UnifiedSession {
   parentSessionId?: string;
   /** pi-subagents run id when this is a child session. */
   runId?: string;
+  /** True when pi-subagents status.json says this child is queued/running externally. */
+  isExternalLive?: boolean;
+  /** Authoritative pi-subagents async status state when known. */
+  externalState?: "queued" | "running" | "complete" | "failed" | "paused";
   /**
    * Absolute disk path to the session JSONL. Set for disk-discovered
    * sessions; undefined for live-only sessions that haven't flushed

@@ -78,6 +78,7 @@ interface TestLive {
   session: {
     sessionId: string;
     sessionFile?: string;
+    messages?: unknown[];
     sessionManager: { appendMessage: (msg: unknown) => string };
   };
   sessionId: string;
@@ -92,12 +93,16 @@ interface TestUnifiedSession {
   sessionId: string;
   parentSessionId?: string;
   runId?: string;
+  isLive?: boolean;
+  isExternalLive?: boolean;
+  externalState?: "queued" | "running" | "complete" | "failed" | "paused";
 }
 interface TestRegistry {
   createSession: (projectId: string, workspacePath: string) => Promise<TestLive>;
   disposeSession: (id: string) => Promise<boolean>;
   disposeAllSessions: () => Promise<void>;
   resumeSession: (id: string, projectId: string, workspacePath: string) => Promise<TestLive>;
+  resumeSessionById: (id: string) => Promise<TestLive>;
   discoverSessionsOnDisk: (projectId: string, workspacePath: string) => Promise<TestDiscovered[]>;
   listSessionsForProject: (
     projectId: string,
@@ -151,6 +156,13 @@ async function main(): Promise<void> {
   const orchestrationStore = (await import(
     resolve(repoRoot, "packages/server/dist/orchestration/store.js")
   )) as unknown as TestOrchestrationStore;
+  const subagentsExternal = (await import(
+    resolve(repoRoot, "packages/server/dist/subagents-external.js")
+  )) as {
+    SUBAGENTS_ASYNC_DIR: string;
+    SUBAGENTS_RESULTS_DIR: string;
+    deliverExternalSubagentCompletionForRun: (runId: string) => Promise<void>;
+  };
 
   // Register the project so findSessionLocation can locate children.
   const project = await pm.createProject("test-subagent-project", workspacePath);
@@ -251,7 +263,88 @@ async function main(): Promise<void> {
       `loc=${JSON.stringify(loc)}`,
     );
 
-    // 5. resumeSession opens the child as a LiveSession (registry hit).
+    // 5. Authoritative pi-subagents status.json marks queued/running children as
+    // externally live without polluting the pi-forge live registry.
+    await mkdir(join(subagentsExternal.SUBAGENTS_ASYNC_DIR, runId), { recursive: true });
+    await writeFile(
+      join(subagentsExternal.SUBAGENTS_ASYNC_DIR, runId, "status.json"),
+      JSON.stringify({
+        runId,
+        sessionId: parent.sessionId,
+        state: "running",
+        sessionFile: childAPath,
+      }),
+      "utf8",
+    );
+    const activeList = await registry.listSessionsForProject(project.id, project.path);
+    const activeChild = activeList.find((s) => s.sessionId === childA);
+    assert(
+      "running pi-subagents child isExternalLive=true but isLive=false",
+      activeChild?.isExternalLive === true &&
+        activeChild?.isLive === false &&
+        activeChild.externalState === "running",
+      `row=${JSON.stringify(activeChild)}`,
+    );
+    try {
+      await registry.resumeSession(childA, project.id, project.path);
+      assert(
+        "resumeSession rejects externally running child",
+        false,
+        "resume unexpectedly succeeded",
+      );
+    } catch (err) {
+      assert(
+        "resumeSession rejects externally running child",
+        err instanceof Error && err.name === "ExternalSubagentActiveError",
+        `err=${err instanceof Error ? err.name : String(err)}`,
+      );
+    }
+    await writeFile(
+      join(subagentsExternal.SUBAGENTS_ASYNC_DIR, runId, "status.json"),
+      JSON.stringify({
+        runId,
+        sessionId: parent.sessionId,
+        state: "complete",
+        sessionFile: childAPath,
+      }),
+      "utf8",
+    );
+    await mkdir(subagentsExternal.SUBAGENTS_RESULTS_DIR, { recursive: true });
+    await writeFile(
+      join(subagentsExternal.SUBAGENTS_RESULTS_DIR, `${runId}.json`),
+      JSON.stringify({
+        runId,
+        sessionId: parent.sessionId,
+        agent: "reviewer",
+        success: true,
+        summary: "done",
+        sessionFile: childAPath,
+      }),
+      "utf8",
+    );
+    await subagentsExternal.deliverExternalSubagentCompletionForRun(runId);
+    const notifyMessage = parent.session.messages?.find(
+      (m) =>
+        typeof m === "object" &&
+        m !== null &&
+        (m as { customType?: unknown }).customType === "subagent-notify",
+    ) as { content?: unknown } | undefined;
+    assert(
+      "explicit async completion path appends renderable subagent-notify to parent",
+      typeof notifyMessage?.content === "string" &&
+        notifyMessage.content.includes("Background task completed"),
+      `message=${JSON.stringify(notifyMessage)}`,
+    );
+
+    const completeList = await registry.listSessionsForProject(project.id, project.path);
+    const completeChild = completeList.find((s) => s.sessionId === childA);
+    assert(
+      "terminal pi-subagents status clears isExternalLive",
+      completeChild?.isExternalLive === false && completeChild.externalState === "complete",
+      `row=${JSON.stringify(completeChild)}`,
+    );
+
+    // 6. resumeSession opens the completed child as a LiveSession (registry hit).
     const resumed = await registry.resumeSession(childA, project.id, project.path);
     assert(
       "resumeSession returns a LiveSession for the child",
@@ -259,7 +352,44 @@ async function main(): Promise<void> {
       `got ${resumed.sessionId}`,
     );
 
-    // 6. REALISTIC pi-subagents layout: the plugin's
+    await writeFile(
+      join(subagentsExternal.SUBAGENTS_ASYNC_DIR, runId, "status.json"),
+      JSON.stringify({
+        runId,
+        sessionId: parent.sessionId,
+        state: "running",
+        sessionFile: childAPath,
+      }),
+      "utf8",
+    );
+    try {
+      await registry.resumeSessionById(childA);
+      assert(
+        "resumeSessionById rejects and removes existing live child when status becomes running",
+        false,
+        "resume unexpectedly succeeded",
+      );
+    } catch (err) {
+      assert(
+        "resumeSessionById rejects and removes existing live child when status becomes running",
+        err instanceof Error &&
+          err.name === "ExternalSubagentActiveError" &&
+          registry.getSession(childA) === undefined,
+        `err=${err instanceof Error ? err.name : String(err)} live=${registry.getSession(childA) !== undefined}`,
+      );
+    }
+    await writeFile(
+      join(subagentsExternal.SUBAGENTS_ASYNC_DIR, runId, "status.json"),
+      JSON.stringify({
+        runId,
+        sessionId: parent.sessionId,
+        state: "complete",
+        sessionFile: childAPath,
+      }),
+      "utf8",
+    );
+
+    // 7. REALISTIC pi-subagents layout: the plugin's
     // `getSubagentSessionRoot` names the child dir using the parent
     // FILE's full basename (timestamp + id), not the bare parent id.
     // The discovery has to map basename → parent's actual sessionId
@@ -295,7 +425,7 @@ async function main(): Promise<void> {
       `got parentSessionId=${realisticChildEntry?.parentSessionId} expected=${realisticParentId}`,
     );
 
-    // 7a. DEEP layout (parallel/chain mode):
+    // 8a. DEEP layout (parallel/chain mode):
     //     <basename>/<runId>/run-N/session.jsonl. Three dir levels
     //     under the parent — observed in the wild on real
     //     pi-subagents installs. Discovery has to walk past the runId
@@ -333,7 +463,7 @@ async function main(): Promise<void> {
       `got runId=${deepChildEntry?.runId}`,
     );
 
-    // 7b. FLAT layout (no runId subdir): some pi-subagents run modes
+    // 8b. FLAT layout (no runId subdir): some pi-subagents run modes
     // write children directly under <parentBasename>/, not under
     // <parentBasename>/<runId>/. Discovery must surface these too.
     const flatParentId = "flat-parent-" + randomUUID().slice(0, 6);
@@ -356,7 +486,7 @@ async function main(): Promise<void> {
       `parentSessionId=${flatChildEntry?.parentSessionId} runId=${flatChildEntry?.runId}`,
     );
 
-    // 8. Cascade-delete: deleting a parent session also wipes its
+    // 9. Cascade-delete: deleting a parent session also wipes its
     // pi-subagents sibling directory and any nested children, so the
     // sidebar doesn't accumulate orphan child sessions whose parent
     // is gone. We use the deep-layout fixture because it exercises

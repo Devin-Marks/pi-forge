@@ -37,6 +37,7 @@ import { createOrchestrationTools } from "./orchestration/tools.js";
 import { bridgeWorkerAgentEvent } from "./orchestration/event-bridge.js";
 import { notifySupervisorDisposed, notifySupervisorIdle } from "./orchestration/inbox.js";
 import { archiveSessionFiles } from "./session-archive.js";
+import { getExternalSubagentStatusForSession } from "./subagents-external.js";
 
 /**
  * Minimal SSE client contract used by the registry to fan out events.
@@ -101,6 +102,10 @@ export interface DiscoveredSession {
   parentSessionId?: string;
   /** The pi-subagents run id (the directory between parent and child). */
   runId?: string;
+  /** True when pi-subagents authoritative status says this child is queued/running externally. */
+  isExternalLive?: boolean;
+  /** Authoritative pi-subagents async status state when known. */
+  externalState?: "queued" | "running" | "complete" | "failed" | "paused";
 }
 
 /**
@@ -127,6 +132,10 @@ export interface UnifiedSession {
   parentSessionId?: string;
   /** pi-subagents run id when this is a child session. */
   runId?: string;
+  /** True when pi-subagents authoritative status says this child is queued/running externally. */
+  isExternalLive?: boolean;
+  /** Authoritative pi-subagents async status state when known. */
+  externalState?: "queued" | "running" | "complete" | "failed" | "paused";
   /**
    * Absolute path to the session JSONL on disk. Surfaced so the
    * client can resolve a `sessionFile` reference (e.g. from a
@@ -155,6 +164,13 @@ export class EntryNotFoundError extends Error {
   constructor(id: string) {
     super(`entry not found: ${id}`);
     this.name = "EntryNotFoundError";
+  }
+}
+
+export class ExternalSubagentActiveError extends Error {
+  constructor(id: string) {
+    super(`external subagent is active: ${id}`);
+    this.name = "ExternalSubagentActiveError";
   }
 }
 
@@ -790,11 +806,62 @@ function getForkLock(sessionId: string): Lock {
  * Concurrent calls for the same sessionId share a single in-flight
  * AgentSession creation — see resumeInflight.
  */
+async function externallyActiveDiscoveredSession(
+  sessionId: string,
+  projectId: string,
+  workspacePath: string,
+): Promise<DiscoveredSession | undefined> {
+  const discovered = await discoverSessionsOnDisk(projectId, workspacePath);
+  const match = discovered.find((s) => s.sessionId === sessionId);
+  if (match === undefined) return undefined;
+  const external = await getExternalSubagentStatusForSession({
+    runId: match.runId,
+    path: match.path,
+  });
+  return external?.isExternalLive === true ? match : undefined;
+}
+
+function detachExternallyActiveLiveSession(sessionId: string): void {
+  const live = registry.get(sessionId);
+  if (live === undefined) return;
+
+  // Do NOT call disposeSession(), AgentSession.abort(), AgentSession.dispose(),
+  // or processManager.disposeSession() here. If pi-subagents is already running
+  // this child externally, pi-forge must stop managing its in-memory view without
+  // sending any lifecycle signal that could abort/kill the external execution.
+  try {
+    live.unsubscribe();
+  } catch {
+    // ignore
+  }
+  for (const client of live.clients) {
+    try {
+      client.close();
+    } catch {
+      // ignore
+    }
+  }
+  live.clients.clear();
+  registry.delete(sessionId);
+}
+
+export async function rejectOrDisposeExternallyActiveSession(
+  sessionId: string,
+  projectId: string,
+  workspacePath: string,
+): Promise<void> {
+  const match = await externallyActiveDiscoveredSession(sessionId, projectId, workspacePath);
+  if (match === undefined) return;
+  detachExternallyActiveLiveSession(sessionId);
+  throw new ExternalSubagentActiveError(sessionId);
+}
+
 export async function resumeSession(
   sessionId: string,
   projectId: string,
   workspacePath: string,
 ): Promise<LiveSession> {
+  await rejectOrDisposeExternallyActiveSession(sessionId, projectId, workspacePath);
   const existing = registry.get(sessionId);
   if (existing) return existing;
 
@@ -807,6 +874,7 @@ export async function resumeSession(
   return resumeInflight(sessionId, async () => {
     // Re-check after lock acquisition: another resume may have raced
     // ahead and populated the registry while we were queued.
+    await rejectOrDisposeExternallyActiveSession(sessionId, projectId, workspacePath);
     const raced = registry.get(sessionId);
     if (raced) return raced;
 
@@ -844,6 +912,14 @@ export async function resumeSession(
         parentSessionId: match.parentSessionId,
       }) + "\n",
     );
+
+    const external = await getExternalSubagentStatusForSession({
+      runId: match.runId,
+      path: match.path,
+    });
+    if (external?.isExternalLive === true) {
+      throw new ExternalSubagentActiveError(sessionId);
+    }
 
     // For child sessions, hand SessionManager.open the *child's* run
     // dir as the sessionDir so any subsequent file operations the SDK
@@ -1342,6 +1418,11 @@ export async function listSessionsForProject(
       merged.firstMessage = d.firstMessage;
       if (d.parentSessionId !== undefined) merged.parentSessionId = d.parentSessionId;
       if (d.runId !== undefined) merged.runId = d.runId;
+      const external = await getExternalSubagentStatusForSession({ runId: d.runId, path: d.path });
+      if (external !== undefined) {
+        merged.externalState = external.state;
+        merged.isExternalLive = external.isExternalLive;
+      }
       merged.path = d.path;
       continue;
     }
@@ -1359,6 +1440,11 @@ export async function listSessionsForProject(
     };
     if (d.parentSessionId !== undefined) u.parentSessionId = d.parentSessionId;
     if (d.runId !== undefined) u.runId = d.runId;
+    const external = await getExternalSubagentStatusForSession({ runId: d.runId, path: d.path });
+    if (external !== undefined) {
+      u.externalState = external.state;
+      u.isExternalLive = external.isExternalLive;
+    }
     liveById.set(d.sessionId, u);
   }
 
@@ -1447,10 +1533,11 @@ export async function findSessionLocation(
  * receive projectId in the URL (the stream route specifically).
  */
 export async function resumeSessionById(sessionId: string): Promise<LiveSession> {
-  const existing = registry.get(sessionId);
-  if (existing) return existing;
   const loc = await findSessionLocation(sessionId);
   if (loc === undefined) throw new SessionNotFoundError(sessionId);
+  await rejectOrDisposeExternallyActiveSession(sessionId, loc.projectId, loc.workspacePath);
+  const existing = registry.get(sessionId);
+  if (existing) return existing;
   return resumeSession(sessionId, loc.projectId, loc.workspacePath);
 }
 
