@@ -39,37 +39,30 @@ function sanitizeTempScopeSegment(value: string): string {
   return sanitized || "unknown";
 }
 
-function piSubagentsResultsDir(): string {
+function piSubagentsTempRoot(): string {
   if (typeof process.getuid === "function")
-    return join(tmpdir(), `pi-subagents-uid-${process.getuid()}`, "async-subagent-results");
+    return join(tmpdir(), `pi-subagents-uid-${process.getuid()}`);
   for (const key of ["USERNAME", "USER", "LOGNAME"] as const) {
     const value = process.env[key];
-    if (value)
-      return join(
-        tmpdir(),
-        `pi-subagents-user-${sanitizeTempScopeSegment(value)}`,
-        "async-subagent-results",
-      );
+    if (value) return join(tmpdir(), `pi-subagents-user-${sanitizeTempScopeSegment(value)}`);
   }
   try {
     const username = userInfo().username;
-    if (username)
-      return join(
-        tmpdir(),
-        `pi-subagents-user-${sanitizeTempScopeSegment(username)}`,
-        "async-subagent-results",
-      );
+    if (username) return join(tmpdir(), `pi-subagents-user-${sanitizeTempScopeSegment(username)}`);
   } catch {
     // Fall through to HOME-based scoping.
   }
   const homedir = process.env.USERPROFILE ?? process.env.HOME;
-  if (homedir)
-    return join(
-      tmpdir(),
-      `pi-subagents-home-${sanitizeTempScopeSegment(homedir)}`,
-      "async-subagent-results",
-    );
-  return join(tmpdir(), "pi-subagents-shared", "async-subagent-results");
+  if (homedir) return join(tmpdir(), `pi-subagents-home-${sanitizeTempScopeSegment(homedir)}`);
+  return join(tmpdir(), "pi-subagents-shared");
+}
+
+function piSubagentsResultsDir(): string {
+  return join(piSubagentsTempRoot(), "async-subagent-results");
+}
+
+function piSubagentsAsyncRunsDir(): string {
+  return join(piSubagentsTempRoot(), "async-subagent-runs");
 }
 
 let failures = 0;
@@ -142,7 +135,7 @@ interface TestRegistry {
   disposeAllSessions: () => Promise<void>;
   resumeSession: (id: string, projectId: string, workspacePath: string) => Promise<TestLive>;
   resumeSessionById: (id: string) => Promise<TestLive>;
-  markActiveSubagentParent: (parentSessionId: string) => void;
+  markActiveSubagentParent: (parentSessionId: string, runId?: string) => void;
   clearActiveSubagentParent: (parentSessionId: string) => void;
   discoverSessionsOnDisk: (projectId: string, workspacePath: string) => Promise<TestDiscovered[]>;
   listSessionsForProject: (
@@ -412,7 +405,62 @@ async function main(): Promise<void> {
       registry.getSession(childB) !== undefined,
     );
     await registry.disposeSession(childB);
+
+    const statusRunId = "run-" + randomUUID().slice(0, 8);
+    const statusChildId = randomUUID();
+    const statusChildPath = join(
+      projectSessionDir,
+      parent.sessionId,
+      statusRunId,
+      `${statusChildId}.jsonl`,
+    );
+    await writeChildSessionFile(statusChildPath, statusChildId, project.path);
+    registry.markActiveSubagentParent(parent.sessionId, statusRunId);
+    const statusActiveList = await registry.listSessionsForProject(project.id, project.path);
+    const statusActiveChild = statusActiveList.find((s) => s.sessionId === statusChildId);
+    assert(
+      "status-tracked async child is marked externally live",
+      statusActiveChild?.isExternalLive === true,
+      `isExternalLive=${statusActiveChild?.isExternalLive}`,
+    );
+    const statusDir = join(piSubagentsAsyncRunsDir(), statusRunId);
+    await mkdir(statusDir, { recursive: true });
+    await writeFile(
+      join(statusDir, "status.json"),
+      `${JSON.stringify({
+        runId: statusRunId,
+        sessionId: parent.sessionId,
+        state: "complete",
+        summary: "status done",
+        sessionFile: statusChildPath,
+        steps: [{ agent: "worker", status: "completed", sessionFile: statusChildPath }],
+      })}\n`,
+    );
+    const parentGotStatusNotify = await waitFor(() =>
+      parent.session.messages.some((message) => {
+        if (typeof message !== "object" || message === null) return false;
+        const m = message as { role?: unknown; customType?: unknown; content?: unknown };
+        return (
+          m.role === "custom" &&
+          m.customType === "subagent-notify" &&
+          typeof m.content === "string" &&
+          m.content.includes("status done")
+        );
+      }),
+    );
+    assert(
+      "terminal status.json is bridged into parent custom notification",
+      parentGotStatusNotify,
+    );
+    const statusCompletedList = await registry.listSessionsForProject(project.id, project.path);
+    const statusCompletedChild = statusCompletedList.find((s) => s.sessionId === statusChildId);
+    assert(
+      "terminal status.json clears external-live child state",
+      statusCompletedChild?.isExternalLive !== true,
+      `isExternalLive=${statusCompletedChild?.isExternalLive}`,
+    );
     await rm(resultsDir, { recursive: true, force: true });
+    await rm(piSubagentsAsyncRunsDir(), { recursive: true, force: true });
 
     // 6. resumeSession opens the child as a LiveSession (registry hit)
     //    once called directly for a child that is not under test for

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, watch, type FSWatcher } from "node:fs";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -167,23 +167,36 @@ export class EntryNotFoundError extends Error {
 
 const registry = new Map<string, LiveSession>();
 
-const activeSubagentParents = new Set<string>();
-const activeSubagentParentPollers = new Map<string, NodeJS.Timeout>();
-const activeSubagentParentFileState = new Map<string, { mtimeMs: number; size: number }>();
-const bridgedSubagentResultKeys = new Set<string>();
-
-export function clearActiveSubagentParent(parentSessionId: string): void {
-  activeSubagentParents.delete(parentSessionId);
-  const poller = activeSubagentParentPollers.get(parentSessionId);
-  if (poller !== undefined) clearInterval(poller);
-  activeSubagentParentPollers.delete(parentSessionId);
-  activeSubagentParentFileState.delete(parentSessionId);
+interface ActiveSubagentParentState {
+  runIds: Set<string>;
+  watchers: FSWatcher[];
+  timers: NodeJS.Timeout[];
 }
 
-export function markActiveSubagentParent(parentSessionId: string): void {
-  activeSubagentParents.add(parentSessionId);
+const activeSubagentParents = new Map<string, ActiveSubagentParentState>();
+const bridgedSubagentResultKeys = new Set<string>();
+
+function makeActiveSubagentParentState(): ActiveSubagentParentState {
+  return { runIds: new Set<string>(), watchers: [], timers: [] };
+}
+
+function stopActiveSubagentArtifactObservers(state: ActiveSubagentParentState): void {
+  for (const watcher of state.watchers.splice(0)) watcher.close();
+  for (const timer of state.timers.splice(0)) clearTimeout(timer);
+}
+
+export function clearActiveSubagentParent(parentSessionId: string): void {
+  const state = activeSubagentParents.get(parentSessionId);
+  if (state !== undefined) stopActiveSubagentArtifactObservers(state);
+  activeSubagentParents.delete(parentSessionId);
+}
+
+export function markActiveSubagentParent(parentSessionId: string, runId?: string): void {
+  const existing = activeSubagentParents.get(parentSessionId) ?? makeActiveSubagentParentState();
+  if (runId !== undefined && runId.length > 0) existing.runIds.add(runId);
+  activeSubagentParents.set(parentSessionId, existing);
   const live = registry.get(parentSessionId);
-  if (live !== undefined) startActiveSubagentParentPoller(live);
+  if (live !== undefined) startActiveSubagentParentArtifactObservers(live);
 }
 
 function sanitizeTempScopeSegment(value: string): string {
@@ -255,6 +268,27 @@ function readSubagentResultFile(resultPath: string): SubagentResultFileData | un
   }
 }
 
+function hasTerminalSubagentStatusFile(child: DiscoveredSession): boolean {
+  if (child.parentSessionId === undefined || child.runId === undefined) return false;
+  const statusPath = join(
+    resolvePiSubagentsTempRoot(),
+    "async-subagent-runs",
+    child.runId,
+    "status.json",
+  );
+  if (!existsSync(statusPath)) return false;
+  const status = readSubagentStatusFile(statusPath);
+  if (status === undefined) return false;
+  if (typeof status.sessionId === "string" && status.sessionId !== child.parentSessionId)
+    return false;
+  if (!isTerminalSubagentState(status.state)) return false;
+  const parentLive = registry.get(child.parentSessionId);
+  if (parentLive !== undefined) {
+    void bridgeSubagentStatusFileToParent(parentLive, statusPath).catch(() => undefined);
+  }
+  return true;
+}
+
 function hasCompletedSubagentResultFile(child: DiscoveredSession): boolean {
   if (child.parentSessionId === undefined) return false;
   const resultsDir = join(resolvePiSubagentsTempRoot(), "async-subagent-results");
@@ -288,8 +322,12 @@ function hasCompletedSubagentResultFile(child: DiscoveredSession): boolean {
 
 function isSubagentChildExternallyLive(child: DiscoveredSession): boolean {
   if (child.parentSessionId === undefined) return false;
-  if (!activeSubagentParents.has(child.parentSessionId)) return false;
-  if (hasCompletedSubagentResultFile(child)) {
+  const active = activeSubagentParents.get(child.parentSessionId);
+  if (active === undefined) return false;
+  if (active.runIds.size > 0 && (child.runId === undefined || !active.runIds.has(child.runId))) {
+    return false;
+  }
+  if (hasCompletedSubagentResultFile(child) || hasTerminalSubagentStatusFile(child)) {
     clearActiveSubagentParent(child.parentSessionId);
     return false;
   }
@@ -349,34 +387,42 @@ export async function readSessionMessagesSnapshotById(
   return undefined;
 }
 
-function sendSnapshotToClients(live: LiveSession, messages: unknown[]): void {
-  const snapshot = {
-    type: "snapshot" as const,
-    sessionId: live.sessionId,
-    projectId: live.projectId,
-    messages,
-    isStreaming: live.session.isStreaming,
-  };
-  for (const client of live.clients) {
-    try {
-      client.send(snapshot);
-    } catch {
-      live.clients.delete(client);
-    }
+interface SubagentStatusFileStep {
+  agent?: string;
+  status?: string;
+  sessionFile?: string;
+  recentOutput?: unknown[];
+}
+
+interface SubagentStatusFileData {
+  runId?: string;
+  sessionId?: string;
+  mode?: string;
+  state?: "queued" | "running" | "complete" | "failed" | "paused";
+  summary?: string;
+  error?: string;
+  durationMs?: number;
+  sessionFile?: string;
+  steps?: SubagentStatusFileStep[];
+}
+
+function readSubagentStatusFile(statusPath: string): SubagentStatusFileData | undefined {
+  try {
+    return JSON.parse(readFileSync(statusPath, "utf8")) as SubagentStatusFileData;
+  } catch {
+    return undefined;
   }
 }
 
-function hasSubagentNotifyMessage(messages: unknown[]): boolean {
-  return messages.some((message) => {
-    if (typeof message !== "object" || message === null) return false;
-    const m = message as { role?: unknown; customType?: unknown };
-    return m.role === "custom" && m.customType === "subagent-notify";
-  });
+function isTerminalSubagentState(state: unknown): state is "complete" | "failed" | "paused" {
+  return state === "complete" || state === "failed" || state === "paused";
 }
 
-function getLiveSessionFile(live: LiveSession): string | undefined {
-  const file = (live.session as { sessionFile?: unknown }).sessionFile;
-  return typeof file === "string" && file.length > 0 ? file : undefined;
+function finishActiveSubagentRun(parentSessionId: string, runId: string): void {
+  const active = activeSubagentParents.get(parentSessionId);
+  if (active === undefined) return;
+  if (active.runIds.size > 0) active.runIds.delete(runId);
+  if (active.runIds.size === 0) clearActiveSubagentParent(parentSessionId);
 }
 
 function formatSubagentResultSummary(data: SubagentResultFileData): string {
@@ -399,6 +445,49 @@ function firstSessionFile(data: SubagentResultFileData): string | undefined {
     (item) => typeof item.sessionFile === "string" && item.sessionFile.length > 0,
   );
   return result?.sessionFile;
+}
+
+function resultDataFromStatus(status: SubagentStatusFileData): SubagentResultFileData {
+  const state = status.state;
+  const success =
+    state === "complete" ? true : state === "failed" || state === "paused" ? false : undefined;
+  const summary =
+    typeof status.summary === "string" && status.summary.trim().length > 0
+      ? status.summary
+      : typeof status.error === "string" && status.error.trim().length > 0
+        ? status.error
+        : state === "paused"
+          ? "Paused after interrupt. Waiting for explicit next action."
+          : state === "failed"
+            ? "Async sub-agent failed."
+            : "Async sub-agent completed.";
+  const data: SubagentResultFileData = { summary };
+  if (status.runId !== undefined) {
+    data.id = status.runId;
+    data.runId = status.runId;
+  }
+  if (status.steps?.[0]?.agent !== undefined) data.agent = status.steps[0].agent;
+  if (success !== undefined) data.success = success;
+  if (state !== undefined) data.state = state;
+  if (status.steps !== undefined) {
+    data.results = status.steps.map((step) => {
+      const result: SubagentResultFileChild = { output: summary };
+      if (step.agent !== undefined) result.agent = step.agent;
+      const stepSuccess =
+        step.status === "completed" || step.status === "complete"
+          ? true
+          : step.status === "failed"
+            ? false
+            : success;
+      if (stepSuccess !== undefined) result.success = stepSuccess;
+      if (step.sessionFile !== undefined) result.sessionFile = step.sessionFile;
+      return result;
+    });
+  }
+  if (status.sessionId !== undefined) data.sessionId = status.sessionId;
+  if (status.sessionFile !== undefined) data.sessionFile = status.sessionFile;
+  if (status.durationMs !== undefined) data.durationMs = status.durationMs;
+  return data;
 }
 
 function buildSubagentNotifyFromResult(data: SubagentResultFileData): {
@@ -451,6 +540,7 @@ async function bridgeSubagentResultFileToParent(
   if (data === undefined) return false;
   if (typeof data.sessionId === "string" && data.sessionId !== live.sessionId) return false;
   const runId = data.runId ?? data.id ?? basename(resultPath).replace(/\.json$/i, "");
+  if (!isActiveSubagentRun(live, runId)) return false;
   const key = `${live.sessionId}:${runId}`;
   if (bridgedSubagentResultKeys.has(key)) return false;
   bridgedSubagentResultKeys.add(key);
@@ -464,69 +554,184 @@ async function bridgeSubagentResultFileToParent(
     },
     { triggerTurn: false },
   );
-  clearActiveSubagentParent(live.sessionId);
+  finishActiveSubagentRun(live.sessionId, runId);
   scheduleSubagentSessionListChanged(live, "subagent_async_complete", [250, 1000, 2500]);
   return true;
 }
 
-async function pollActiveSubagentParent(live: LiveSession): Promise<void> {
-  if (!activeSubagentParents.has(live.sessionId)) return;
+async function bridgeSubagentStatusFileToParent(
+  live: LiveSession,
+  statusPath: string,
+): Promise<boolean> {
+  const status = readSubagentStatusFile(statusPath);
+  if (status === undefined) return false;
+  if (!isTerminalSubagentState(status.state)) return false;
+  if (typeof status.sessionId === "string" && status.sessionId !== live.sessionId) return false;
+  const runId = status.runId ?? basename(dirname(statusPath));
+  const active = activeSubagentParents.get(live.sessionId);
+  if (active?.runIds.size && !active.runIds.has(runId)) return false;
+  const key = `${live.sessionId}:${runId}`;
+  if (bridgedSubagentResultKeys.has(key)) return false;
+  bridgedSubagentResultKeys.add(key);
+  const notify = buildSubagentNotifyFromResult(resultDataFromStatus(status));
+  await live.session.sendCustomMessage(
+    {
+      customType: "subagent-notify",
+      content: notify.content,
+      display: true,
+      details: notify.details,
+    },
+    { triggerTurn: false },
+  );
+  finishActiveSubagentRun(live.sessionId, runId);
+  scheduleSubagentSessionListChanged(live, "subagent_async_complete", [250, 1000, 2500]);
+  return true;
+}
 
-  const resultsDir = join(resolvePiSubagentsTempRoot(), "async-subagent-results");
+function isActiveSubagentRun(live: LiveSession, runId: string): boolean {
+  const active = activeSubagentParents.get(live.sessionId);
+  if (active === undefined) return false;
+  return active.runIds.size === 0 || active.runIds.has(runId);
+}
+
+async function checkActiveSubagentArtifacts(live: LiveSession): Promise<void> {
+  const active = activeSubagentParents.get(live.sessionId);
+  if (active === undefined) return;
+
+  const root = resolvePiSubagentsTempRoot();
+  const resultsDir = join(root, "async-subagent-results");
   if (existsSync(resultsDir)) {
-    for (const file of readdirSync(resultsDir).filter((candidate) => candidate.endsWith(".json"))) {
-      if (await bridgeSubagentResultFileToParent(live, join(resultsDir, file))) return;
+    const resultFiles =
+      active.runIds.size > 0
+        ? [...active.runIds].map((runId) => `${runId}.json`)
+        : readdirSync(resultsDir).filter((candidate) => candidate.endsWith(".json"));
+    for (const file of resultFiles) {
+      const resultPath = join(resultsDir, file);
+      if (existsSync(resultPath) && (await bridgeSubagentResultFileToParent(live, resultPath)))
+        return;
     }
   }
 
-  const sessionFile = getLiveSessionFile(live);
-  if (sessionFile === undefined || !existsSync(sessionFile)) return;
-  const stat = statSync(sessionFile);
-  const previous = activeSubagentParentFileState.get(live.sessionId);
-  activeSubagentParentFileState.set(live.sessionId, { mtimeMs: stat.mtimeMs, size: stat.size });
-  if (previous === undefined || (previous.mtimeMs === stat.mtimeMs && previous.size === stat.size))
-    return;
-
-  const messages = await readSessionMessagesFromDisk(sessionFile);
-  sendSnapshotToClients(live, messages);
-  if (hasSubagentNotifyMessage(messages)) {
-    clearActiveSubagentParent(live.sessionId);
-    scheduleSubagentSessionListChanged(live, "subagent_async_complete", [250, 1000, 2500]);
+  const asyncRunsDir = join(root, "async-subagent-runs");
+  if (!existsSync(asyncRunsDir)) return;
+  const runIds = active.runIds.size > 0 ? [...active.runIds] : readdirSync(asyncRunsDir);
+  for (const runId of runIds) {
+    const statusPath = join(asyncRunsDir, runId, "status.json");
+    if (existsSync(statusPath) && (await bridgeSubagentStatusFileToParent(live, statusPath)))
+      return;
   }
 }
 
-function startActiveSubagentParentPoller(live: LiveSession): void {
-  if (activeSubagentParentPollers.has(live.sessionId)) return;
-  const sessionFile = getLiveSessionFile(live);
-  if (sessionFile !== undefined && existsSync(sessionFile)) {
-    const stat = statSync(sessionFile);
-    activeSubagentParentFileState.set(live.sessionId, { mtimeMs: stat.mtimeMs, size: stat.size });
-  }
-  const interval = setInterval(() => {
-    void pollActiveSubagentParent(live).catch((error: unknown) => {
+function scheduleActiveSubagentArtifactCheck(live: LiveSession, delayMs = 0): void {
+  const active = activeSubagentParents.get(live.sessionId);
+  if (active === undefined) return;
+  const timer = setTimeout(() => {
+    const current = activeSubagentParents.get(live.sessionId);
+    if (current === undefined) return;
+    current.timers = current.timers.filter((candidate) => candidate !== timer);
+    void checkActiveSubagentArtifacts(live).catch((error: unknown) => {
       logAgentEvent("warn", {
-        msg: "subagent parent poll failed",
+        msg: "subagent artifact check failed",
         sessionId: live.sessionId,
         error: error instanceof Error ? error.message : String(error),
       });
     });
-  }, 1000);
-  interval.unref?.();
-  activeSubagentParentPollers.set(live.sessionId, interval);
-  void pollActiveSubagentParent(live).catch(() => undefined);
+  }, delayMs);
+  timer.unref?.();
+  active.timers.push(timer);
+}
+
+function addActiveSubagentWatcher(
+  live: LiveSession,
+  directory: string,
+  onEvent: (fileName: string) => void,
+): void {
+  const active = activeSubagentParents.get(live.sessionId);
+  if (active === undefined) return;
+  try {
+    mkdirSync(directory, { recursive: true });
+    const watcher = watch(directory, (_event, file) => {
+      if (file === null) return;
+      onEvent(file.toString());
+    });
+    watcher.on("error", () => scheduleActiveSubagentArtifactCheck(live, 250));
+    watcher.unref?.();
+    active.watchers.push(watcher);
+  } catch {
+    scheduleActiveSubagentArtifactCheck(live, 250);
+  }
+}
+
+function startActiveSubagentParentArtifactObservers(live: LiveSession): void {
+  const active = activeSubagentParents.get(live.sessionId);
+  if (active === undefined) return;
+  stopActiveSubagentArtifactObservers(active);
+
+  const root = resolvePiSubagentsTempRoot();
+  const resultsDir = join(root, "async-subagent-results");
+  addActiveSubagentWatcher(live, resultsDir, (fileName) => {
+    if (!fileName.endsWith(".json")) return;
+    const runId = fileName.replace(/\.json$/i, "");
+    if (!isActiveSubagentRun(live, runId)) return;
+    scheduleActiveSubagentArtifactCheck(live, 100);
+  });
+
+  const asyncRunsDir = join(root, "async-subagent-runs");
+  addActiveSubagentWatcher(live, asyncRunsDir, (fileName) => {
+    if (!isActiveSubagentRun(live, fileName)) return;
+    startActiveSubagentParentArtifactObservers(live);
+    scheduleActiveSubagentArtifactCheck(live, 100);
+  });
+
+  const runIds =
+    active.runIds.size > 0
+      ? [...active.runIds]
+      : existsSync(asyncRunsDir)
+        ? readdirSync(asyncRunsDir)
+        : [];
+  for (const runId of runIds) {
+    addActiveSubagentWatcher(live, join(asyncRunsDir, runId), (fileName) => {
+      if (fileName !== "status.json") return;
+      scheduleActiveSubagentArtifactCheck(live, 100);
+    });
+  }
+
+  // One-shot artifact checks handle files that already existed before watchers started
+  // and missed fs.watch notifications. They inspect only pi-subagents result/status
+  // artifacts; they never infer liveness from parent JSONL mtime/size or elapsed time.
+  scheduleActiveSubagentArtifactCheck(live, 0);
+  scheduleActiveSubagentArtifactCheck(live, 1500);
+}
+
+function getAsyncSubagentRunId(result: unknown): string | undefined {
+  if (typeof result !== "object" || result === null) return undefined;
+  const details = (result as { details?: unknown }).details;
+  if (typeof details !== "object" || details === null) return undefined;
+  const d = details as {
+    id?: unknown;
+    asyncId?: unknown;
+    runId?: unknown;
+    asyncDir?: unknown;
+    results?: unknown;
+  };
+  if (typeof d.id === "string" && d.id.length > 0) return d.id;
+  if (typeof d.asyncId === "string" && d.asyncId.length > 0) return d.asyncId;
+  if (typeof d.runId === "string" && d.runId.length > 0) return d.runId;
+  if (typeof d.asyncDir === "string" && d.asyncDir.length > 0) return basename(d.asyncDir);
+  return undefined;
 }
 
 function isAsyncSubagentToolResult(result: unknown): boolean {
+  if (getAsyncSubagentRunId(result) !== undefined) return true;
   if (typeof result !== "object" || result === null) return false;
   const details = (result as { details?: unknown }).details;
   if (typeof details !== "object" || details === null) return false;
-  const d = details as { asyncId?: unknown; asyncDir?: unknown; results?: unknown };
+  const d = details as { asyncDir?: unknown; results?: unknown };
   return (
-    (typeof d.asyncId === "string" && d.asyncId.length > 0) ||
-    (typeof d.asyncDir === "string" &&
-      d.asyncDir.length > 0 &&
-      Array.isArray(d.results) &&
-      d.results.length === 0)
+    typeof d.asyncDir === "string" &&
+    d.asyncDir.length > 0 &&
+    Array.isArray(d.results) &&
+    d.results.length === 0
   );
 }
 
@@ -934,7 +1139,7 @@ function makeSubscribeHandler(live: LiveSession): () => void {
     } else if (toolEv.type === "tool_execution_end" && toolEv.toolName === "subagent") {
       const isAsync = isAsyncSubagentToolResult(toolEv.result);
       if (isAsync) {
-        markActiveSubagentParent(live.sessionId);
+        markActiveSubagentParent(live.sessionId, getAsyncSubagentRunId(toolEv.result));
       } else {
         clearActiveSubagentParent(live.sessionId);
       }
