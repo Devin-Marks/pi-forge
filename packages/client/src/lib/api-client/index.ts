@@ -143,8 +143,8 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
   const version = typeof value.version === "string" ? value.version : "unknown";
   const passwordAuthEnabled =
     typeof value.passwordAuthEnabled === "boolean" ? value.passwordAuthEnabled : true;
-  // Default to false on older servers — orchestration is gated by
-  // an explicit env flag, so absence === disabled.
+  // Default to false on older servers that predate the field — those
+  // builds kept orchestration behind an explicit opt-in flag.
   const orchestrationEnabled =
     typeof value.orchestrationEnabled === "boolean" ? value.orchestrationEnabled : false;
   return {

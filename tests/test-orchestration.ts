@@ -2,8 +2,8 @@
  * Integration test for session orchestration.
  *
  * Coverage:
- *   - Instance-flag gate: routes 403 with `orchestration_disabled`
- *     when ORCHESTRATION_ENABLED is unset
+ *   - Instance disable gate: routes 403 with `orchestration_disabled`
+ *     when ORCHESTRATION_DISABLED=true
  *   - MINIMAL_UI gate: routes 403 with `minimal_ui_disabled` even
  *     when env flag is set
  *   - enable / disable supervisor mode round-trip
@@ -182,7 +182,8 @@ interface RunningServer {
 }
 
 async function startServer(opts: {
-  orchestrationEnabled?: boolean;
+  orchestrationDisabled?: boolean;
+  legacyOrchestrationEnabled?: boolean;
   minimalUi?: boolean;
   fanoutCap?: number;
   workspacePath?: string;
@@ -210,7 +211,13 @@ async function startServer(opts: {
       JWT_SECRET: undefined,
       API_KEY: undefined,
       MINIMAL_UI: opts.minimalUi === true ? "1" : undefined,
-      ORCHESTRATION_ENABLED: opts.orchestrationEnabled === true ? "1" : undefined,
+      ORCHESTRATION_DISABLED: opts.orchestrationDisabled === true ? "1" : undefined,
+      ORCHESTRATION_ENABLED:
+        opts.legacyOrchestrationEnabled !== undefined
+          ? opts.legacyOrchestrationEnabled
+            ? "1"
+            : "0"
+          : undefined,
       ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR:
         opts.fanoutCap !== undefined ? String(opts.fanoutCap) : undefined,
     },
@@ -563,7 +570,7 @@ async function main(): Promise<void> {
   // ===== REST layer: orchestration_disabled gate =====
   console.log("\n[test-orchestration] REST gates");
   const offSrv = await startServer({
-    orchestrationEnabled: false,
+    orchestrationDisabled: true,
     workspacePath: sharedWs,
     configDir: sharedCfg,
     dataDir: sharedData,
@@ -591,9 +598,26 @@ async function main(): Promise<void> {
     await offSrv.stop();
   }
 
-  // ===== MINIMAL_UI gate beats env flag =====
+  const legacyOffSrv = await startServer({
+    legacyOrchestrationEnabled: false,
+    workspacePath: sharedWs,
+    configDir: sharedCfg,
+    dataDir: sharedData,
+  });
+  try {
+    const cfg = await jsend(legacyOffSrv.base, "GET", "/api/v1/orchestration/config");
+    assert(
+      "legacy ORCHESTRATION_ENABLED=false disables orchestration",
+      cfg.status === 200 &&
+        (cfg.body as { enabled: boolean }).enabled === false &&
+        (cfg.body as { disabledReason: string }).disabledReason === "orchestration_disabled",
+    );
+  } finally {
+    await legacyOffSrv.stop();
+  }
+
+  // ===== MINIMAL_UI gate beats default availability =====
   const minimalSrv = await startServer({
-    orchestrationEnabled: true,
     minimalUi: true,
     workspacePath: sharedWs,
     configDir: sharedCfg,
@@ -602,7 +626,7 @@ async function main(): Promise<void> {
   try {
     const cfg = await jsend(minimalSrv.base, "GET", "/api/v1/orchestration/config");
     assert(
-      "MINIMAL_UI forces disabled even with env flag",
+      "MINIMAL_UI forces disabled even when default-enabled",
       cfg.status === 200 &&
         (cfg.body as { enabled: boolean }).enabled === false &&
         (cfg.body as { disabledReason: string }).disabledReason === "minimal_ui_disabled",
@@ -619,7 +643,6 @@ async function main(): Promise<void> {
   // ===== REST happy path =====
   console.log("\n[test-orchestration] REST happy path");
   const onSrv = await startServer({
-    orchestrationEnabled: true,
     fanoutCap: 2,
     workspacePath: sharedWs,
     configDir: sharedCfg,

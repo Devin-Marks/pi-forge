@@ -2,9 +2,9 @@
 
 A session can act as a **supervisor** that spawns, observes,
 messages, interrupts, and kills other sessions in the same project.
-Off by default; the operator opts in at the instance level with an
-env flag, and each session that should run as a supervisor opts in
-separately from the chat-view toolbar.
+The instance-level surface is enabled by default (unless disabled by
+operator config or `MINIMAL_UI`); each session that should run as a
+supervisor still opts in separately from the chat-view toolbar.
 
 > Different from **pi-subagents.** Subagents are LLM-internal child
 > agents scoped to one tool call within a single session. Orchestrated
@@ -45,26 +45,29 @@ Strict **hub-and-spoke at depth=1.**
   intentionally out of scope — it would complicate the data model
   for a use case the design hasn't seen yet.
 
-## Enabling — two-tier opt-in
+## Availability — default-on, per-session opt-in
 
-### 1. Instance flag (operator)
+### 1. Instance disable switch (operator)
 
-Set the env var:
+Session orchestration is available by default. To remove the instance-level
+surface entirely, set:
 
 ```bash
-ORCHESTRATION_ENABLED=true
+ORCHESTRATION_DISABLED=true
 ```
 
 Or in `docker/.env`:
 
 ```
-ORCHESTRATION_ENABLED=true
+ORCHESTRATION_DISABLED=true
 ```
 
-This makes the chat-view `Orch` toggle button render. It does NOT
-enable supervisor mode for any session — that's the second gate.
+For backward compatibility, `ORCHESTRATION_ENABLED=false` also disables
+orchestration. `ORCHESTRATION_ENABLED=true` is no longer required; it is the
+default behavior. Availability makes the chat-view `Orch` toggle render. It
+does NOT enable supervisor mode for any session — that's the second gate.
 
-**Hard-disabled under `MINIMAL_UI=true`** regardless of this flag.
+**Hard-disabled under `MINIMAL_UI=true`** regardless of these flags.
 MINIMAL_UI deployments are locked-down by design; orchestration
 opens a tool surface the operator probably doesn't want end users
 touching.
@@ -179,13 +182,13 @@ literal secrets.
 ## REST surface
 
 The agent-facing tools above are mirrored as REST endpoints the UI
-calls. All are gated by the `ORCHESTRATION_ENABLED` flag and the
+calls. All are gated by the instance disable switch and the
 MINIMAL_UI hard gate — they return `403 orchestration_disabled` or
 `403 minimal_ui_disabled` when off.
 
 | Method + path | Purpose |
 |---|---|
-| `GET /api/v1/orchestration/config` | Instance flag + caps. Used by the UI to decide whether to render the toggle. |
+| `GET /api/v1/orchestration/config` | Instance availability + caps. Used by the UI to decide whether to render the toggle. |
 | `GET /api/v1/orchestration/sessions/:id` | Role of a session (`supervisor` / `worker` / `standalone`) + linkage. |
 | `POST /api/v1/orchestration/sessions/:id/enable` | Make the session a supervisor; rebuild the live AgentSession in place. |
 | `POST /api/v1/orchestration/sessions/:id/disable` | Drop supervisor mode; detach workers; clear inbox; rebuild. |
@@ -200,8 +203,8 @@ Full schemas: open `/api/docs` in your deploy.
 
 ## UI surface
 
-- **Toolbar `Orch` button** — only renders when the instance flag
-  is on. Toggles the per-session Orchestration panel.
+- **Toolbar `Orch` button** — renders when orchestration is available
+  for the instance. Toggles the per-session Orchestration panel.
 - **Orchestration panel** (collapsible, mounted between the chat
   toolbar and the message list):
   - **Standalone** session → "Enable supervisor mode" button.
@@ -217,10 +220,10 @@ Full schemas: open `/api/docs` in your deploy.
 
 ## Troubleshooting
 
-**`Orch` button isn't visible.** Either `ORCHESTRATION_ENABLED`
-isn't set in the environment, or `MINIMAL_UI=true` is overriding
-it. Check `GET /api/v1/orchestration/config` — `disabledReason`
-tells you which gate is closed.
+**`Orch` button isn't visible.** Either `ORCHESTRATION_DISABLED=true`
+(or legacy `ORCHESTRATION_ENABLED=false`) is set, or `MINIMAL_UI=true`
+is overriding it. Check `GET /api/v1/orchestration/config` —
+`disabledReason` tells you which gate is closed.
 
 **Enabling supervisor mode succeeded but `orchestrate_*` tools
 aren't visible to the agent.** The route rebuilds the live

@@ -65,9 +65,9 @@
       <p class="docs-subtitle">Supervisor sessions that spawn, observe, and coordinate worker sessions in the same project.</p>
 <p>A session can act as a <strong>supervisor</strong> that spawns, observes,
 messages, interrupts, and kills other sessions in the same project.
-Off by default; the operator opts in at the instance level with an
-env flag, and each session that should run as a supervisor opts in
-separately from the chat-view toolbar.</p>
+The instance-level surface is enabled by default (unless disabled by
+operator config or <code>MINIMAL_UI</code>); each session that should run as a
+supervisor still opts in separately from the chat-view toolbar.</p>
 <blockquote>
 <p>Different from <strong>pi-subagents.</strong> Subagents are LLM-internal child
 agents scoped to one tool call within a single session. Orchestrated
@@ -106,17 +106,20 @@ nothing to express.</li>
 intentionally out of scope — it would complicate the data model
 for a use case the design hasn&#39;t seen yet.</li>
 </ul>
-<h2>Enabling — two-tier opt-in</h2>
-<h3>1. Instance flag (operator)</h3>
-<p>Set the env var:</p>
-<pre><code class="language-bash">ORCHESTRATION_ENABLED=true
+<h2>Availability — default-on, per-session opt-in</h2>
+<h3>1. Instance disable switch (operator)</h3>
+<p>Session orchestration is available by default. To remove the instance-level
+surface entirely, set:</p>
+<pre><code class="language-bash">ORCHESTRATION_DISABLED=true
 </code></pre>
 <p>Or in <code>docker/.env</code>:</p>
-<pre><code>ORCHESTRATION_ENABLED=true
+<pre><code>ORCHESTRATION_DISABLED=true
 </code></pre>
-<p>This makes the chat-view <code>Orch</code> toggle button render. It does NOT
-enable supervisor mode for any session — that&#39;s the second gate.</p>
-<p><strong>Hard-disabled under <code>MINIMAL_UI=true</code></strong> regardless of this flag.
+<p>For backward compatibility, <code>ORCHESTRATION_ENABLED=false</code> also disables
+orchestration. <code>ORCHESTRATION_ENABLED=true</code> is no longer required; it is the
+default behavior. Availability makes the chat-view <code>Orch</code> toggle render. It
+does NOT enable supervisor mode for any session — that&#39;s the second gate.</p>
+<p><strong>Hard-disabled under <code>MINIMAL_UI=true</code></strong> regardless of these flags.
 MINIMAL_UI deployments are locked-down by design; orchestration
 opens a tool surface the operator probably doesn&#39;t want end users
 touching.</p>
@@ -277,7 +280,7 @@ about — so it gets the secret-grade <code>0600</code> even though it has no
 literal secrets.</p>
 <h2>REST surface</h2>
 <p>The agent-facing tools above are mirrored as REST endpoints the UI
-calls. All are gated by the <code>ORCHESTRATION_ENABLED</code> flag and the
+calls. All are gated by the instance disable switch and the
 MINIMAL_UI hard gate — they return <code>403 orchestration_disabled</code> or
 <code>403 minimal_ui_disabled</code> when off.</p>
 <table>
@@ -289,7 +292,7 @@ MINIMAL_UI hard gate — they return <code>403 orchestration_disabled</code> or
 </thead>
 <tbody><tr>
 <td><code>GET /api/v1/orchestration/config</code></td>
-<td>Instance flag + caps. Used by the UI to decide whether to render the toggle.</td>
+<td>Instance availability + caps. Used by the UI to decide whether to render the toggle.</td>
 </tr>
 <tr>
 <td><code>GET /api/v1/orchestration/sessions/:id</code></td>
@@ -331,8 +334,8 @@ MINIMAL_UI hard gate — they return <code>403 orchestration_disabled</code> or
 <p>Full schemas: open <code>/api/docs</code> in your deploy.</p>
 <h2>UI surface</h2>
 <ul>
-<li><strong>Toolbar <code>Orch</code> button</strong> — only renders when the instance flag
-is on. Toggles the per-session Orchestration panel.</li>
+<li><strong>Toolbar <code>Orch</code> button</strong> — renders when orchestration is available
+for the instance. Toggles the per-session Orchestration panel.</li>
 <li><strong>Orchestration panel</strong> (collapsible, mounted between the chat
 toolbar and the message list):<ul>
 <li><strong>Standalone</strong> session → &quot;Enable supervisor mode&quot; button.</li>
@@ -349,10 +352,10 @@ jump), handoff badge if spawned from a <code>contextSummary</code>.</li>
 <code>/inbox</code> every 4s while open so the live state stays fresh.</li>
 </ul>
 <h2>Troubleshooting</h2>
-<p><strong><code>Orch</code> button isn&#39;t visible.</strong> Either <code>ORCHESTRATION_ENABLED</code>
-isn&#39;t set in the environment, or <code>MINIMAL_UI=true</code> is overriding
-it. Check <code>GET /api/v1/orchestration/config</code> — <code>disabledReason</code>
-tells you which gate is closed.</p>
+<p><strong><code>Orch</code> button isn&#39;t visible.</strong> Either <code>ORCHESTRATION_DISABLED=true</code>
+(or legacy <code>ORCHESTRATION_ENABLED=false</code>) is set, or <code>MINIMAL_UI=true</code>
+is overriding it. Check <code>GET /api/v1/orchestration/config</code> —
+<code>disabledReason</code> tells you which gate is closed.</p>
 <p><strong>Enabling supervisor mode succeeded but <code>orchestrate_*</code> tools
 aren&#39;t visible to the agent.</strong> The route rebuilds the live
 AgentSession in place, but only for sessions that are currently
