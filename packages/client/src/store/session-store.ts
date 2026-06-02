@@ -560,6 +560,33 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         onTerminate();
         return;
       }
+      if (err instanceof ApiError && err.status === 409) {
+        void api
+          .getMessages(sessionId)
+          .then(({ messages }) => {
+            set((s) => ({
+              messagesBySession: { ...s.messagesBySession, [sessionId]: messages },
+              streamingBySession: { ...s.streamingBySession, [sessionId]: false },
+              activeToolBySession: { ...s.activeToolBySession, [sessionId]: undefined },
+              bannerBySession: {
+                ...s.bannerBySession,
+                [sessionId]:
+                  "This sub-agent is still running in an external pi-subagents process. Showing a read-only snapshot; reopen it after completion for live controls.",
+              },
+            }));
+          })
+          .catch(() => {
+            set((s) => ({
+              bannerBySession: {
+                ...s.bannerBySession,
+                [sessionId]:
+                  "This sub-agent is still running externally. Wait for it to finish, then reopen the session.",
+              },
+            }));
+          });
+        onTerminate();
+        return;
+      }
       const code = err instanceof ApiError ? err.code : (err as Error).message;
       set((s) => ({
         bannerBySession: { ...s.bannerBySession, [sessionId]: `stream error: ${code}` },

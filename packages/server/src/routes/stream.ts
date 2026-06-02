@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import {
+  ExternallyActiveSubagentChildError,
   resumeSessionById,
   SessionNotFoundError,
   SessionTombstonedError,
@@ -59,6 +60,9 @@ export const streamRoutes: FastifyPluginAsync = async (fastify) => {
       } catch (err) {
         if (err instanceof SessionNotFoundError) {
           return reply.code(404).send({ error: "session_not_found" });
+        }
+        if (err instanceof ExternallyActiveSubagentChildError) {
+          return reply.code(409).send({ error: "subagent_child_externally_active" });
         }
         if (err instanceof SessionTombstonedError) {
           // The session was disposed within the tombstone window

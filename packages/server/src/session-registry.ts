@@ -1,11 +1,14 @@
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, readFile, readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import {
   AgentSession,
   type AgentSessionEvent,
+  buildSessionContext,
   createAgentSession,
+  parseSessionEntries,
   SessionManager,
   SettingsManager,
+  type SessionEntry,
   type SessionInfo,
 } from "@earendil-works/pi-coding-agent";
 import { buildForgeResourceLoader } from "./agent-resource-loader.js";
@@ -172,7 +175,7 @@ function clearActiveSubagentParent(parentSessionId: string): void {
   activeSubagentParentTimers.delete(parentSessionId);
 }
 
-function markActiveSubagentParent(
+export function markActiveSubagentParent(
   parentSessionId: string,
   ttlMs = SUBAGENT_CHILD_ACTIVE_TTL_MS,
 ): void {
@@ -186,6 +189,45 @@ function isSubagentChildExternallyLive(child: DiscoveredSession): boolean {
   if (child.parentSessionId === undefined) return false;
   if (!activeSubagentParentTimers.has(child.parentSessionId)) return false;
   return Date.now() - child.modifiedAt.getTime() <= SUBAGENT_CHILD_ACTIVE_TTL_MS;
+}
+
+export interface ExternallyActiveSubagentChild {
+  sessionId: string;
+  projectId: string;
+  workspacePath: string;
+  path: string;
+  parentSessionId: string;
+  runId?: string;
+}
+
+export async function getExternallyActiveSubagentChild(
+  sessionId: string,
+): Promise<ExternallyActiveSubagentChild | undefined> {
+  const projects = await readProjects();
+  for (const project of projects) {
+    const discovered = await discoverSessionsOnDisk(project.id, project.path);
+    const child = discovered.find((s) => s.sessionId === sessionId);
+    if (child?.parentSessionId === undefined) continue;
+    if (!isSubagentChildExternallyLive(child)) continue;
+    const active: ExternallyActiveSubagentChild = {
+      sessionId,
+      projectId: project.id,
+      workspacePath: project.path,
+      path: child.path,
+      parentSessionId: child.parentSessionId,
+    };
+    if (child.runId !== undefined) active.runId = child.runId;
+    return active;
+  }
+  return undefined;
+}
+
+export async function readSessionMessagesFromDisk(sessionFile: string): Promise<unknown[]> {
+  const raw = await readFile(sessionFile, "utf8");
+  const entries = parseSessionEntries(raw).filter(
+    (entry): entry is SessionEntry => entry.type !== "session",
+  );
+  return buildSessionContext(entries).messages;
 }
 
 function isAsyncSubagentToolResult(result: unknown): boolean {
@@ -836,6 +878,13 @@ export class SessionTombstonedError extends Error {
   constructor(sessionId: string) {
     super(`session ${sessionId} was just disposed`);
     this.name = "SessionTombstonedError";
+  }
+}
+
+export class ExternallyActiveSubagentChildError extends Error {
+  constructor(sessionId: string) {
+    super(`subagent child ${sessionId} is externally active`);
+    this.name = "ExternallyActiveSubagentChildError";
   }
 }
 
@@ -1530,6 +1579,8 @@ export async function findSessionLocation(
 export async function resumeSessionById(sessionId: string): Promise<LiveSession> {
   const existing = registry.get(sessionId);
   if (existing) return existing;
+  const activeChild = await getExternallyActiveSubagentChild(sessionId);
+  if (activeChild !== undefined) throw new ExternallyActiveSubagentChildError(sessionId);
   const loc = await findSessionLocation(sessionId);
   if (loc === undefined) throw new SessionNotFoundError(sessionId);
   return resumeSession(sessionId, loc.projectId, loc.workspacePath);

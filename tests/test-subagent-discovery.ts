@@ -92,12 +92,15 @@ interface TestUnifiedSession {
   sessionId: string;
   parentSessionId?: string;
   runId?: string;
+  isExternalLive?: boolean;
 }
 interface TestRegistry {
   createSession: (projectId: string, workspacePath: string) => Promise<TestLive>;
   disposeSession: (id: string) => Promise<boolean>;
   disposeAllSessions: () => Promise<void>;
   resumeSession: (id: string, projectId: string, workspacePath: string) => Promise<TestLive>;
+  resumeSessionById: (id: string) => Promise<TestLive>;
+  markActiveSubagentParent: (parentSessionId: string, ttlMs?: number) => void;
   discoverSessionsOnDisk: (projectId: string, workspacePath: string) => Promise<TestDiscovered[]>;
   listSessionsForProject: (
     projectId: string,
@@ -151,6 +154,14 @@ async function main(): Promise<void> {
   const orchestrationStore = (await import(
     resolve(repoRoot, "packages/server/dist/orchestration/store.js")
   )) as unknown as TestOrchestrationStore;
+  const buildModule = (await import(resolve(repoRoot, "packages/server/dist/index.js"))) as {
+    buildServer: () => Promise<{
+      listen: (opts: { port: number; host: string }) => Promise<string>;
+      close: () => Promise<void>;
+    }>;
+  };
+  const fastify = await buildModule.buildServer();
+  const listenAddr = await fastify.listen({ port: 0, host: "127.0.0.1" });
 
   // Register the project so findSessionLocation can locate children.
   const project = await pm.createProject("test-subagent-project", workspacePath);
@@ -251,7 +262,60 @@ async function main(): Promise<void> {
       `loc=${JSON.stringify(loc)}`,
     );
 
-    // 5. resumeSession opens the child as a LiveSession (registry hit).
+    // 5. Externally-active child safety: opening a child while the
+    //    pi-subagents-owned process is still writing it must NOT
+    //    create a pi-forge AgentSession for the same JSONL. The stream
+    //    route blocks live SSE resume with 409, while /messages offers
+    //    a read-only snapshot for the chat view.
+    registry.markActiveSubagentParent(parent.sessionId, 60_000);
+    const activeList = await registry.listSessionsForProject(project.id, project.path);
+    const activeChild = activeList.find((s) => s.sessionId === childB);
+    assert(
+      "externally active child is marked isExternalLive in unified list",
+      activeChild?.isExternalLive === true,
+      `isExternalLive=${activeChild?.isExternalLive}`,
+    );
+    let blockedResume = false;
+    try {
+      await registry.resumeSessionById(childB);
+    } catch (err) {
+      blockedResume = err instanceof Error && err.name === "ExternallyActiveSubagentChildError";
+    }
+    assert("resumeSessionById blocks externally active child", blockedResume);
+    assert(
+      "blocked externally active child was not inserted into live registry",
+      registry.getSession(childB) === undefined,
+    );
+    const streamBlocked = await fetch(`${listenAddr}/api/v1/sessions/${childB}/stream`, {
+      headers: { Accept: "text/event-stream" },
+    });
+    assert(
+      "stream route returns 409 for externally active child",
+      streamBlocked.status === 409,
+      `status=${streamBlocked.status}`,
+    );
+    const streamBody = (await streamBlocked.json()) as { error?: string };
+    assert(
+      "stream 409 explains external subagent ownership",
+      streamBody.error === "subagent_child_externally_active",
+      `body=${JSON.stringify(streamBody)}`,
+    );
+    const messagesSnapshot = await fetch(`${listenAddr}/api/v1/sessions/${childB}/messages`);
+    assert(
+      "messages route returns read-only snapshot for externally active child",
+      messagesSnapshot.status === 200,
+      `status=${messagesSnapshot.status}`,
+    );
+    const messagesBody = (await messagesSnapshot.json()) as { messages?: unknown };
+    assert("read-only snapshot has messages array", Array.isArray(messagesBody.messages));
+    assert(
+      "read-only snapshot did not live-resume the child",
+      registry.getSession(childB) === undefined,
+    );
+
+    // 6. resumeSession opens the child as a LiveSession (registry hit)
+    //    once called directly for a child that is not under test for
+    //    external ownership.
     const resumed = await registry.resumeSession(childA, project.id, project.path);
     assert(
       "resumeSession returns a LiveSession for the child",
@@ -259,7 +323,7 @@ async function main(): Promise<void> {
       `got ${resumed.sessionId}`,
     );
 
-    // 6. REALISTIC pi-subagents layout: the plugin's
+    // 7. REALISTIC pi-subagents layout: the plugin's
     // `getSubagentSessionRoot` names the child dir using the parent
     // FILE's full basename (timestamp + id), not the bare parent id.
     // The discovery has to map basename → parent's actual sessionId
@@ -295,7 +359,7 @@ async function main(): Promise<void> {
       `got parentSessionId=${realisticChildEntry?.parentSessionId} expected=${realisticParentId}`,
     );
 
-    // 7a. DEEP layout (parallel/chain mode):
+    // 8a. DEEP layout (parallel/chain mode):
     //     <basename>/<runId>/run-N/session.jsonl. Three dir levels
     //     under the parent — observed in the wild on real
     //     pi-subagents installs. Discovery has to walk past the runId
@@ -333,7 +397,7 @@ async function main(): Promise<void> {
       `got runId=${deepChildEntry?.runId}`,
     );
 
-    // 7b. FLAT layout (no runId subdir): some pi-subagents run modes
+    // 8b. FLAT layout (no runId subdir): some pi-subagents run modes
     // write children directly under <parentBasename>/, not under
     // <parentBasename>/<runId>/. Discovery must surface these too.
     const flatParentId = "flat-parent-" + randomUUID().slice(0, 6);
@@ -356,7 +420,7 @@ async function main(): Promise<void> {
       `parentSessionId=${flatChildEntry?.parentSessionId} runId=${flatChildEntry?.runId}`,
     );
 
-    // 8. Cascade-delete: deleting a parent session also wipes its
+    // 9. Cascade-delete: deleting a parent session also wipes its
     // pi-subagents sibling directory and any nested children, so the
     // sidebar doesn't accumulate orphan child sessions whose parent
     // is gone. We use the deep-layout fixture because it exercises
@@ -393,6 +457,7 @@ async function main(): Promise<void> {
     );
   } finally {
     await registry.disposeAllSessions();
+    await fastify.close();
     // Clean every temp dir we created. Safe to ignore failures —
     // mkdtemp dirs are isolated per test run.
     await rm(workspacePath, { recursive: true, force: true }).catch(() => undefined);

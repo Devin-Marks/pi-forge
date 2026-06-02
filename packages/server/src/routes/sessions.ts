@@ -6,8 +6,10 @@ import {
   disposeSession,
   findProjectIdForSession,
   findSessionLocation,
+  getExternallyActiveSubagentChild,
   getSession,
   listSessionsForProject,
+  readSessionMessagesFromDisk,
   resumeSessionById,
   type UnifiedSession,
 } from "../session-registry.js";
@@ -306,8 +308,11 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const live = getSession(req.params.id);
-      if (live === undefined) return notFound(reply);
-      return { messages: live.session.messages };
+      if (live !== undefined) return { messages: live.session.messages };
+
+      const activeChild = await getExternallyActiveSubagentChild(req.params.id);
+      if (activeChild === undefined) return notFound(reply);
+      return { messages: await readSessionMessagesFromDisk(activeChild.path) };
     },
   );
 

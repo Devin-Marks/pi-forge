@@ -45,7 +45,7 @@ export interface StreamSSEOptions<T> {
   maxReconnects?: number;
 }
 
-const TERMINAL_STATUS = new Set([401, 404]);
+const TERMINAL_STATUS = new Set([401, 404, 409, 410]);
 const MAX_BACKOFF_MS = 30_000;
 
 function backoffDelay(attempt: number): number {
