@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, watch, type FSWatcher } from "node:fs";
 import { mkdir, readFile, readdir } from "node:fs/promises";
-import { tmpdir, userInfo } from "node:os";
+import { homedir, tmpdir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
   AgentSession,
@@ -220,8 +220,16 @@ function resolvePiSubagentsTempRoot(): string {
   } catch {
     // Fall through to HOME-based scoping.
   }
-  const homedir = process.env.USERPROFILE ?? process.env.HOME;
-  if (homedir) return join(tmpdir(), `pi-subagents-home-${sanitizeTempScopeSegment(homedir)}`);
+  const envHomedir = process.env.USERPROFILE ?? process.env.HOME;
+  if (envHomedir)
+    return join(tmpdir(), `pi-subagents-home-${sanitizeTempScopeSegment(envHomedir)}`);
+  try {
+    const fallbackHomedir = homedir();
+    if (fallbackHomedir)
+      return join(tmpdir(), `pi-subagents-home-${sanitizeTempScopeSegment(fallbackHomedir)}`);
+  } catch {
+    // Fall through to shared last-resort scope.
+  }
   return join(tmpdir(), "pi-subagents-shared");
 }
 
@@ -703,9 +711,18 @@ function startActiveSubagentParentArtifactObservers(live: LiveSession): void {
   scheduleActiveSubagentArtifactCheck(live, 1500);
 }
 
-function getAsyncSubagentRunId(result: unknown): string | undefined {
-  if (typeof result !== "object" || result === null) return undefined;
-  const details = (result as { details?: unknown }).details;
+function getSubagentToolDetails(resultOrEvent: unknown): unknown {
+  if (typeof resultOrEvent !== "object" || resultOrEvent === null) return undefined;
+  const candidate = resultOrEvent as { details?: unknown; result?: unknown };
+  if (candidate.details !== undefined) return candidate.details;
+  if (typeof candidate.result === "object" && candidate.result !== null) {
+    return (candidate.result as { details?: unknown }).details;
+  }
+  return undefined;
+}
+
+function getAsyncSubagentRunId(resultOrEvent: unknown): string | undefined {
+  const details = getSubagentToolDetails(resultOrEvent);
   if (typeof details !== "object" || details === null) return undefined;
   const d = details as {
     id?: unknown;
@@ -721,10 +738,9 @@ function getAsyncSubagentRunId(result: unknown): string | undefined {
   return undefined;
 }
 
-function isAsyncSubagentToolResult(result: unknown): boolean {
-  if (getAsyncSubagentRunId(result) !== undefined) return true;
-  if (typeof result !== "object" || result === null) return false;
-  const details = (result as { details?: unknown }).details;
+function isAsyncSubagentToolResult(resultOrEvent: unknown): boolean {
+  if (getAsyncSubagentRunId(resultOrEvent) !== undefined) return true;
+  const details = getSubagentToolDetails(resultOrEvent);
   if (typeof details !== "object" || details === null) return false;
   const d = details as { asyncDir?: unknown; results?: unknown };
   return (
@@ -1148,6 +1164,12 @@ function makeSubscribeHandler(live: LiveSession): () => void {
         isAsync ? "subagent_async_started" : "subagent_end",
         [500, 1500],
       );
+    } else if (toolEv.type === "tool_result" && toolEv.toolName === "subagent") {
+      const isAsync = isAsyncSubagentToolResult(toolEv);
+      if (isAsync) {
+        markActiveSubagentParent(live.sessionId, getAsyncSubagentRunId(toolEv));
+        scheduleSubagentSessionListChanged(live, "subagent_async_started", [500, 1500]);
+      }
     } else if (isSubagentCompletionCustomMessage(event)) {
       clearActiveSubagentParent(live.sessionId);
       scheduleSubagentSessionListChanged(live, "subagent_async_complete", [250, 1000, 2500]);

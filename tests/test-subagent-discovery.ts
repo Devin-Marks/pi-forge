@@ -22,7 +22,7 @@
  * project session dir as a child.
  */
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir, userInfo } from "node:os";
+import { homedir, tmpdir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -52,8 +52,16 @@ function piSubagentsTempRoot(): string {
   } catch {
     // Fall through to HOME-based scoping.
   }
-  const homedir = process.env.USERPROFILE ?? process.env.HOME;
-  if (homedir) return join(tmpdir(), `pi-subagents-home-${sanitizeTempScopeSegment(homedir)}`);
+  const envHomedir = process.env.USERPROFILE ?? process.env.HOME;
+  if (envHomedir)
+    return join(tmpdir(), `pi-subagents-home-${sanitizeTempScopeSegment(envHomedir)}`);
+  try {
+    const fallbackHomedir = homedir();
+    if (fallbackHomedir)
+      return join(tmpdir(), `pi-subagents-home-${sanitizeTempScopeSegment(fallbackHomedir)}`);
+  } catch {
+    // Fall through to shared last-resort scope.
+  }
   return join(tmpdir(), "pi-subagents-shared");
 }
 
@@ -114,8 +122,10 @@ interface TestLive {
     sessionFile?: string;
     messages: unknown[];
     sessionManager: { appendMessage: (msg: unknown) => string };
+    _emit?: (event: unknown) => void;
   };
   sessionId: string;
+  clients: Set<{ id: string; send: (event: unknown) => void; close: () => void }>;
 }
 interface TestDiscovered {
   sessionId: string;
@@ -459,6 +469,68 @@ async function main(): Promise<void> {
       statusCompletedChild?.isExternalLive !== true,
       `isExternalLive=${statusCompletedChild?.isExternalLive}`,
     );
+
+    const parentSseEvents: unknown[] = [];
+    const parentSseClient = {
+      id: "test-parent-sse",
+      send: (event: unknown) => parentSseEvents.push(event),
+      close: () => undefined,
+    };
+    parent.clients.add(parentSseClient);
+    const toolResultRunId = "run-" + randomUUID().slice(0, 8);
+    const toolResultChildId = randomUUID();
+    const toolResultChildPath = join(
+      projectSessionDir,
+      parent.sessionId,
+      toolResultRunId,
+      `${toolResultChildId}.jsonl`,
+    );
+    await writeChildSessionFile(toolResultChildPath, toolResultChildId, project.path);
+    parent.session._emit?.({
+      type: "tool_result",
+      toolName: "subagent",
+      toolCallId: "call-subagent-async",
+      input: {},
+      content: [{ type: "text", text: "Async started" }],
+      isError: false,
+      details: {
+        mode: "single",
+        runId: toolResultRunId,
+        asyncId: toolResultRunId,
+        asyncDir: join(piSubagentsAsyncRunsDir(), toolResultRunId),
+        results: [],
+      },
+    });
+    const toolResultStatusDir = join(piSubagentsAsyncRunsDir(), toolResultRunId);
+    await mkdir(toolResultStatusDir, { recursive: true });
+    await writeFile(
+      join(toolResultStatusDir, "status.json"),
+      `${JSON.stringify({
+        runId: toolResultRunId,
+        sessionId: parent.sessionId,
+        state: "complete",
+        summary: "tool_result parent delivery done",
+        sessionFile: toolResultChildPath,
+        steps: [{ agent: "worker", status: "completed", sessionFile: toolResultChildPath }],
+      })}\n`,
+    );
+    const parentGotSseNotify = await waitFor(() =>
+      parentSseEvents.some((event) => {
+        if (typeof event !== "object" || event === null) return false;
+        const e = event as {
+          type?: unknown;
+          message?: { customType?: unknown; content?: unknown };
+        };
+        return (
+          e.type === "message_end" &&
+          e.message?.customType === "subagent-notify" &&
+          typeof e.message.content === "string" &&
+          e.message.content.includes("tool_result parent delivery done")
+        );
+      }),
+    );
+    assert("async tool_result terminal status is delivered to parent SSE chat", parentGotSseNotify);
+    parent.clients.delete(parentSseClient);
     await rm(resultsDir, { recursive: true, force: true });
     await rm(piSubagentsAsyncRunsDir(), { recursive: true, force: true });
 
