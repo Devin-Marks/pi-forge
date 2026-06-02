@@ -5,7 +5,8 @@
  *   A) UI_PASSWORD set, JWT_SECRET set, no API_KEY  → password+JWT path
  *   B) API_KEY set, no UI_PASSWORD                  → API-key-only path
  *   C) Neither set                                  → auth fully disabled
- *   E) LDAP enabled, no local password              → auth enabled; login requires username
+ *   E) LDAP enabled, no local password              → auth enabled; local login unavailable
+ *   F) LDAP enabled + UI_PASSWORD_FILE              → admin/password-only use local auth
  *
  * Asserts the matrix of expected status codes plus a deterministic rate-limit
  * check (RATE_LIMIT_LOGIN_MAX=3 → 4th login attempt returns 429).
@@ -279,7 +280,7 @@ async function scenarioAuthDisabled(): Promise<void> {
   }
 }
 
-async function scenarioLdapEnabledRequiresUsername(): Promise<void> {
+async function scenarioLdapEnabledWithoutLocalPassword(): Promise<void> {
   console.log("\n[scenario E] LDAP enabled without local password");
   const ldapSecretDir = await mkdtemp(join(tmpdir(), "pi-forge-test-ldap-secret-"));
   const ldapSecretFile = join(ldapSecretDir, "bind-password");
@@ -304,11 +305,11 @@ async function scenarioLdapEnabledRequiresUsername(): Promise<void> {
     assert("auth/status reports ldapEnabled=true", status.ldapEnabled === true);
 
     const login = await jsonPost(`${srv.base}/api/v1/auth/login`, { password: "anything" });
-    assert("password-only login → 400 when LDAP is the only browser auth", login.status === 400);
+    assert("password-only local login → 503 when no local password exists", login.status === 503);
     const body = (await login.json()) as { error?: string };
     assert(
-      "  error is username_required",
-      body.error === "username_required",
+      "  error is ui_password_not_configured",
+      body.error === "ui_password_not_configured",
       JSON.stringify(body),
     );
 
@@ -317,6 +318,49 @@ async function scenarioLdapEnabledRequiresUsername(): Promise<void> {
   } finally {
     await srv.stop();
     await rm(ldapSecretDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function scenarioLdapAdminUsesLocalPassword(): Promise<void> {
+  console.log("\n[scenario F] LDAP enabled, admin username uses local password file");
+  const secretDir = await mkdtemp(join(tmpdir(), "pi-forge-test-ui-secret-"));
+  const uiPasswordFile = join(secretDir, "ui-password");
+  const localPassword = "local-admin-secret";
+  await writeFile(uiPasswordFile, `${localPassword}\n`, "utf8");
+  const srv = await startServer({
+    UI_PASSWORD: undefined,
+    UI_PASSWORD_FILE: uiPasswordFile,
+    JWT_SECRET: undefined,
+    API_KEY: undefined,
+    LDAP_ENABLED: "true",
+    LDAP_URL: "ldaps://ldap.example.test",
+    LDAP_BIND_DN: "cn=pi-forge,ou=svc,dc=example,dc=test",
+    LDAP_BIND_PASSWORD: "service-secret",
+    LDAP_BASE_DN: "ou=people,dc=example,dc=test",
+    REQUIRE_PASSWORD_CHANGE: "false",
+  });
+  try {
+    const passwordOnly = await jsonPost(`${srv.base}/api/v1/auth/login`, {
+      password: localPassword,
+    });
+    assert("password-only login uses local admin password", passwordOnly.status === 200);
+
+    const admin = await jsonPost(`${srv.base}/api/v1/auth/login`, {
+      username: "admin",
+      password: localPassword,
+    });
+    assert("username admin uses local admin password", admin.status === 200);
+    const issued = (await admin.json()) as { token: string };
+    assert("admin login issued a JWT", typeof issued.token === "string" && issued.token.length > 0);
+
+    const adminWrong = await jsonPost(`${srv.base}/api/v1/auth/login`, {
+      username: "admin",
+      password: "wrong",
+    });
+    assert("username admin with wrong local password → 401", adminWrong.status === 401);
+  } finally {
+    await srv.stop();
+    await rm(secretDir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
@@ -424,7 +468,8 @@ async function main(): Promise<void> {
   await scenarioApiKeyOnly();
   await scenarioAuthDisabled();
   await scenarioPersistedHashOnly();
-  await scenarioLdapEnabledRequiresUsername();
+  await scenarioLdapEnabledWithoutLocalPassword();
+  await scenarioLdapAdminUsesLocalPassword();
 
   if (failures > 0) {
     console.log(`\n[test-auth] FAIL — ${failures} assertion(s) failed`);

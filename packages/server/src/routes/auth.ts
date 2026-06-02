@@ -60,9 +60,9 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       },
       schema: {
         description:
-          "Exchange a local password or LDAP username/password for a short-lived JWT. " +
-          "LDAP is opt-in and requires `username`; local UI_PASSWORD / stored-hash " +
-          "logins continue to accept password-only requests. Returns 401 if the " +
+          "Exchange a local admin password or LDAP username/password for a short-lived JWT. " +
+          "LDAP is opt-in; username `admin` and password-only requests use local " +
+          "UI_PASSWORD / stored-hash auth, while other usernames use LDAP. Returns 401 if the " +
           "credentials are wrong, or 503 if the selected auth backend is not configured.",
         tags: ["auth"],
         security: [],
@@ -93,8 +93,9 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const { username, password } = req.body;
+      const loginAsLocalAdmin = username === undefined || username.toLowerCase() === "admin";
 
-      if (config.auth.ldap.enabled && username !== undefined) {
+      if (config.auth.ldap.enabled && !loginAsLocalAdmin) {
         const result = await verifyLdapLogin(username, password);
         if (result.error === "misconfigured") {
           return reply.code(503).send({
@@ -115,15 +116,10 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       if (!passwordConfigured()) {
-        if (config.auth.ldap.enabled) {
-          return reply.code(400).send({
-            error: "username_required",
-            message: "LDAP login requires a username",
-          });
-        }
         return reply.code(503).send({
           error: "ui_password_not_configured",
-          message: "browser login is disabled (no UI_PASSWORD set and no stored password hash)",
+          message:
+            "browser local admin login is disabled (no UI_PASSWORD set and no stored password hash)",
         });
       }
       const result = await verifyPasswordWithSource(password);

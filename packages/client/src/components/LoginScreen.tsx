@@ -29,7 +29,7 @@ export function LoginScreen() {
           </div>
           <p className="text-sm text-neutral-400">
             {ldapEnabled
-              ? "Enter your LDAP username and password to continue."
+              ? "Enter your LDAP username and password, or username admin for the local pi-forge password."
               : "Enter the pi-forge password to continue."}
           </p>
         </header>
@@ -61,7 +61,7 @@ export function LoginScreen() {
           <p role="alert" className="text-sm text-red-400">
             {error === "invalid_password"
               ? ldapEnabled
-                ? "Incorrect username/password or unauthorized LDAP group."
+                ? "Incorrect username/password, local admin password, or LDAP group."
                 : "Incorrect password."
               : error === "username_required"
                 ? "Username is required."

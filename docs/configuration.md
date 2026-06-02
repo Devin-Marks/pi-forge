@@ -21,9 +21,11 @@ pi-forge --no-expose-docs --minimal-ui
 pi-forge --api-key @/run/secrets/api-key   # @<path> reads from file
 ```
 
-- **Sensitive flags** (`--ui-password`, `--api-key`, `--jwt-secret`)
-  accept `@<path>` to read from a file (keeps secrets out of shell
-  history and `ps`).
+- **Sensitive flags** (`--ui-password`, `--api-key`, `--jwt-secret`,
+  `--ldap-bind-password`) accept `@<path>` to read from a file (keeps
+  secrets out of shell history and `ps`). Environment variables do not
+  use `@` expansion; use the dedicated `*_FILE` env vars for mounted
+  secret files.
 - **Boolean flags** accept `true|false|on|off|1|0|yes|no`. Bare
   `--flag` means `true`; `--no-flag` means `false`.
 
@@ -43,13 +45,14 @@ in `cli.ts`). The most-touched ones:
 | `WORKSPACE_PATH` | `~/.pi-forge/workspace` | Where project code lives. Point at an existing dir (e.g. `~/Code`) to reuse code on disk. |
 | `PI_CONFIG_DIR` | `~/.pi/agent` | Pi SDK config dir (`auth.json`, `models.json`, `settings.json`). |
 | `FORGE_DATA_DIR` | `~/.pi-forge` | Pi-forge state — `projects.json`, override files, `jwt-secret`, `password-hash`. |
-| `UI_PASSWORD` | (unset) | Enables browser JWT auth. After the user changes it via the UI, a scrypt hash is persisted to `${FORGE_DATA_DIR}/password-hash` and the env value is ignored. |
+| `UI_PASSWORD` | (unset) | Enables browser JWT auth. Literal env value only; it does not expand `@/path`. After the user changes it via the UI, a scrypt hash is persisted to `${FORGE_DATA_DIR}/password-hash` and the env value is ignored. |
+| `UI_PASSWORD_FILE` | (unset) | File containing the browser login password (for Kubernetes/OpenShift mounted Secrets). Takes precedence over `UI_PASSWORD`. Equivalent CLI: `--ui-password-file`; CLI `--ui-password @/path` is also supported. |
 | `API_KEY` | (unset) | Static bearer token for programmatic access. |
 | `JWT_SECRET` | (auto-generated) | HS256 signing key. Auto-generated and persisted to `${FORGE_DATA_DIR}/jwt-secret` (mode 0600) when `UI_PASSWORD`, LDAP auth, or `password-hash` is in play. Set explicitly (`openssl rand -hex 32`) to override; delete the file to rotate. |
 | `LDAP_ENABLED` | `false` | Enables LDAP username/password browser login. Requires the LDAP variables below. |
 | `LDAP_URL` | (unset) | LDAP server URL, e.g. `ldap://ldap.example.com:389` or `ldaps://ldap.example.com:636`. |
 | `LDAP_BIND_DN` | (unset) | Service-account bind DN used only to search for the user entry. |
-| `LDAP_BIND_PASSWORD` | (unset) | Service-account bind password. Prefer `LDAP_BIND_PASSWORD_FILE` or `--ldap-bind-password @/path` for secret mounts. |
+| `LDAP_BIND_PASSWORD` | (unset) | Service-account bind password. Literal env value only; it does not expand `@/path`. Prefer `LDAP_BIND_PASSWORD_FILE` or `--ldap-bind-password @/path` for secret mounts. |
 | `LDAP_BIND_PASSWORD_FILE` | (unset) | File containing the service-account password (for Kubernetes/OpenShift mounted Secrets). Takes precedence over `LDAP_BIND_PASSWORD`. |
 | `LDAP_BASE_DN` | (unset) | Base DN for user searches. |
 | `LDAP_USER_FILTER` | `(|(uid={{username}})(sAMAccountName={{username}})(mail={{username}}))` | Search filter. `{{username}}` is escaped per RFC4515 before substitution. Must match exactly one user. |
@@ -67,7 +70,10 @@ are documented in [`deployment.md`](./deployment.md).
 ### LDAP browser login
 
 LDAP is opt-in and off by default. When `LDAP_ENABLED=true`, pi-forge's
-login form asks for a username and password. The server binds with the
+login form asks for a username and password. Username `admin` (and
+password-only API calls) always use the local pi-forge admin password
+from `UI_PASSWORD`, `UI_PASSWORD_FILE`, or the persisted password hash;
+all other usernames use LDAP. The server binds with the
 configured service account, searches under `LDAP_BASE_DN` using
 `LDAP_USER_FILTER`, optionally checks the returned user's `memberOf`
 (or `LDAP_GROUP_ATTRIBUTE`) against `LDAP_REQUIRED_GROUP_DN`, and then
@@ -88,16 +94,19 @@ LDAP_REQUIRED_GROUP_DN='cn=pi-forge-users,ou=groups,dc=example,dc=com'
 ```
 
 `LDAP_BIND_PASSWORD_FILE` is intended for Kubernetes/OpenShift mounted
-Secrets and takes precedence over `LDAP_BIND_PASSWORD`. The password is
-read only in `config.ts`, never returned by any API, and redacted from
-request logs. Do not put service-account passwords in container images
-or command-line history; use a mounted secret file or the CLI
-`--ldap-bind-password @/path/to/file` form instead.
+Secrets and takes precedence over `LDAP_BIND_PASSWORD`. `LDAP_BIND_PASSWORD`
+is always a literal password value; unlike CLI sensitive flags, env vars
+are not `@`-expanded. The password is read only in `config.ts`, never
+returned by any API, and redacted from request logs. Do not put
+service-account passwords in container images or command-line history;
+use a mounted secret file or the CLI `--ldap-bind-password @/path/to/file`
+form instead.
 
-If both LDAP and local `UI_PASSWORD` / stored password auth are present,
-username+password login uses LDAP; password-only login continues to use
-the local pi-forge password. This preserves existing single-tenant
-password deployments while allowing LDAP to be enabled during migration.
+If both LDAP and local `UI_PASSWORD` / `UI_PASSWORD_FILE` / stored-password
+auth are present, username `admin` and password-only login use the local
+pi-forge password. Other usernames use LDAP. This preserves existing
+single-tenant admin access while allowing LDAP to be enabled during
+migration.
 
 ## Pi SDK config files
 

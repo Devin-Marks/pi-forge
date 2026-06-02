@@ -128,6 +128,14 @@ const FLAGS: readonly FlagDef[] = [
     sensitive: true,
   },
   {
+    name: "ui-password-file",
+    env: "UI_PASSWORD_FILE",
+    type: "string",
+    group: "auth",
+    desc: "Path to browser login password file (OpenShift/Kubernetes secret mount)",
+    defaultText: "(unset)",
+  },
+  {
     name: "api-key",
     env: "API_KEY",
     type: "string",

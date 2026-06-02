@@ -110,7 +110,10 @@ const CLIENT_DIST_PATH = resolve(
     join(dirname(fileURLToPath(import.meta.url)), "..", "..", "client", "dist"),
 );
 
-const UI_PASSWORD = readEnv("UI_PASSWORD");
+const UI_PASSWORD_FILE = readEnv("UI_PASSWORD_FILE");
+const UI_PASSWORD = UI_PASSWORD_FILE
+  ? readSecretFile(UI_PASSWORD_FILE, "UI_PASSWORD_FILE")
+  : readEnv("UI_PASSWORD");
 const API_KEY = readEnv("API_KEY");
 const CORS_ORIGIN = readEnv("CORS_ORIGIN");
 const PASSWORD_HASH_FILE = join(FORGE_DATA_DIR, "password-hash");
@@ -286,6 +289,7 @@ export const config = Object.freeze({
   exposeDocs: readBool("EXPOSE_DOCS", true),
   auth: Object.freeze({
     uiPassword: UI_PASSWORD,
+    uiPasswordFile: UI_PASSWORD_FILE,
     jwtSecret: JWT_SECRET,
     apiKey: API_KEY,
     ldap: Object.freeze({

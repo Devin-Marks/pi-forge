@@ -125,6 +125,9 @@ spec:
                   name: pi-forge-secret
                   key: UI_PASSWORD
                   optional: true
+            # Alternatively mount a Secret as a file and set
+            # UI_PASSWORD_FILE to that mount path. When set, it takes
+            # precedence over UI_PASSWORD.
             - name: API_KEY
               valueFrom:
                 secretKeyRef:
