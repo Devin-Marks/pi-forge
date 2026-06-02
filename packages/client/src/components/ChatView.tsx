@@ -1113,6 +1113,10 @@ function Message({
     return <BashExecution message={message} />;
   }
 
+  if (message.role === "custom" && message.customType === "subagent-notify") {
+    return <SubagentNotify message={message} />;
+  }
+
   // Fallback: stringify so we can see what we missed.
   return (
     <details className="rounded-lg border border-neutral-800 bg-neutral-900/40 px-3 py-2 text-xs text-neutral-400">
@@ -2070,6 +2074,18 @@ function SubagentResultRow({
           Open
         </button>
       )}
+    </div>
+  );
+}
+
+function SubagentNotify({ message }: { message: AgentMessageLike }) {
+  const text = extractText(message).trim() || "Background subagent update";
+  return (
+    <div className="rounded-lg border border-amber-700/40 bg-amber-950/30 px-4 py-3 text-sm text-amber-100 light:border-amber-300 light:bg-amber-50 light:text-amber-900">
+      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-amber-300 light:text-amber-700">
+        subagent background update
+      </div>
+      <ChatMarkdown text={text} />
     </div>
   );
 }

@@ -64,6 +64,8 @@ export const liveSummarySchema = {
     // disk-only entries (no live session, no active model).
     modelProvider: { type: "string" },
     modelId: { type: "string" },
+    isExternalLive: { type: "boolean" },
+    externalState: { type: "string", enum: ["queued", "running", "complete", "failed", "paused"] },
   },
 } as const;
 
@@ -92,6 +94,8 @@ export function liveSummaryBody(args: {
   // bare optional field. Body skips the emit when undefined either way.
   modelProvider?: string | undefined;
   modelId?: string | undefined;
+  isExternalLive?: boolean;
+  externalState?: "queued" | "running" | "complete" | "failed" | "paused";
 }): Record<string, unknown> {
   const out: Record<string, unknown> = {
     sessionId: args.sessionId,
@@ -107,5 +111,7 @@ export function liveSummaryBody(args: {
   if (args.thinkingLevel !== undefined) out.thinkingLevel = args.thinkingLevel;
   if (args.modelProvider !== undefined) out.modelProvider = args.modelProvider;
   if (args.modelId !== undefined) out.modelId = args.modelId;
+  if (args.isExternalLive !== undefined) out.isExternalLive = args.isExternalLive;
+  if (args.externalState !== undefined) out.externalState = args.externalState;
   return out;
 }

@@ -3,6 +3,7 @@ import {
   resumeSessionById,
   SessionNotFoundError,
   SessionTombstonedError,
+  ExternalSubagentActiveError,
 } from "../session-registry.js";
 import { createSSEClient } from "../sse-bridge.js";
 import { errorSchema } from "./_schemas.js";
@@ -59,6 +60,9 @@ export const streamRoutes: FastifyPluginAsync = async (fastify) => {
       } catch (err) {
         if (err instanceof SessionNotFoundError) {
           return reply.code(404).send({ error: "session_not_found" });
+        }
+        if (err instanceof ExternalSubagentActiveError) {
+          return reply.code(409).send({ error: "external_subagent_active" });
         }
         if (err instanceof SessionTombstonedError) {
           // The session was disposed within the tombstone window

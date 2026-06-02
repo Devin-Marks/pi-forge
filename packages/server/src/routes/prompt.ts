@@ -3,8 +3,14 @@ import { ConversionError, convertAttachment, pickConverter } from "../attachment
 import { config } from "../config.js";
 import { formatErrorChain } from "../diagnostics.js";
 import { expandFileReferences, languageHintForPath } from "../file-references.js";
-import { getSession, type LiveSession } from "../session-registry.js";
+import {
+  findSessionLocation,
+  getSession,
+  listSessionsForProject,
+  type LiveSession,
+} from "../session-registry.js";
 import { errorSchema } from "./_schemas.js";
+import { getExternalSubagentStatusForSession } from "../subagents-external.js";
 
 /**
  * Prompt route. Per CLAUDE.md "Pi SDK Key Facts": session.prompt() is async
@@ -295,6 +301,25 @@ async function preflight(
 ): Promise<LiveSession | undefined> {
   const live = getSession((req.params as { id: string }).id);
   if (live === undefined) {
+    const sessionId = (req.params as { id: string }).id;
+    const loc = await findSessionLocation(sessionId);
+    if (loc !== undefined) {
+      const match = (await listSessionsForProject(loc.projectId, loc.workspacePath)).find(
+        (s) => s.sessionId === sessionId,
+      );
+      const external = await getExternalSubagentStatusForSession({
+        runId: match?.runId,
+        path: match?.path,
+      });
+      if (external?.isExternalLive === true) {
+        await reply.code(409).send({
+          error: "external_subagent_active",
+          message:
+            "This pi-subagents child is still running externally and is read-only in pi-forge.",
+        });
+        return undefined;
+      }
+    }
     await reply
       .code(404)
       .send({ error: "session_not_found", message: "no live session with that id" });

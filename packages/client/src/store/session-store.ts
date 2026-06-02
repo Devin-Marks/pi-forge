@@ -164,11 +164,16 @@ function revokeOptimisticBlobUrls(messages: readonly AgentMessageLike[]): void {
  * Revokes blob URLs in the soon-to-be-discarded messages so optimistic
  * image attachments that never got refetched don't leak.
  */
-function findProjectIdForSession(state: SessionState, sessionId: string): string | undefined {
-  for (const [pid, list] of Object.entries(state.byProject)) {
-    if (list.some((u) => u.sessionId === sessionId)) return pid;
+function findSessionInState(state: SessionState, sessionId: string): UnifiedSession | undefined {
+  for (const list of Object.values(state.byProject)) {
+    const match = list.find((u) => u.sessionId === sessionId);
+    if (match !== undefined) return match;
   }
   return undefined;
+}
+
+function findProjectIdForSession(state: SessionState, sessionId: string): string | undefined {
+  return findSessionInState(state, sessionId)?.projectId;
 }
 
 function removeSessionFromState(current: SessionState, sessionId: string): Partial<SessionState> {
@@ -504,6 +509,31 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   openStream: (sessionId) => {
+    const row = findSessionInState(get(), sessionId);
+    if (row?.isExternalLive === true) {
+      void api
+        .getMessages(sessionId)
+        .then(({ messages }) => {
+          set((s) => ({
+            messagesBySession: { ...s.messagesBySession, [sessionId]: messages },
+            streamingBySession: { ...s.streamingBySession, [sessionId]: false },
+            bannerBySession: {
+              ...s.bannerBySession,
+              [sessionId]: `Read-only: pi-subagents child is ${row.externalState ?? "running"} externally`,
+            },
+          }));
+        })
+        .catch((err: unknown) => {
+          const code = err instanceof ApiError ? err.code : (err as Error).message;
+          set((s) => ({
+            bannerBySession: {
+              ...s.bannerBySession,
+              [sessionId]: `read-only snapshot failed: ${code}`,
+            },
+          }));
+        });
+      return;
+    }
     const existing = controllers.get(sessionId);
     if (existing !== undefined) return; // already open
     const ctrl = new AbortController();

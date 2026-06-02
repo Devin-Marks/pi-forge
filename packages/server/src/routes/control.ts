@@ -1,9 +1,12 @@
 import type { FastifyPluginAsync, FastifyReply } from "fastify";
 import {
   EntryNotFoundError,
+  findSessionLocation,
   forkSession,
   getSession,
+  listSessionsForProject,
   SessionNotFoundError,
+  type LiveSession,
 } from "../session-registry.js";
 import {
   liveModelRegistry,
@@ -15,6 +18,7 @@ import { config } from "../config.js";
 import { expandFileReferences } from "../file-references.js";
 import { bridgeWorkerExecutionStopped } from "../orchestration/event-bridge.js";
 import { errorSchema, liveSummaryBody, liveSummarySchema } from "./_schemas.js";
+import { getExternalSubagentStatusForSession } from "../subagents-external.js";
 
 /**
  * Wrap a Promise in a timeout. The SDK's compact / navigateTree calls
@@ -54,6 +58,34 @@ const NAVIGATE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes (with summarize)
 
 function notFound(reply: FastifyReply): FastifyReply {
   return reply.code(404).send({ error: "session_not_found" });
+}
+
+async function requireLiveOrRejectExternal(
+  sessionId: string,
+  reply: FastifyReply,
+): Promise<LiveSession | undefined> {
+  const live = getSession(sessionId);
+  if (live !== undefined) return live;
+  const loc = await findSessionLocation(sessionId);
+  if (loc !== undefined) {
+    const match = (await listSessionsForProject(loc.projectId, loc.workspacePath)).find(
+      (s) => s.sessionId === sessionId,
+    );
+    const external = await getExternalSubagentStatusForSession({
+      runId: match?.runId,
+      path: match?.path,
+    });
+    if (external?.isExternalLive === true) {
+      reply.code(409).send({
+        error: "external_subagent_active",
+        message:
+          "This pi-subagents child is still running externally and is read-only in pi-forge.",
+      });
+      return undefined;
+    }
+  }
+  notFound(reply);
+  return undefined;
 }
 
 /**
@@ -149,8 +181,8 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
-      const live = getSession(req.params.id);
-      if (live === undefined) return notFound(reply);
+      const live = await requireLiveOrRejectExternal(req.params.id, reply);
+      if (live === undefined) return reply;
       const mode = req.body.mode ?? "steer";
       // Same `@<path>` expansion as the prompt route — steer/followUp
       // text is conversationally identical to a fresh prompt; the user
@@ -191,8 +223,8 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
-      const live = getSession(req.params.id);
-      if (live === undefined) return notFound(reply);
+      const live = await requireLiveOrRejectExternal(req.params.id, reply);
+      if (live === undefined) return reply;
       await live.session.abort();
       await bridgeWorkerExecutionStopped(req.params.id, { wasLive: true, reason: "aborted" });
       return reply.code(204).send();
@@ -315,8 +347,8 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
-      const live = getSession(req.params.id);
-      if (live === undefined) return notFound(reply);
+      const live = await requireLiveOrRejectExternal(req.params.id, reply);
+      if (live === undefined) return reply;
       const opts: Parameters<typeof live.session.navigateTree>[1] = {};
       if (req.body.summarize !== undefined) opts.summarize = req.body.summarize;
       if (req.body.customInstructions !== undefined)
@@ -383,8 +415,8 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
-      const live = getSession(req.params.id);
-      if (live === undefined) return notFound(reply);
+      const live = await requireLiveOrRejectExternal(req.params.id, reply);
+      if (live === undefined) return reply;
       try {
         const result = await withTimeout(
           live.session.compact(req.body.customInstructions),
@@ -452,8 +484,8 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
-      const live = getSession(req.params.id);
-      if (live === undefined) return notFound(reply);
+      const live = await requireLiveOrRejectExternal(req.params.id, reply);
+      if (live === undefined) return reply;
       // Look up the model in the SDK's ModelRegistry — it merges built-in
       // providers (Anthropic, OpenAI, Google, etc.) with anything defined in
       // models.json. The previous version called pi-ai's static `getModel`,
@@ -637,8 +669,8 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
-      const live = getSession(req.params.id);
-      if (live === undefined) return notFound(reply);
+      const live = await requireLiveOrRejectExternal(req.params.id, reply);
+      if (live === undefined) return reply;
       type SetThinkingResult =
         | { ok: true; level: string }
         | { ok: false; status: number; body: { error: string; message?: string } };

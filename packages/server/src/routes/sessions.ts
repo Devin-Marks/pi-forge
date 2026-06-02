@@ -20,6 +20,10 @@ import {
 import { errorSchema, liveSummaryBody, liveSummarySchema } from "./_schemas.js";
 import { buildTurnDiff } from "../turn-diff-builder.js";
 import { buildCompactionHistory } from "../compaction-history.js";
+import {
+  getExternalSubagentStatusForSession,
+  readSessionMessagesFromDisk,
+} from "../subagents-external.js";
 
 const unifiedSchema = {
   type: "object",
@@ -51,6 +55,8 @@ const unifiedSchema = {
     parentSessionId: { type: "string" },
     /** pi-subagents run id when this is a child session. */
     runId: { type: "string" },
+    isExternalLive: { type: "boolean" },
+    externalState: { type: "string", enum: ["queued", "running", "complete", "failed", "paused"] },
     /**
      * Absolute disk path to the session JSONL — used by the
      * SubagentResultCard to resolve a result's `sessionFile` reference
@@ -79,6 +85,8 @@ function unifiedFromUnified(u: UnifiedSession): Record<string, unknown> {
   if (u.parentSessionId !== undefined) out.parentSessionId = u.parentSessionId;
   if (u.runId !== undefined) out.runId = u.runId;
   if (u.path !== undefined) out.path = u.path;
+  if (u.isExternalLive !== undefined) out.isExternalLive = u.isExternalLive;
+  if (u.externalState !== undefined) out.externalState = u.externalState;
   return out;
 }
 
@@ -258,7 +266,11 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
       const list = await listSessionsForProject(loc.projectId, loc.workspacePath);
       const match = list.find((s) => s.sessionId === req.params.id);
       if (match === undefined) return notFound(reply);
-      return liveSummaryBody({
+      const external = await getExternalSubagentStatusForSession({
+        runId: match.runId,
+        path: match.path,
+      });
+      const bodyArgs: Parameters<typeof liveSummaryBody>[0] = {
         sessionId: match.sessionId,
         projectId: match.projectId,
         workspacePath: match.workspacePath,
@@ -268,7 +280,12 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
         messageCount: match.messageCount,
         isStreaming: false,
         isLive: false,
-      });
+      };
+      if (external !== undefined) {
+        bodyArgs.isExternalLive = external.isExternalLive;
+        bodyArgs.externalState = external.state;
+      }
+      return liveSummaryBody(bodyArgs);
     },
   );
 
@@ -304,8 +321,18 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const live = getSession(req.params.id);
-      if (live === undefined) return notFound(reply);
-      return { messages: live.session.messages };
+      if (live !== undefined) return { messages: live.session.messages };
+      const loc = await findSessionLocation(req.params.id);
+      if (loc === undefined) return notFound(reply);
+      const list = await listSessionsForProject(loc.projectId, loc.workspacePath);
+      const match = list.find((s) => s.sessionId === req.params.id);
+      if (match?.path === undefined) return notFound(reply);
+      const external = await getExternalSubagentStatusForSession({
+        runId: match.runId,
+        path: match.path,
+      });
+      if (external?.isExternalLive !== true) return notFound(reply);
+      return { messages: readSessionMessagesFromDisk(match.path, loc.workspacePath) };
     },
   );
 

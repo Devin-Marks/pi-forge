@@ -37,6 +37,7 @@ import { createOrchestrationTools } from "./orchestration/tools.js";
 import { bridgeWorkerAgentEvent } from "./orchestration/event-bridge.js";
 import { notifySupervisorDisposed, notifySupervisorIdle } from "./orchestration/inbox.js";
 import { archiveSessionFiles } from "./session-archive.js";
+import { getExternalSubagentStatusForSession } from "./subagents-external.js";
 
 /**
  * Minimal SSE client contract used by the registry to fan out events.
@@ -101,6 +102,10 @@ export interface DiscoveredSession {
   parentSessionId?: string;
   /** The pi-subagents run id (the directory between parent and child). */
   runId?: string;
+  /** True when pi-subagents authoritative status says this child is queued/running externally. */
+  isExternalLive?: boolean;
+  /** Authoritative pi-subagents async status state when known. */
+  externalState?: "queued" | "running" | "complete" | "failed" | "paused";
 }
 
 /**
@@ -127,6 +132,10 @@ export interface UnifiedSession {
   parentSessionId?: string;
   /** pi-subagents run id when this is a child session. */
   runId?: string;
+  /** True when pi-subagents authoritative status says this child is queued/running externally. */
+  isExternalLive?: boolean;
+  /** Authoritative pi-subagents async status state when known. */
+  externalState?: "queued" | "running" | "complete" | "failed" | "paused";
   /**
    * Absolute path to the session JSONL on disk. Surfaced so the
    * client can resolve a `sessionFile` reference (e.g. from a
@@ -155,6 +164,13 @@ export class EntryNotFoundError extends Error {
   constructor(id: string) {
     super(`entry not found: ${id}`);
     this.name = "EntryNotFoundError";
+  }
+}
+
+export class ExternalSubagentActiveError extends Error {
+  constructor(id: string) {
+    super(`external subagent is active: ${id}`);
+    this.name = "ExternalSubagentActiveError";
   }
 }
 
@@ -845,6 +861,14 @@ export async function resumeSession(
       }) + "\n",
     );
 
+    const external = await getExternalSubagentStatusForSession({
+      runId: match.runId,
+      path: match.path,
+    });
+    if (external?.isExternalLive === true) {
+      throw new ExternalSubagentActiveError(sessionId);
+    }
+
     // For child sessions, hand SessionManager.open the *child's* run
     // dir as the sessionDir so any subsequent file operations the SDK
     // performs land alongside the existing JSONL rather than in the
@@ -1342,6 +1366,11 @@ export async function listSessionsForProject(
       merged.firstMessage = d.firstMessage;
       if (d.parentSessionId !== undefined) merged.parentSessionId = d.parentSessionId;
       if (d.runId !== undefined) merged.runId = d.runId;
+      const external = await getExternalSubagentStatusForSession({ runId: d.runId, path: d.path });
+      if (external !== undefined) {
+        merged.externalState = external.state;
+        merged.isExternalLive = external.isExternalLive;
+      }
       merged.path = d.path;
       continue;
     }
@@ -1359,6 +1388,11 @@ export async function listSessionsForProject(
     };
     if (d.parentSessionId !== undefined) u.parentSessionId = d.parentSessionId;
     if (d.runId !== undefined) u.runId = d.runId;
+    const external = await getExternalSubagentStatusForSession({ runId: d.runId, path: d.path });
+    if (external !== undefined) {
+      u.externalState = external.state;
+      u.isExternalLive = external.isExternalLive;
+    }
     liveById.set(d.sessionId, u);
   }
 
