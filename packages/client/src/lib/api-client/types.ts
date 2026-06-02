@@ -284,6 +284,7 @@ export interface UnifiedSession {
   sessionId: string;
   projectId: string;
   isLive: boolean;
+  isExternalLive?: boolean;
   name?: string;
   workspacePath: string;
   lastActivityAt: string;

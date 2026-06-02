@@ -870,7 +870,7 @@ function applyEvent(
     // first arg/key otherwise. The renderer falls back to bare
     // `running <name>` when summary is undefined.
     const name = typeof event.toolName === "string" ? event.toolName : "tool";
-    const input = (event.input ?? {}) as Record<string, unknown>;
+    const input = (event.input ?? event.args ?? {}) as Record<string, unknown>;
     const summary = summarizeToolInput(name, input);
     const tool: ActiveTool = summary !== undefined ? { name, summary } : { name };
     set((s) => ({

@@ -264,6 +264,7 @@ function vUnifiedSession(value: unknown, status: number): UnifiedSession {
     messageCount: value.messageCount,
     firstMessage: value.firstMessage,
   };
+  if (typeof value.isExternalLive === "boolean") out.isExternalLive = value.isExternalLive;
   if (typeof value.name === "string") out.name = value.name;
   if (typeof value.parentSessionId === "string") out.parentSessionId = value.parentSessionId;
   if (typeof value.runId === "string") out.runId = value.runId;

@@ -33,7 +33,11 @@ import { SessionTreePanel } from "./SessionTreePanel";
 import { QuickActionsMenu } from "./QuickActionsMenu";
 import { QuickActionRunCard } from "./QuickActionRunCard";
 import { useQuickActionRunsStore } from "../store/quick-actions-store";
-import { parseSubagentDetails, type SubagentResult } from "../lib/subagent-parser";
+import {
+  parseSubagentDetails,
+  parseSubagentNotify,
+  type SubagentResult,
+} from "../lib/subagent-parser";
 import { OrchestrationPanel } from "./OrchestrationPanel";
 import { useUiConfigStore } from "../store/ui-config-store";
 import {
@@ -1113,6 +1117,10 @@ function Message({
     return <BashExecution message={message} />;
   }
 
+  if (message.role === "custom") {
+    return <CustomMessage message={message} />;
+  }
+
   // Fallback: stringify so we can see what we missed.
   return (
     <details className="rounded-lg border border-neutral-800 bg-neutral-900/40 px-3 py-2 text-xs text-neutral-400">
@@ -1880,6 +1888,50 @@ function SubagentInflightOrResult({
   );
 }
 
+function useOpenSubagentSessionByFile(): (sessionFile: string | undefined) => Promise<void> {
+  const setActiveSession = useSessionStore((s) => s.setActiveSession);
+  const setActiveProject = useProjectStore((s) => s.setActive);
+  const byProject = useSessionStore((s) => s.byProject);
+
+  const loadedSessionByPath = useMemo(() => {
+    const map = new Map<string, { sessionId: string; projectId: string }>();
+    for (const list of Object.values(byProject)) {
+      for (const s of list) {
+        if (typeof s.path === "string" && s.path.length > 0) {
+          map.set(s.path, { sessionId: s.sessionId, projectId: s.projectId });
+        }
+      }
+    }
+    return map;
+  }, [byProject]);
+
+  return async (sessionFile: string | undefined): Promise<void> => {
+    if (sessionFile === undefined) {
+      console.warn("[subagent] Open clicked but result has no sessionFile");
+      return;
+    }
+    let match = loadedSessionByPath.get(sessionFile);
+    if (match === undefined) {
+      try {
+        const { sessions } = await api.listSessions();
+        const fresh = sessions.find((s) => s.path === sessionFile);
+        if (fresh !== undefined) match = { sessionId: fresh.sessionId, projectId: fresh.projectId };
+      } catch (err) {
+        console.warn("[subagent] Open: session-list refetch failed", err);
+      }
+    }
+    if (match === undefined) {
+      console.warn(
+        "[subagent] Open: sessionFile not found in any project's session list",
+        sessionFile,
+      );
+      return;
+    }
+    setActiveProject(match.projectId);
+    setActiveSession(match.sessionId);
+  };
+}
+
 function SubagentResultCard({
   message,
   argsText,
@@ -1891,48 +1943,7 @@ function SubagentResultCard({
   outputText: string;
   isError: boolean;
 }) {
-  const setActiveSession = useSessionStore((s) => s.setActiveSession);
-  const setActiveProject = useProjectStore((s) => s.setActive);
-  const byProject = useSessionStore((s) => s.byProject);
-  // Resolve a tool-result `sessionFile` (absolute path) back to its
-  // canonical sessionId by scanning the loaded session list. pi-subagents
-  // writes children as a literal `session.jsonl`, so the filename's
-  // stem is the string "session" — useless for navigation. Server-side
-  // discovery reads the JSONL header for the real id and surfaces both
-  // path AND sessionId on UnifiedSession; we look up by path here.
-  const sessionByPath = useMemo(() => {
-    const map = new Map<string, { sessionId: string; projectId: string }>();
-    for (const list of Object.values(byProject)) {
-      for (const s of list) {
-        if (typeof s.path === "string" && s.path.length > 0) {
-          map.set(s.path, { sessionId: s.sessionId, projectId: s.projectId });
-        }
-      }
-    }
-    return map;
-  }, [byProject]);
-  const openByFile = (sessionFile: string | undefined): void => {
-    if (sessionFile === undefined) {
-      console.warn("[subagent] Open clicked but result has no sessionFile");
-      return;
-    }
-    const match = sessionByPath.get(sessionFile);
-    console.info("[subagent] Open clicked", { sessionFile, match });
-    if (match === undefined) {
-      // The child wasn't in any project's session list — most likely
-      // because the project sidebar hasn't been refreshed since the
-      // sub-agent ran. Reload the active project's list and retry.
-      // For now: surface a console warning rather than silently doing
-      // nothing. (A future revision could trigger a refetch + retry.)
-      console.warn(
-        "[subagent] Open: sessionFile not found in any project's session list",
-        sessionFile,
-      );
-      return;
-    }
-    setActiveProject(match.projectId);
-    setActiveSession(match.sessionId);
-  };
+  const openByFile = useOpenSubagentSessionByFile();
   const parsed = parseSubagentDetails(message.details);
   const isManagement = parsed.mode === "management";
   const count = parsed.results.length;
@@ -1975,7 +1986,7 @@ function SubagentResultCard({
         </div>
         {parsed.results.length === 1 && parsed.results[0]!.sessionFile !== undefined && (
           <button
-            onClick={() => openByFile(parsed.results[0]!.sessionFile)}
+            onClick={() => void openByFile(parsed.results[0]!.sessionFile)}
             className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded border border-sky-700/60 px-2 py-1 text-[12px] font-medium text-sky-200 hover:border-sky-500 hover:bg-sky-900/30 hover:text-sky-100 light:border-sky-400 light:text-sky-800 light:hover:border-sky-600 light:hover:bg-sky-100 light:hover:text-sky-900 md:min-h-0 md:px-1.5 md:py-0.5 md:text-[10px]"
             title={`Open sub-agent session — ${parsed.results[0]!.sessionFile}`}
           >
@@ -2036,7 +2047,7 @@ function SubagentResultRow({
   onOpenFile,
 }: {
   result: SubagentResult;
-  onOpenFile: (sessionFile: string | undefined) => void;
+  onOpenFile: (sessionFile: string | undefined) => void | Promise<void>;
 }) {
   const failed = result.exitCode !== 0;
   return (
@@ -2062,7 +2073,7 @@ function SubagentResultRow({
       </div>
       {result.sessionFile !== undefined && (
         <button
-          onClick={() => onOpenFile(result.sessionFile)}
+          onClick={() => void onOpenFile(result.sessionFile)}
           className="inline-flex shrink-0 items-center gap-1 rounded border border-sky-700/60 px-1.5 py-0.5 text-[10px] font-medium text-sky-200 hover:border-sky-500 hover:bg-sky-900/30 hover:text-sky-100 light:border-sky-400 light:text-sky-800 light:hover:border-sky-600 light:hover:bg-sky-100 light:hover:text-sky-900"
           title={result.sessionFile}
         >
@@ -2070,6 +2081,100 @@ function SubagentResultRow({
           Open
         </button>
       )}
+    </div>
+  );
+}
+
+function CustomMessage({ message }: { message: AgentMessageLike }) {
+  const customType = typeof message.customType === "string" ? message.customType : "custom";
+  const content = message.content;
+  const text =
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content
+            .map((block) => {
+              const b = block as { type?: unknown; text?: unknown };
+              return b.type === "text" && typeof b.text === "string" ? b.text : "";
+            })
+            .filter((part) => part.length > 0)
+            .join("\n")
+        : "";
+
+  if (customType === "subagent-notify") {
+    return <SubagentNotifyCard message={message} text={text} />;
+  }
+
+  return (
+    <div className="message-bubble group rounded-lg border border-violet-800/50 bg-violet-950/20 px-4 py-3 text-sm light:border-violet-300 light:bg-violet-50">
+      <div className="mb-1 flex items-center gap-2">
+        <span className="text-[10px] uppercase tracking-wider text-violet-300 light:text-violet-700">
+          {customType}
+        </span>
+        <MessageTimestamp ts={(message as { timestamp?: unknown }).timestamp} />
+      </div>
+      {text.length > 0 ? <ChatMarkdown text={text} /> : <RawText text={JSON.stringify(message)} />}
+    </div>
+  );
+}
+
+function SubagentNotifyCard({ message, text }: { message: AgentMessageLike; text: string }) {
+  const details = parseSubagentNotify(text, message.details);
+  const openByFile = useOpenSubagentSessionByFile();
+  if (details === undefined) {
+    return (
+      <div className="rounded border border-sky-800/50 bg-sky-950/20 px-3 py-2 text-xs text-sky-100 light:border-sky-300 light:bg-sky-50 light:text-sky-900">
+        <ChatMarkdown text={text.length > 0 ? text : "Sub-agent notification"} />
+      </div>
+    );
+  }
+  const failed = details.status === "failed";
+  const paused = details.status === "paused";
+  const sessionFile = details.sessionLabel === "session file" ? details.sessionValue : undefined;
+  const borderColors = failed
+    ? "border-red-700/50 border-l-red-400 bg-red-950/15 light:border-red-300 light:border-l-red-600 light:bg-red-50"
+    : paused
+      ? "border-amber-700/50 border-l-amber-400 bg-amber-950/15 light:border-amber-300 light:border-l-amber-600 light:bg-amber-50"
+      : "border-sky-700/50 border-l-sky-400 bg-sky-950/15 light:border-sky-300 light:border-l-sky-600 light:bg-sky-50";
+  return (
+    <div className={`overflow-hidden rounded border border-l-2 ${borderColors} text-xs`}>
+      <div className="flex items-center justify-between gap-2 px-2.5 py-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Users size={11} className="shrink-0 text-sky-300 light:text-sky-700" />
+          <span className="truncate font-medium text-sky-100 light:text-sky-900">
+            Background sub-agent: {details.agent}
+          </span>
+          <span className="shrink-0 rounded bg-neutral-900/50 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wider text-neutral-300 light:bg-neutral-100 light:text-neutral-700">
+            {details.status}
+          </span>
+          {details.taskInfo !== undefined && (
+            <span className="text-[10px] text-neutral-400 light:text-neutral-600">
+              {details.taskInfo}
+            </span>
+          )}
+        </div>
+        {sessionFile !== undefined && (
+          <button
+            onClick={() => void openByFile(sessionFile)}
+            className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded border border-sky-700/60 px-2 py-1 text-[12px] font-medium text-sky-200 hover:border-sky-500 hover:bg-sky-900/30 hover:text-sky-100 light:border-sky-400 light:text-sky-800 light:hover:border-sky-600 light:hover:bg-sky-100 light:hover:text-sky-900 md:min-h-0 md:px-1.5 md:py-0.5 md:text-[10px]"
+            title={`Open sub-agent session — ${sessionFile}`}
+          >
+            <ExternalLink size={12} />
+            Open
+          </button>
+        )}
+      </div>
+      <div className="border-t border-sky-900/30 px-2.5 py-2 text-neutral-200 light:text-neutral-800">
+        <ChatMarkdown text={details.resultPreview} />
+        {details.sessionLabel !== undefined && details.sessionValue !== undefined && (
+          <div
+            className="mt-1 truncate font-mono text-[10px] text-neutral-500"
+            title={details.sessionValue}
+          >
+            {details.sessionLabel}: {details.sessionValue}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

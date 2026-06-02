@@ -14,7 +14,10 @@
  * https://github.com/nicobailon/pi-subagents — see also the integration
  * report captured in `notes/MOBILE.md` for the full schema.
  */
-import { parseSubagentDetails } from "../packages/client/src/lib/subagent-parser";
+import {
+  parseSubagentDetails,
+  parseSubagentNotify,
+} from "../packages/client/src/lib/subagent-parser";
 
 let failures = 0;
 
@@ -240,6 +243,54 @@ assertEqual(
     mode: "single",
     results: [{ agent: "x", task: "t", exitCode: 0, sessionFile: "/var/tmp/run/something.json" }],
   },
+);
+
+// --- Async notification custom messages -----------------------------
+
+assertEqual(
+  "subagent-notify content parses completion + session file",
+  parseSubagentNotify(
+    [
+      "Background task completed: **reviewer** (1/2)",
+      "",
+      "Looks good.",
+      "Second line.",
+      "",
+      "Session file: /tmp/pi-subagents/run/session.jsonl",
+    ].join("\n"),
+  ),
+  {
+    agent: "reviewer",
+    status: "completed",
+    taskInfo: "(1/2)",
+    resultPreview: "Looks good.\nSecond line.",
+    sessionLabel: "session file",
+    sessionValue: "/tmp/pi-subagents/run/session.jsonl",
+  },
+);
+
+assertEqual(
+  "subagent-notify structured details win over content",
+  parseSubagentNotify("unparseable", {
+    agent: "writer",
+    status: "paused",
+    resultPreview: "Paused after interrupt.",
+    sessionLabel: "session file",
+    sessionValue: "/tmp/paused/session.jsonl",
+  }),
+  {
+    agent: "writer",
+    status: "paused",
+    resultPreview: "Paused after interrupt.",
+    sessionLabel: "session file",
+    sessionValue: "/tmp/paused/session.jsonl",
+  },
+);
+
+assertEqual(
+  "malformed subagent-notify content returns undefined",
+  parseSubagentNotify("hello"),
+  undefined,
 );
 
 // --- Final tally -----------------------------------------------------

@@ -116,6 +116,8 @@ export interface UnifiedSession {
   projectId: string;
   /** True when the session is in the in-memory registry (subscribable). */
   isLive: boolean;
+  /** True when an external pi-subagents child process appears to still be writing this child JSONL. */
+  isExternalLive?: boolean;
   name: string | undefined;
   workspacePath: string;
   /** Last activity timestamp (live: lastActivityAt; disk: modifiedAt). */
@@ -159,6 +161,52 @@ export class EntryNotFoundError extends Error {
 }
 
 const registry = new Map<string, LiveSession>();
+
+const SUBAGENT_CHILD_ACTIVE_TTL_MS = 10 * 60 * 1000;
+const SUBAGENT_ASYNC_PARENT_TTL_MS = 12 * 60 * 60 * 1000;
+const activeSubagentParentTimers = new Map<string, NodeJS.Timeout>();
+
+function clearActiveSubagentParent(parentSessionId: string): void {
+  const existing = activeSubagentParentTimers.get(parentSessionId);
+  if (existing !== undefined) clearTimeout(existing);
+  activeSubagentParentTimers.delete(parentSessionId);
+}
+
+function markActiveSubagentParent(
+  parentSessionId: string,
+  ttlMs = SUBAGENT_CHILD_ACTIVE_TTL_MS,
+): void {
+  clearActiveSubagentParent(parentSessionId);
+  const timer = setTimeout(() => activeSubagentParentTimers.delete(parentSessionId), ttlMs);
+  timer.unref?.();
+  activeSubagentParentTimers.set(parentSessionId, timer);
+}
+
+function isSubagentChildExternallyLive(child: DiscoveredSession): boolean {
+  if (child.parentSessionId === undefined) return false;
+  if (!activeSubagentParentTimers.has(child.parentSessionId)) return false;
+  return Date.now() - child.modifiedAt.getTime() <= SUBAGENT_CHILD_ACTIVE_TTL_MS;
+}
+
+function isAsyncSubagentToolResult(result: unknown): boolean {
+  if (typeof result !== "object" || result === null) return false;
+  const details = (result as { details?: unknown }).details;
+  if (typeof details !== "object" || details === null) return false;
+  const d = details as { asyncId?: unknown; asyncDir?: unknown; results?: unknown };
+  return (
+    (typeof d.asyncId === "string" && d.asyncId.length > 0) ||
+    (typeof d.asyncDir === "string" &&
+      d.asyncDir.length > 0 &&
+      Array.isArray(d.results) &&
+      d.results.length === 0)
+  );
+}
+
+function isSubagentCompletionCustomMessage(event: AgentSessionEvent): boolean {
+  if (event.type !== "message_end") return false;
+  const message = (event as { message?: { role?: unknown; customType?: unknown } }).message;
+  return message?.role === "custom" && message.customType === "subagent-notify";
+}
 
 /**
  * Built-in pi tools we activate on every session. Pi's SDK ships
@@ -327,6 +375,36 @@ function findLastAssistantErrorMessage(messages: readonly unknown[]): string | u
     return undefined;
   }
   return undefined;
+}
+
+function sendSubagentSessionListChanged(live: LiveSession, reason: string): void {
+  const refresh = {
+    type: "session_list_changed" as const,
+    reason,
+    projectId: live.projectId,
+  };
+  for (const client of live.clients) {
+    try {
+      client.send(refresh);
+    } catch {
+      // SSE client already gone; safe to ignore — its entry gets cleaned up on the next event.
+    }
+  }
+}
+
+function scheduleSubagentSessionListChanged(
+  live: LiveSession,
+  reason: string,
+  delaysMs: readonly number[],
+): void {
+  sendSubagentSessionListChanged(live, reason);
+  for (const delayMs of delaysMs) {
+    const timer = setTimeout(() => {
+      if (registry.get(live.sessionId) !== live) return;
+      sendSubagentSessionListChanged(live, reason);
+    }, delayMs);
+    timer.unref?.();
+  }
 }
 
 function makeSubscribeHandler(live: LiveSession): () => void {
@@ -521,24 +599,25 @@ function makeSubscribeHandler(live: LiveSession): () => void {
     // session_list_changed itself from inside execute() — sync with
     // the actual createSession call, no need to wait for SDK lifecycle
     // events.
-    const toolEv = event as unknown as { type?: string; toolName?: string };
-    if (
-      (toolEv.type === "tool_execution_start" || toolEv.type === "tool_execution_end") &&
-      toolEv.toolName === "subagent"
-    ) {
-      const refresh = {
-        type: "session_list_changed" as const,
-        reason: toolEv.type === "tool_execution_start" ? "subagent_start" : "subagent_end",
-        projectId: live.projectId,
-      };
-      for (const client of live.clients) {
-        try {
-          client.send(refresh);
-        } catch {
-          // SSE client already gone; safe to ignore — its entry
-          // gets cleaned up on the next event.
-        }
+    const toolEv = event as unknown as { type?: string; toolName?: string; result?: unknown };
+    if (toolEv.type === "tool_execution_start" && toolEv.toolName === "subagent") {
+      markActiveSubagentParent(live.sessionId);
+      scheduleSubagentSessionListChanged(live, "subagent_start", [250, 1000, 2500]);
+    } else if (toolEv.type === "tool_execution_end" && toolEv.toolName === "subagent") {
+      const isAsync = isAsyncSubagentToolResult(toolEv.result);
+      if (isAsync) {
+        markActiveSubagentParent(live.sessionId, SUBAGENT_ASYNC_PARENT_TTL_MS);
+      } else {
+        markActiveSubagentParent(live.sessionId, 3000);
       }
+      scheduleSubagentSessionListChanged(
+        live,
+        isAsync ? "subagent_async_started" : "subagent_end",
+        [500, 1500],
+      );
+    } else if (isSubagentCompletionCustomMessage(event)) {
+      markActiveSubagentParent(live.sessionId, 3000);
+      scheduleSubagentSessionListChanged(live, "subagent_async_complete", [500, 1500]);
     }
 
     // Webhook fan-out. Filters internally for the 3 SDK events
@@ -1342,6 +1421,7 @@ export async function listSessionsForProject(
       merged.firstMessage = d.firstMessage;
       if (d.parentSessionId !== undefined) merged.parentSessionId = d.parentSessionId;
       if (d.runId !== undefined) merged.runId = d.runId;
+      if (isSubagentChildExternallyLive(d)) merged.isExternalLive = true;
       merged.path = d.path;
       continue;
     }
@@ -1359,6 +1439,7 @@ export async function listSessionsForProject(
     };
     if (d.parentSessionId !== undefined) u.parentSessionId = d.parentSessionId;
     if (d.runId !== undefined) u.runId = d.runId;
+    if (isSubagentChildExternallyLive(d)) u.isExternalLive = true;
     liveById.set(d.sessionId, u);
   }
 

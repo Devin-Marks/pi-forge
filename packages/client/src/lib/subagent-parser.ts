@@ -34,6 +34,16 @@ export interface SubagentDetails {
   results: SubagentResult[];
 }
 
+export interface SubagentNotifyDetails {
+  agent: string;
+  status: "completed" | "failed" | "paused";
+  taskInfo?: string;
+  resultPreview: string;
+  durationMs?: number;
+  sessionLabel?: string;
+  sessionValue?: string;
+}
+
 const VALID_MODES: ReadonlySet<SubagentMode> = new Set([
   "single",
   "parallel",
@@ -55,6 +65,76 @@ function sessionIdFromFile(file: string): string | undefined {
   const stem = base.slice(0, -".jsonl".length);
   if (stem.length === 0) return undefined;
   return stem;
+}
+
+export function parseSubagentNotify(
+  content: unknown,
+  details?: unknown,
+): SubagentNotifyDetails | undefined {
+  if (typeof details === "object" && details !== null) {
+    const d = details as {
+      agent?: unknown;
+      status?: unknown;
+      taskInfo?: unknown;
+      resultPreview?: unknown;
+      durationMs?: unknown;
+      sessionLabel?: unknown;
+      sessionValue?: unknown;
+    };
+    if (
+      typeof d.agent === "string" &&
+      (d.status === "completed" || d.status === "failed" || d.status === "paused") &&
+      typeof d.resultPreview === "string"
+    ) {
+      const out: SubagentNotifyDetails = {
+        agent: d.agent,
+        status: d.status,
+        resultPreview: d.resultPreview,
+      };
+      if (typeof d.taskInfo === "string") out.taskInfo = d.taskInfo;
+      if (typeof d.durationMs === "number") out.durationMs = d.durationMs;
+      if (typeof d.sessionLabel === "string") out.sessionLabel = d.sessionLabel;
+      if (typeof d.sessionValue === "string") out.sessionValue = d.sessionValue;
+      return out;
+    }
+  }
+
+  if (typeof content !== "string") return undefined;
+  const lines = content.split("\n");
+  const header = lines[0] ?? "";
+  const match =
+    /^Background task (completed|failed|paused): \*\*(.+?)\*\*(?:\s+(\([^)]*\)))?$/.exec(header);
+  if (match === null) return undefined;
+  const body = lines.slice(2);
+  let sessionIndex = -1;
+  for (let i = body.length - 1; i >= 1; i--) {
+    if (
+      body[i - 1]?.trim() === "" &&
+      /^(Session|Session file|Session share error):\s+/.test(body[i]!)
+    ) {
+      sessionIndex = i;
+      break;
+    }
+  }
+  const sessionLine = sessionIndex >= 0 ? body[sessionIndex] : undefined;
+  const resultLines = sessionIndex >= 0 ? body.slice(0, sessionIndex) : body;
+  const resultPreview = resultLines.join("\n").trim() || "(no output)";
+  let sessionLabel: string | undefined;
+  let sessionValue: string | undefined;
+  if (sessionLine !== undefined) {
+    const separator = sessionLine.indexOf(":");
+    sessionLabel = sessionLine.slice(0, separator).toLowerCase();
+    sessionValue = sessionLine.slice(separator + 1).trim();
+  }
+  return {
+    agent: match[2]!,
+    status: match[1] as SubagentNotifyDetails["status"],
+    ...(match[3] !== undefined ? { taskInfo: match[3] } : {}),
+    resultPreview,
+    ...(sessionLabel !== undefined && sessionValue !== undefined
+      ? { sessionLabel, sessionValue }
+      : {}),
+  };
 }
 
 export function parseSubagentDetails(details: unknown): SubagentDetails {

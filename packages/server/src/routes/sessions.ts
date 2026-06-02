@@ -37,6 +37,7 @@ const unifiedSchema = {
     sessionId: { type: "string" },
     projectId: { type: "string" },
     isLive: { type: "boolean" },
+    isExternalLive: { type: "boolean" },
     name: { type: "string" },
     workspacePath: { type: "string" },
     lastActivityAt: { type: "string", format: "date-time" },
@@ -75,6 +76,7 @@ function unifiedFromUnified(u: UnifiedSession): Record<string, unknown> {
     messageCount: u.messageCount,
     firstMessage: u.firstMessage,
   };
+  if (u.isExternalLive === true) out.isExternalLive = true;
   if (u.name !== undefined) out.name = u.name;
   if (u.parentSessionId !== undefined) out.parentSessionId = u.parentSessionId;
   if (u.runId !== undefined) out.runId = u.runId;
