@@ -59,6 +59,7 @@ in `cli.ts`). The most-touched ones:
 | `LDAP_REQUIRED_GROUP_DN` | (unset) | Optional required group DN. When set, the user's `memberOf` values must include it. |
 | `LDAP_GROUP_ATTRIBUTE` | `memberOf` | User attribute checked for group DNs. Change only for directories that expose group membership under a different attribute. |
 | `LDAP_TIMEOUT_MS` | `5000` | LDAP connect/operation timeout in milliseconds. |
+| `LDAP_TLS_REJECT_UNAUTHORIZED` | `true` | Reject untrusted TLS certificates for `ldaps://` connections. Set `false` only for local/self-signed testing. |
 | `MINIMAL_UI` | `false` | Hide terminal / git / last-turn / providers / agent-settings panels. Frontend gate; server routes unchanged. ALSO hard-disables webhook configuration, session orchestration, and the quick-actions runner. |
 | `TRUST_PROXY` | `false` | Set when behind a reverse proxy so `req.ip` is the real client (required for per-user login rate limits). |
 | `ORCHESTRATION_ENABLED` | `false` | Surface the chat-view `Orch` toggle so sessions can opt in to supervisor mode (`orchestrate_*` tool group, worker spawning, inbox). Hard-disabled under `MINIMAL_UI` regardless. See [`orchestration.md`](./orchestration.md). |
@@ -70,11 +71,10 @@ are documented in [`deployment.md`](./deployment.md).
 ### LDAP browser login
 
 LDAP is opt-in and off by default. When `LDAP_ENABLED=true`, pi-forge's
-login form defaults the username to `admin` so the regular local
-pi-forge admin password remains the first-class login path. Username
-`admin` (and password-only API calls) always use the local pi-forge
-admin password from `UI_PASSWORD`, `UI_PASSWORD_FILE`, or the persisted
-password hash; all other usernames use LDAP. The server binds with the
+login form asks for a username and password. Username `admin` (and
+password-only API calls) always use the local pi-forge admin password
+from `UI_PASSWORD`, `UI_PASSWORD_FILE`, or the persisted password hash;
+all other usernames use LDAP. The server binds with the
 configured service account, searches under `LDAP_BASE_DN` using
 `LDAP_USER_FILTER`, optionally checks the returned user's `memberOf`
 (or `LDAP_GROUP_ATTRIBUTE`) against `LDAP_REQUIRED_GROUP_DN`, and then
@@ -92,6 +92,8 @@ LDAP_BIND_DN='cn=pi-forge,ou=svc,dc=example,dc=com'
 LDAP_BIND_PASSWORD_FILE=/run/secrets/ldap-bind-password
 LDAP_BASE_DN='ou=people,dc=example,dc=com'
 LDAP_REQUIRED_GROUP_DN='cn=pi-forge-users,ou=groups,dc=example,dc=com'
+# Local/self-signed test only:
+# LDAP_TLS_REJECT_UNAUTHORIZED=false
 ```
 
 `LDAP_BIND_PASSWORD_FILE` is intended for Kubernetes/OpenShift mounted
@@ -109,7 +111,9 @@ pi-forge password. Other usernames use LDAP. The username `admin` is
 reserved for local pi-forge admin auth while LDAP is enabled; an LDAP
 account named `admin` cannot be used unless this policy changes later.
 This preserves existing single-tenant admin access while allowing LDAP
-to be enabled during migration.
+to be enabled during migration. LDAP login attempts write sanitized
+`[ldap]` lines to the server logs with the URL, base DN, username, TLS
+validation mode, and failure category; passwords are not logged.
 
 ## Pi SDK config files
 

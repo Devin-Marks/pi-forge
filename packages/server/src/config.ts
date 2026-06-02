@@ -305,6 +305,7 @@ export const config = Object.freeze({
       requiredGroupDn: readEnv("LDAP_REQUIRED_GROUP_DN"),
       groupAttribute: readEnv("LDAP_GROUP_ATTRIBUTE") ?? "memberOf",
       timeoutMs: readInt("LDAP_TIMEOUT_MS", 5000),
+      tlsRejectUnauthorized: readBool("LDAP_TLS_REJECT_UNAUTHORIZED", true),
     }),
     jwtExpiresInSeconds: readInt("JWT_EXPIRES_IN_SECONDS", 60 * 60 * 24 * 7),
     loginRateLimitMax: readInt("RATE_LIMIT_LOGIN_MAX", 10),

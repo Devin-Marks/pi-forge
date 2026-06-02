@@ -250,6 +250,14 @@ const FLAGS: readonly FlagDef[] = [
     desc: "LDAP connect/operation timeout (ms)",
     defaultText: "5000",
   },
+  {
+    name: "ldap-tls-reject-unauthorized",
+    env: "LDAP_TLS_REJECT_UNAUTHORIZED",
+    type: "boolean",
+    group: "auth",
+    desc: "Reject untrusted LDAP TLS certificates; set false only for local/self-signed testing",
+    defaultText: "true",
+  },
   // features
   {
     name: "log-level",
