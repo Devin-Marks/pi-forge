@@ -1,7 +1,7 @@
 /**
  * Agent-facing tool surface for supervisor sessions.
  *
- * Eight `orchestrate_*` tools, registered onto a session ONLY when
+ * Seven `orchestrate_*` tools, registered onto a session ONLY when
  * that session has supervisor mode enabled AND instance-level
  * orchestration is not disabled AND MINIMAL_UI is off. Wired
  * through `createAgentSession({ customTools })` in session-registry.
@@ -28,7 +28,6 @@ import {
   deleteColdSession,
 } from "../session-registry.js";
 import { maxWorkersPerSupervisor } from "./config.js";
-import { drainInbox } from "./inbox.js";
 import {
   getWorkerIds,
   getWorkerRecord,
@@ -201,60 +200,6 @@ function formatMessageForOrchestrator(msg: unknown, index: number, total: number
  * recently, and the caller can always re-call with a smaller `limit`
  * to see fewer messages in full.
  */
-/**
- * Pick the most useful one-line detail from an inbox item's
- * `data` payload, based on its event type. Keeps the inbox summary
- * compact while still surfacing the load-bearing signal — the
- * supervisor LLM shouldn't have to guess what happened from just
- * a type name.
- */
-function summarizeInboxData(type: string, data: Record<string, unknown>): string {
-  if (type === "worker.ended") {
-    const stop = typeof data.stopReason === "string" ? data.stopReason : "unknown";
-    const err = typeof data.errorMessage === "string" ? data.errorMessage : "";
-    const preview =
-      typeof data.assistantTextPreview === "string" ? truncate(data.assistantTextPreview, 200) : "";
-    const parts: string[] = [`stop=${stop}`];
-    if (err !== "") parts.push(`error="${truncate(err, 120)}"`);
-    if (preview !== "") parts.push(`said: ${preview}`);
-    return parts.join(" ");
-  }
-  if (type === "worker.ask_user") {
-    const header = typeof data.firstQuestionHeader === "string" ? data.firstQuestionHeader : "";
-    const text = typeof data.firstQuestionText === "string" ? data.firstQuestionText : "";
-    const count = typeof data.questionCount === "number" ? data.questionCount : 1;
-    return `${count} question(s)${header !== "" ? `, first: "${header}"` : ""}${text !== "" ? ` (${truncate(text, 120)})` : ""}`;
-  }
-  if (type === "worker.execution_stopped_without_agent_end") {
-    const reason = typeof data.reason === "string" ? data.reason : "stopped";
-    const lastStart = typeof data.lastAgentStartAt === "string" ? data.lastAgentStartAt : "";
-    return `${reason} while turn was open${lastStart !== "" ? ` (started ${lastStart})` : ""}`;
-  }
-  if (type === "worker.auto_retry_failed") {
-    const attempt = typeof data.attempt === "number" ? data.attempt : "?";
-    const maxA = typeof data.maxAttempts === "number" ? data.maxAttempts : "?";
-    const finalErr = typeof data.finalError === "string" ? data.finalError : "";
-    return `legacy retry failure attempts=${attempt}/${maxA}${finalErr !== "" ? ` err="${truncate(finalErr, 120)}"` : ""}`;
-  }
-  if (type === "worker.process_alert") {
-    const reason = typeof data.reason === "string" ? data.reason : "unknown";
-    const name = typeof data.name === "string" ? data.name : "(unnamed)";
-    const exit = typeof data.exitCode === "number" ? data.exitCode : "?";
-    return `${reason} process="${name}" exit=${exit}`;
-  }
-  if (type === "worker.deleted") {
-    const wasLive = data.wasLive === true;
-    return wasLive ? "was live" : "was cold";
-  }
-  // Unknown event type — fall back to a compact JSON preview so the
-  // supervisor at least sees something actionable.
-  try {
-    return truncate(JSON.stringify(data), 200);
-  } catch {
-    return "";
-  }
-}
-
 function renderTranscript(messages: readonly unknown[], total: number): string {
   const rendered: string[] = [];
   let used = 0;
@@ -343,12 +288,12 @@ function createSpawnWorker(supervisorId: string): ToolDefinition {
       "assign it a task. Workers are autonomous task-running agents — NOT " +
       "conversational helpers. Each spawn delegates a discrete unit of " +
       "work; the worker executes against the task in `initialPrompt`, " +
-      "reports completion via its inbox, then waits for the next task " +
+      "reports completion directly to the supervisor, then waits for the next task " +
       "(or shutdown). ALWAYS pass a descriptive `name` so the user (and " +
       "you, on later turns) can tell workers apart in the picker — " +
       "generic placeholders make the multi-worker case unusable. " +
-      "Worker events (turn-end, ask-user-question, etc.) feed back into the " +
-      "supervisor's inbox; check with `orchestrate_read_inbox`. " +
+      "Worker events (turn-end, ask-user-question, etc.) are pushed as " +
+      "custom supervisor messages with the actionable payload included. " +
       "Same-project only in v1 — cross-project orchestration is intentionally " +
       "disabled. Subject to the per-supervisor fan-out cap (default 8).",
     parameters: Type.Unsafe<Record<string, unknown>>(spawnSchema),
@@ -434,7 +379,7 @@ function createSpawnWorker(supervisorId: string): ToolDefinition {
           ? `# Handoff context\n${p.contextSummary}\n\n# Task\n${p.initialPrompt}`
           : p.initialPrompt;
       // Fire the initial prompt. Fire-and-forget — the supervisor
-      // will see the turn outcome via its inbox; making the tool
+      // will see the turn outcome via a pushed custom message; making the tool
       // wait here would block the supervisor's loop for the entire
       // worker turn.
       worker.session.prompt(initialPrompt).catch((e: unknown) => {
@@ -478,7 +423,7 @@ function createSpawnWorker(supervisorId: string): ToolDefinition {
           projectId: worker.projectId,
         },
         `Spawned worker "${p.name}" (${worker.sessionId}). Initial prompt delivered. ` +
-          `Monitor via orchestrate_read_inbox or orchestrate_read_worker.`,
+          `Worker updates will be pushed to you automatically; use orchestrate_read_worker only for extra transcript detail.`,
       );
     },
   } satisfies ToolDefinition;
@@ -492,9 +437,9 @@ function createListWorkers(supervisorId: string): ToolDefinition {
     label: "List workers",
     description:
       "Survey worker state (live / idle / streaming / cold) + activity. " +
-      "DO NOT poll — worker events push into your inbox, you're woken " +
-      "automatically. Call once before spawning, or when an inbox event " +
-      "needs neighbour-worker context.",
+      "DO NOT poll — worker events are pushed to you automatically as " +
+      "custom messages. Call once before spawning, or when a pushed worker " +
+      "update needs neighbour-worker context.",
     parameters: Type.Unsafe<Record<string, unknown>>({ type: "object", properties: {} }),
     async execute() {
       interface WorkerRow {
@@ -597,9 +542,9 @@ function createReadWorker(supervisorId: string): ToolDefinition {
     description:
       "Fetch a worker's most recent messages (newest-last). Default `limit` " +
       "is 1. DO NOT poll waiting for the worker to finish — worker events " +
-      "push into your inbox, you're woken automatically. Call this in " +
-      "REACTION to an inbox event, or when the user asks to inspect a " +
-      "worker. Auto-resumes cold workers.",
+      "are pushed to you automatically with final/error payloads included. " +
+      "Call this only when a pushed update or the user asks for extra " +
+      "transcript detail. Auto-resumes cold workers.",
     parameters: Type.Unsafe<Record<string, unknown>>(readWorkerSchema),
     async execute(_toolCallId, params) {
       const p = params as { workerId: string; limit?: number };
@@ -702,7 +647,7 @@ function createSendToWorker(supervisorId: string): ToolDefinition {
       // supervisor badge. The marker is part of the message text
       // — not a separate metadata channel — because the SDK's
       // prompt/steer/followUp signature only accepts text. Same
-      // pattern as the [orchestration] wake-up prefix in inbox.ts.
+      // pattern as the supervisor marker used for orchestration messages.
       const tagged = `[supervisor:${supervisorId}] ${p.message}`;
       const mode = p.mode ?? "prompt";
       try {
@@ -828,8 +773,8 @@ function createDetachWorker(supervisorId: string): ToolDefinition {
     label: "Detach worker",
     description:
       "Drop the supervisor↔worker link. The worker session stays live " +
-      "(transcript untouched) but its events no longer feed this " +
-      "supervisor's inbox. Use when the worker is done and should " +
+      "(transcript untouched) but its events no longer notify this " +
+      "supervisor. Use when the worker is done and should " +
       "continue as a standalone session.",
     parameters: Type.Unsafe<Record<string, unknown>>(detachSchema),
     async execute(_toolCallId, params) {
@@ -845,57 +790,11 @@ function createDetachWorker(supervisorId: string): ToolDefinition {
   } satisfies ToolDefinition;
 }
 
-// ---- read_inbox ----
-
-function createReadInbox(supervisorId: string): ToolDefinition {
-  return {
-    name: "orchestrate_read_inbox",
-    label: "Read inbox",
-    description:
-      "Drain pending worker events (turn-ends, ask-user-question, retry " +
-      "failures, process alerts, deletions), oldest-first. The inbox is " +
-      "PUSH-DRIVEN — you're woken by an `[orchestration]` system message " +
-      "when events arrive, so call this in REACTION to the wake-up, not " +
-      "in a polling loop. Items stay in the audit history after draining.",
-    parameters: Type.Unsafe<Record<string, unknown>>({ type: "object", properties: {} }),
-    async execute() {
-      const items = await drainInbox(supervisorId);
-      if (items.length === 0) {
-        return ok({ items: [] }, "No new inbox items.");
-      }
-      // Render each item as a readable line. The structured items
-      // also go in `details` for the REST layer, but the supervisor
-      // LLM reads them from this text — `details` doesn't reach the
-      // model's context. Per-item key fields are picked based on
-      // the event type so the supervisor sees the load-bearing
-      // signal without needing a follow-up read_worker call for
-      // every event.
-      const lines = items.map((it) => {
-        const d = it.data;
-        const detail = summarizeInboxData(it.type, d);
-        return `- [${it.occurredAt}] ${it.type} worker=${it.workerId}${detail !== "" ? ` — ${detail}` : ""}`;
-      });
-      return ok(
-        {
-          items: items.map((it) => ({
-            id: it.id,
-            type: it.type,
-            workerId: it.workerId,
-            occurredAt: it.occurredAt,
-            data: it.data,
-          })),
-        },
-        `Drained ${items.length} inbox item(s):\n${lines.join("\n")}`,
-      );
-    },
-  } satisfies ToolDefinition;
-}
-
 // ---- public factory ----
 
 /**
  * Build the complete orchestration tool set for a supervisor session.
- * Returns 8 tools. Caller (session-registry) is responsible for
+ * Returns 7 tools. Caller (session-registry) is responsible for
  * checking `isOrchestrationEnabled()` and the per-session supervisor
  * flag BEFORE calling — this factory just builds the tools.
  *
@@ -912,7 +811,6 @@ export function createOrchestrationTools(supervisorId: string): ToolDefinition[]
     createInterruptWorker(supervisorId),
     createKillWorker(supervisorId),
     createDetachWorker(supervisorId),
-    createReadInbox(supervisorId),
   ];
 }
 
@@ -925,7 +823,6 @@ export const ORCHESTRATION_TOOL_NAMES = [
   "orchestrate_interrupt_worker",
   "orchestrate_kill_worker",
   "orchestrate_detach_worker",
-  "orchestrate_read_inbox",
 ] as const;
 
 /** Helper: best-effort sanity check that `findSessionLocation` can

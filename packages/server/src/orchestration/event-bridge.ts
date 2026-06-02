@@ -1,20 +1,20 @@
 /**
- * Bridges forge-side event channels into the supervisor inbox.
+ * Bridges forge-side worker events into supervisor notifications/history.
  *
- * Four event sources feed the inbox (mirroring the webhooks bridge):
+ * Four event sources feed worker lifecycle updates (mirroring the webhooks bridge):
  *
  *   AgentSession events (per-session subscribe in session-registry):
  *     - `agent_start`      → record open turn state only
- *     - `agent_end`        → inbox `worker.ended` (with final error info)
+ *     - `agent_end`        → `worker.ended` (with final error info)
  *
  *   ask-user-question registry (forge-native):
- *     - `ask_user_question` → inbox `worker.ask_user` + awaiting_question state
+ *     - `ask_user_question` → `worker.ask_user` + awaiting_question state
  *
  *   processManager (forge-native):
- *     - `process_alert` is intentionally not bridged to the supervisor inbox
+ *     - `process_alert` is intentionally not bridged to the supervisor
  *
  *   session-registry lifecycle (sessions DELETE route):
- *     - cold/hot delete    → inbox `worker.deleted`
+ *     - cold/hot delete    → `worker.deleted`
  *
  * All bridges are fire-and-forget. Each one looks up the supervisor
  * via `getSupervisorIdForWorker` and skips silently if the source
@@ -61,12 +61,10 @@ function extractAssistantText(content: unknown): string | undefined {
     if (o.type === "text" && typeof o.text === "string") parts.push(o.text);
   }
   if (parts.length === 0) return undefined;
-  // Cap to 600 chars in the inbox payload — the supervisor LLM
-  // sees this as a quick summary; if it wants more it calls
-  // `orchestrate_read_worker`. Bigger payloads bloat the inbox
-  // file and the supervisor's tool-result context.
-  const joined = parts.join("\n");
-  return joined.length > 600 ? `${joined.slice(0, 600)}…` : joined;
+  // Worker completion notifications are the supervisor's actionable
+  // context now, so include the full final assistant text rather than a
+  // preview that requires a follow-up inbox/transcript read.
+  return parts.join("\n");
 }
 
 /**
@@ -114,7 +112,7 @@ export async function bridgeWorkerAgentEvent(
   await bridgeWorkerEvent(meta.sessionId, "worker.ended", {
     stopReason: lastAssistant?.stopReason ?? null,
     errorMessage: errorMessage ?? null,
-    assistantTextPreview: lastAssistant?.text ?? null,
+    assistantText: lastAssistant?.text ?? null,
   });
 }
 
@@ -130,10 +128,8 @@ export async function bridgeWorkerAskUserQuestion(
   await bridgeWorkerEvent(sessionId, "worker.ask_user", {
     requestId,
     questionCount: questions.length,
-    // Keep the inbox payload tight — preview is the first question's
-    // header so the supervisor sees enough to decide whether to read
-    // the worker's transcript. Full question detail is in the
-    // worker's session, fetched via orchestrate_read_worker.
+    // Include the question detail directly so the supervisor can react
+    // from the pushed notification without first draining an inbox.
     firstQuestionHeader: questions[0]?.header ?? null,
     firstQuestionText: questions[0]?.question ?? null,
   });

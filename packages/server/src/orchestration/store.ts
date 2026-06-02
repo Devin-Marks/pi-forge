@@ -375,12 +375,13 @@ async function writeInboxFile(s: InboxStore): Promise<void> {
  */
 export async function enqueueInboxItem(
   supervisorId: string,
-  item: Omit<InboxItem, "id" | "delivered">,
+  item: Omit<InboxItem, "id" | "delivered"> & { delivered?: boolean },
 ): Promise<InboxItem> {
   return withInboxLock(async () => {
     const s = await readInboxFile();
     const existing = s.inboxes[supervisorId] ?? [];
-    const full: InboxItem = { id: randomUUID(), delivered: false, ...item };
+    const { delivered = false, ...rest } = item;
+    const full: InboxItem = { id: randomUUID(), delivered, ...rest };
     existing.push(full);
     // FIFO trim from the front so the most recent N stay.
     const trimmed =
@@ -437,8 +438,8 @@ export async function pendingInboxCount(supervisorId: string): Promise<number> {
 }
 
 /**
- * Drop a supervisor's inbox entirely. Called when supervisor mode
- * is disabled or the supervisor session is deleted.
+ * Drop a supervisor's worker-event history entirely. Called when
+ * supervisor mode is disabled or the supervisor session is deleted.
  */
 export async function clearInbox(supervisorId: string): Promise<void> {
   await withInboxLock(async () => {

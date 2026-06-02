@@ -19,10 +19,10 @@
 export const ORCHESTRATION_VERSION = 1 as const;
 
 /**
- * Inbox events the supervisor's LLM sees when it calls
- * `orchestrate_read_inbox`. All carry the workerId; the `data`
- * shape is event-specific and intentionally small — the supervisor
- * can call `orchestrate_read_worker` to fetch full detail.
+ * Worker event types stored in orchestration history and pushed to
+ * supervisors as `orchestration-notify` custom messages. All carry the
+ * workerId; the `data` shape is event-specific and should be directly
+ * actionable for the supervisor.
  */
 export const INBOX_EVENT_TYPES = [
   "worker.ended",
@@ -49,12 +49,11 @@ export interface InboxItem {
   workerId: string;
   /** ISO timestamp. */
   occurredAt: string;
-  /** Event-specific small payload. The supervisor calls
-   *  `orchestrate_read_worker` for full transcript context. */
+  /** Event-specific payload included in supervisor notifications. */
   data: Record<string, unknown>;
-  /** True once `read_inbox` has surfaced this item to the supervisor's
-   *  LLM. Items stay in the file for one more drain cycle (so the user
-   *  can audit recent activity via the REST UI) then evict via cap. */
+  /** True once the item has been marked delivered by compatibility
+   *  history readers. Items remain auditable via the REST UI and evict
+   *  via cap. */
   delivered: boolean;
 }
 

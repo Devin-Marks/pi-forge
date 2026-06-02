@@ -10,6 +10,7 @@ import {
 } from "./ask-user-question/registry.js";
 import { peekCached as peekCachedTodo, subscribe as subscribeTodo } from "./todo/store.js";
 import { processManager } from "./processes/manager.js";
+import { sendCustomLifecycleMessage } from "./lifecycle-notifications.js";
 
 /**
  * Per-client outbound-buffer cap. When Node's internal socket buffer
@@ -244,47 +245,60 @@ export function initProcessesFanout(): () => void {
       return;
     }
     if (event.type === "process_alert") {
-      // Inject a user-shaped message into the live session so the
-      // agent gets a turn to react to the process finishing. The
-      // alertOn* flags were set at start() time and already filtered
-      // in the manager — by the time we get here, the alert is
-      // wanted. Best-effort: `sendUserMessage` returns a Promise but
-      // we don't await it (the SSE fanout shouldn't block on a
-      // round-trip; agent processing happens in the background and
-      // the result lands in the session JSONL like any other turn).
-      //
-      // deliverAs: "followUp" — if the agent is mid-turn, queue the
-      // alert until that turn completes. If idle, sendUserMessage
-      // kicks off a fresh turn immediately. Either way the user
-      // sees the alert message in the chat as a normal user bubble
-      // (with the `[process alert]` prefix making it obvious it's
-      // automated).
+      // Lifecycle alerts are status messages, not user-authored chat.
+      // Custom messages let the client render a compact status card
+      // and let the server decide per outcome whether the parent
+      // agent should take a turn. Clean exits are informational;
+      // failures/kills preserve the old "wake the agent" behavior.
       const reasonText =
         event.reason === "success"
           ? `finished successfully (exit ${event.info.exitCode ?? "?"})`
           : event.reason === "failure"
             ? `failed with exit code ${event.info.exitCode ?? "?"}`
             : "was killed externally";
-      const message =
-        `[process alert] "${event.info.name}" (id=${event.info.id}) ${reasonText}. ` +
+      const content =
+        `Process "${event.info.name}" (id=${event.info.id}) ${reasonText}. ` +
         `Use \`process output\` to inspect what it produced if you need to react.`;
-      void live.session
-        .sendUserMessage(message, { deliverAs: "followUp" })
-        .catch((err: unknown) => {
-          // Swallow — most likely failure mode is "session was
-          // disposed between fanout and queue-write," which is benign.
-          process.stderr.write(
-            JSON.stringify({
-              level: "warn",
-              time: new Date().toISOString(),
-              msg: "process-alert sendUserMessage failed",
-              sessionId: event.sessionId,
-              processId: event.info.id,
-              reason: event.reason,
-              err: err instanceof Error ? err.message : String(err),
-            }) + "\n",
-          );
-        });
+      const triggerTurn = event.reason !== "success";
+      sendCustomLifecycleMessage(
+        live.session,
+        {
+          customType: "process-notify",
+          content,
+          display: true,
+          details: {
+            source: "process",
+            state: event.reason,
+            reason: event.reason,
+            processId: event.info.id,
+            name: event.info.name,
+            command: event.info.command,
+            pid: event.info.pid,
+            exitCode: event.info.exitCode,
+            success: event.info.success,
+            status: event.info.status,
+          },
+        },
+        {
+          triggerTurn,
+          onError: (err: unknown) => {
+            // Swallow — most likely failure mode is "session was
+            // disposed between fanout and queue-write," which is benign.
+            process.stderr.write(
+              JSON.stringify({
+                level: "warn",
+                time: new Date().toISOString(),
+                msg: "process-alert sendCustomMessage failed",
+                sessionId: event.sessionId,
+                processId: event.info.id,
+                reason: event.reason,
+                triggerTurn,
+                err: err instanceof Error ? err.message : String(err),
+              }) + "\n",
+            );
+          },
+        },
+      );
       return;
     }
     // Lifecycle events all carry a full-snapshot update on the

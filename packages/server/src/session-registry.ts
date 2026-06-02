@@ -567,19 +567,17 @@ function makeSubscribeHandler(live: LiveSession): () => void {
       event,
     );
 
-    // Orchestration fan-out. Filters internally for agent_end and
-    // failed auto_retry_end; routes worker events to the owning
-    // supervisor's inbox (no-op for non-worker sessions). Separate
-    // call from the webhook bridge so the two systems stay
-    // independent — disabling one doesn't affect the other.
+    // Orchestration fan-out. Filters internally for worker lifecycle
+    // events and routes them to the owning supervisor as custom
+    // notifications (no-op for non-worker sessions). Separate call
+    // from the webhook bridge so the two systems stay independent —
+    // disabling one doesn't affect the other.
     void bridgeWorkerAgentEvent({ sessionId: live.sessionId, session: live.session }, event);
 
-    // Supervisor-side wake-up recovery: when a supervisor's own
-    // agent_end fires (i.e. it just became idle), check whether
-    // any inbox items piled up during the just-finished turn and
-    // re-fire the wake-up nudge. Covers the case where the
-    // supervisor LLM finished a turn without calling
-    // orchestrate_read_inbox.
+    // Supervisor-side notification recovery: when a supervisor's own
+    // agent_end fires (i.e. it just became idle), check whether any
+    // important worker updates piled up during the just-finished turn
+    // and re-fire the notification nudge if needed.
     if (e.type === "agent_end") {
       void (async () => {
         try {

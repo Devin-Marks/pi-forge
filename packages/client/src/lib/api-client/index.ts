@@ -787,8 +787,7 @@ export interface SessionLink {
   supervisorId?: string;
   /** Supervisor only — list of worker session ids. */
   workerIds?: string[];
-  /** Supervisor only — count of inbox items not yet drained by the
-   *  supervisor's LLM via orchestrate_read_inbox. */
+  /** Supervisor only — count of pending worker history items. */
   pendingInbox?: number;
   /** Supervisor only — ISO timestamp. */
   enabledAt?: string;
