@@ -225,11 +225,16 @@ function summarizeInboxData(type: string, data: Record<string, unknown>): string
     const count = typeof data.questionCount === "number" ? data.questionCount : 1;
     return `${count} question(s)${header !== "" ? `, first: "${header}"` : ""}${text !== "" ? ` (${truncate(text, 120)})` : ""}`;
   }
+  if (type === "worker.execution_stopped_without_agent_end") {
+    const reason = typeof data.reason === "string" ? data.reason : "stopped";
+    const lastStart = typeof data.lastAgentStartAt === "string" ? data.lastAgentStartAt : "";
+    return `${reason} while turn was open${lastStart !== "" ? ` (started ${lastStart})` : ""}`;
+  }
   if (type === "worker.auto_retry_failed") {
     const attempt = typeof data.attempt === "number" ? data.attempt : "?";
     const maxA = typeof data.maxAttempts === "number" ? data.maxAttempts : "?";
     const finalErr = typeof data.finalError === "string" ? data.finalError : "";
-    return `attempts=${attempt}/${maxA}${finalErr !== "" ? ` err="${truncate(finalErr, 120)}"` : ""}`;
+    return `legacy retry failure attempts=${attempt}/${maxA}${finalErr !== "" ? ` err="${truncate(finalErr, 120)}"` : ""}`;
   }
   if (type === "worker.process_alert") {
     const reason = typeof data.reason === "string" ? data.reason : "unknown";
@@ -494,7 +499,16 @@ function createListWorkers(supervisorId: string): ToolDefinition {
     async execute() {
       interface WorkerRow {
         workerId: string;
-        state: "cold" | "idle" | "streaming";
+        state:
+          | "cold"
+          | "idle"
+          | "streaming"
+          | "running"
+          | "ended"
+          | "errored"
+          | "stopped"
+          | "deleted"
+          | "awaiting_question";
         isLive: boolean;
         isStreaming: boolean;
         messageCount: number | null;
@@ -502,33 +516,46 @@ function createListWorkers(supervisorId: string): ToolDefinition {
         name: string | null;
       }
       const ids = await getWorkerIds(supervisorId);
-      const workers: WorkerRow[] = ids.map((workerId) => {
-        const live = getSession(workerId);
-        if (live === undefined) {
+      const workers: WorkerRow[] = await Promise.all(
+        ids.map(async (workerId) => {
+          const rec = await getWorkerRecord(workerId);
+          const live = getSession(workerId);
+          if (live === undefined) {
+            return {
+              workerId,
+              state: rec?.state ?? "cold",
+              isLive: false,
+              isStreaming: false,
+              messageCount: null,
+              lastActivityAt: rec?.lastStateAt ?? null,
+              name: null,
+            };
+          }
           return {
             workerId,
-            state: "cold",
-            isLive: false,
-            isStreaming: false,
-            messageCount: null,
-            lastActivityAt: null,
-            name: null,
+            state:
+              rec?.state === "running" ||
+              rec?.state === "awaiting_question" ||
+              rec?.state === "errored" ||
+              rec?.state === "stopped" ||
+              rec?.state === "deleted"
+                ? rec.state
+                : live.session.isStreaming
+                  ? "streaming"
+                  : (rec?.state ?? "idle"),
+            isLive: true,
+            isStreaming: live.session.isStreaming,
+            messageCount: live.session.messages.length,
+            lastActivityAt: live.lastActivityAt.toISOString(),
+            name: live.session.sessionName ?? null,
           };
-        }
-        return {
-          workerId,
-          state: live.session.isStreaming ? "streaming" : "idle",
-          isLive: true,
-          isStreaming: live.session.isStreaming,
-          messageCount: live.session.messages.length,
-          lastActivityAt: live.lastActivityAt.toISOString(),
-          name: live.session.sessionName ?? null,
-        };
-      });
+        }),
+      );
       const summary =
         `${workers.length} worker(s) registered. ` +
-        `${workers.filter((w) => w.state === "streaming").length} streaming, ` +
-        `${workers.filter((w) => w.state === "idle").length} idle, ` +
+        `${workers.filter((w) => w.state === "running" || w.state === "streaming").length} running, ` +
+        `${workers.filter((w) => w.state === "idle" || w.state === "ended").length} idle/ended, ` +
+        `${workers.filter((w) => w.state === "awaiting_question").length} awaiting question, ` +
         `${workers.filter((w) => w.state === "cold").length} cold.`;
       const rows = workers.map((w) => {
         const label = w.name ?? "(unnamed)";

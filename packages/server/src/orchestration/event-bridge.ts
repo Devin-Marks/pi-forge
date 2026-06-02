@@ -4,11 +4,11 @@
  * Four event sources feed the inbox (mirroring the webhooks bridge):
  *
  *   AgentSession events (per-session subscribe in session-registry):
- *     - `agent_end`        → inbox `worker.ended`
- *     - `auto_retry_end` (success=false) → inbox `worker.auto_retry_failed`
+ *     - `agent_start`      → record open turn state only
+ *     - `agent_end`        → inbox `worker.ended` (with final error info)
  *
  *   ask-user-question registry (forge-native):
- *     - `ask_user_question` → inbox `worker.ask_user`
+ *     - `ask_user_question` → inbox `worker.ask_user` + awaiting_question state
  *
  *   processManager (forge-native):
  *     - `process_alert` is intentionally not bridged to the supervisor inbox
@@ -26,6 +26,7 @@ import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-
 import type { ProcessAlertReason, ProcessInfo } from "../processes/types.js";
 import type { Question } from "../ask-user-question/types.js";
 import { bridgeWorkerEvent } from "./inbox.js";
+import { getWorkerRecord, updateWorkerLifecycle } from "./store.js";
 
 interface LastAssistantSummary {
   stopReason?: string;
@@ -70,42 +71,51 @@ function extractAssistantText(content: unknown): string | undefined {
 
 /**
  * Called from `session-registry.makeSubscribeHandler` for every
- * AgentSessionEvent on every live session. Filters for the two SDK
- * events that map to inbox items; everything else is ignored.
+ * AgentSessionEvent on every live session. Only authoritative
+ * lifecycle signals wake the supervisor: agent_end (final turn
+ * outcome) and explicit blocked state from ask_user_question (below).
+ * Retry events are deliberately ignored here; if retries ultimately
+ * fail, the SDK reports the terminal outcome on agent_end or the
+ * explicit stop/delete path reports no agent_end was observed.
  */
 export async function bridgeWorkerAgentEvent(
   meta: { sessionId: string; session: AgentSession },
   event: AgentSessionEvent,
 ): Promise<void> {
-  const e = event as unknown as {
-    type: string;
-    message?: { stopReason?: string; errorMessage?: string };
-    success?: boolean;
-    finalError?: string;
-    attempt?: number;
-    maxAttempts?: number;
-  };
-  if (e.type === "agent_end") {
-    const messages = meta.session.messages;
-    const lastAssistant = findLastAssistant(messages);
-    const errorMessage =
-      (meta.session as unknown as { errorMessage?: string }).errorMessage ??
-      lastAssistant?.errorMessage;
-    await bridgeWorkerEvent(meta.sessionId, "worker.ended", {
-      stopReason: lastAssistant?.stopReason ?? null,
-      errorMessage: errorMessage ?? null,
-      assistantTextPreview: lastAssistant?.text ?? null,
+  const e = event as unknown as { type: string };
+  const now = new Date().toISOString();
+  if (e.type === "agent_start") {
+    await updateWorkerLifecycle(meta.sessionId, {
+      state: "running",
+      turnOpen: true,
+      lastStateAt: now,
+      lastAgentStartAt: now,
+      stopReason: null,
+      errorMessage: null,
     });
     return;
   }
-  if (e.type === "auto_retry_end" && e.success === false) {
-    await bridgeWorkerEvent(meta.sessionId, "worker.auto_retry_failed", {
-      attempt: e.attempt ?? null,
-      maxAttempts: e.maxAttempts ?? null,
-      finalError: e.finalError ?? null,
-    });
-    return;
-  }
+  if (e.type !== "agent_end") return;
+
+  const messages = meta.session.messages;
+  const lastAssistant = findLastAssistant(messages);
+  const errorMessage =
+    (meta.session as unknown as { errorMessage?: string }).errorMessage ??
+    lastAssistant?.errorMessage;
+  const hasError = typeof errorMessage === "string" && errorMessage.length > 0;
+  await updateWorkerLifecycle(meta.sessionId, {
+    state: hasError ? "errored" : "ended",
+    turnOpen: false,
+    lastStateAt: now,
+    lastAgentEndAt: now,
+    stopReason: lastAssistant?.stopReason ?? null,
+    errorMessage: errorMessage ?? null,
+  });
+  await bridgeWorkerEvent(meta.sessionId, "worker.ended", {
+    stopReason: lastAssistant?.stopReason ?? null,
+    errorMessage: errorMessage ?? null,
+    assistantTextPreview: lastAssistant?.text ?? null,
+  });
 }
 
 export async function bridgeWorkerAskUserQuestion(
@@ -113,6 +123,10 @@ export async function bridgeWorkerAskUserQuestion(
   questions: readonly Question[],
   requestId: string,
 ): Promise<void> {
+  await updateWorkerLifecycle(sessionId, {
+    state: "awaiting_question",
+    lastStateAt: new Date().toISOString(),
+  });
   await bridgeWorkerEvent(sessionId, "worker.ask_user", {
     requestId,
     questionCount: questions.length,
@@ -151,10 +165,37 @@ export async function bridgeWorkerProcessAlert(
   });
 }
 
+export async function bridgeWorkerExecutionStopped(
+  sessionId: string,
+  meta: { wasLive: boolean; reason: "deleted" | "killed" | "disposed" | "aborted" },
+): Promise<void> {
+  const rec = await getWorkerRecord(sessionId);
+  if (rec?.turnOpen !== true) return;
+  await updateWorkerLifecycle(sessionId, {
+    state: "stopped",
+    turnOpen: false,
+    lastStateAt: new Date().toISOString(),
+    stopReason: meta.reason,
+  });
+  await bridgeWorkerEvent(sessionId, "worker.execution_stopped_without_agent_end", {
+    reason: meta.reason,
+    wasLive: meta.wasLive,
+    lastAgentStartAt: rec.lastAgentStartAt ?? null,
+  });
+}
+
 export async function bridgeWorkerDeleted(
   sessionId: string,
-  meta: { wasLive: boolean },
+  meta: { wasLive: boolean; reason?: "deleted" | "killed" | "disposed" | "aborted" },
 ): Promise<void> {
+  const reason = meta.reason ?? "deleted";
+  await bridgeWorkerExecutionStopped(sessionId, { wasLive: meta.wasLive, reason });
+  await updateWorkerLifecycle(sessionId, {
+    state: "deleted",
+    turnOpen: false,
+    lastStateAt: new Date().toISOString(),
+    stopReason: reason,
+  });
   await bridgeWorkerEvent(sessionId, "worker.deleted", {
     wasLive: meta.wasLive,
   });

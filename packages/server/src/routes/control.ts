@@ -13,6 +13,7 @@ import {
 } from "../config-manager.js";
 import { config } from "../config.js";
 import { expandFileReferences } from "../file-references.js";
+import { bridgeWorkerExecutionStopped } from "../orchestration/event-bridge.js";
 import { errorSchema, liveSummaryBody, liveSummarySchema } from "./_schemas.js";
 
 /**
@@ -193,6 +194,7 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
       const live = getSession(req.params.id);
       if (live === undefined) return notFound(reply);
       await live.session.abort();
+      await bridgeWorkerExecutionStopped(req.params.id, { wasLive: true, reason: "aborted" });
       return reply.code(204).send();
     },
   );
