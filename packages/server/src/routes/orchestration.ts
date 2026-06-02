@@ -104,7 +104,20 @@ const workerSummarySchema = {
     isLive: { type: "boolean" },
     isStreaming: { type: "boolean" },
     name: { type: "string" },
-    state: { type: "string", enum: ["streaming", "idle", "cold"] },
+    state: {
+      type: "string",
+      enum: [
+        "streaming",
+        "idle",
+        "cold",
+        "running",
+        "ended",
+        "errored",
+        "stopped",
+        "deleted",
+        "awaiting_question",
+      ],
+    },
     lastActivityAt: { type: "string" },
     messageCount: { type: "integer", minimum: 0 },
     projectId: { type: "string" },
@@ -364,13 +377,23 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           }
           if (live !== undefined) {
             base.isStreaming = live.session.isStreaming;
-            base.state = live.session.isStreaming ? "streaming" : "idle";
+            base.state =
+              rec?.state === "running" ||
+              rec?.state === "awaiting_question" ||
+              rec?.state === "errored" ||
+              rec?.state === "stopped" ||
+              rec?.state === "deleted"
+                ? rec.state
+                : live.session.isStreaming
+                  ? "streaming"
+                  : (rec?.state ?? "idle");
             base.name = live.session.sessionName ?? undefined;
             base.messageCount = live.session.messages.length;
             base.lastActivityAt = live.lastActivityAt.toISOString();
             base.projectId = live.projectId;
           } else {
-            base.state = "cold";
+            base.state = rec?.state ?? "cold";
+            if (rec?.lastStateAt !== undefined) base.lastActivityAt = rec.lastStateAt;
             const projectId = await findProjectIdForSession(workerId);
             if (projectId !== undefined) base.projectId = projectId;
           }

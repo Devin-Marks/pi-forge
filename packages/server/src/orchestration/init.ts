@@ -2,7 +2,7 @@
  * Boot-time wiring of the orchestration event bridge to the
  * forge-native singleton event channels (ask-user-question, processes).
  *
- * Per-AgentSession events (agent_end, auto_retry_end) are dispatched
+ * Per-AgentSession events (agent_start, agent_end) are dispatched
  * from inside `session-registry.makeSubscribeHandler` — those need
  * the LiveSession context at construction time. session-registry
  * also calls `notifySupervisorIdle` on supervisor agent_end and

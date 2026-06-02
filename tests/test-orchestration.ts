@@ -48,6 +48,15 @@ interface OrchestrationStoreModule {
   isWorker: (sessionId: string) => Promise<boolean>;
   getSupervisorIdForWorker: (workerId: string) => Promise<string | undefined>;
   getWorkerIds: (supervisorId: string) => Promise<string[]>;
+  getWorkerRecord: (workerId: string) => Promise<
+    | {
+        state?: string;
+        turnOpen?: boolean;
+        lastAgentStartAt?: string;
+        errorMessage?: string | null;
+      }
+    | undefined
+  >;
   enqueueInboxItem: (
     supervisorId: string,
     item: {
@@ -60,8 +69,16 @@ interface OrchestrationStoreModule {
   readPendingInbox: (
     supervisorId: string,
     opts?: { markDelivered?: boolean },
-  ) => Promise<{ id: string; delivered: boolean }[]>;
-  readAllInbox: (supervisorId: string) => Promise<{ id: string; delivered: boolean }[]>;
+  ) => Promise<{ id: string; type: string; delivered: boolean }[]>;
+  readAllInbox: (supervisorId: string) => Promise<
+    {
+      id: string;
+      type: string;
+      delivered: boolean;
+      data: Record<string, unknown>;
+      workerId: string;
+    }[]
+  >;
   pendingInboxCount: (supervisorId: string) => Promise<number>;
   clearInbox: (supervisorId: string) => Promise<void>;
   OrchestrationError: new (code: string, message: string) => Error & { code: string };
@@ -90,6 +107,19 @@ interface EventBridgeModule {
     reason: "success" | "failure" | "killed",
   ) => Promise<void>;
   shouldBridgeWorkerProcessAlert: (reason: "success" | "failure" | "killed") => boolean;
+  bridgeWorkerAgentEvent: (
+    meta: { sessionId: string; session: { messages: unknown[]; errorMessage?: string } },
+    event: { type: string; [key: string]: unknown },
+  ) => Promise<void>;
+  bridgeWorkerAskUserQuestion: (
+    sessionId: string,
+    questions: { header: string; question: string }[],
+    requestId: string,
+  ) => Promise<void>;
+  bridgeWorkerDeleted: (
+    sessionId: string,
+    meta: { wasLive: boolean; reason?: "deleted" | "killed" | "disposed" | "aborted" },
+  ) => Promise<void>;
 }
 
 interface ToolResult {
@@ -365,6 +395,92 @@ async function main(): Promise<void> {
     "worker process failure/kill alerts do not enqueue inbox items",
     cnt2 === 0,
     `got ${cnt2}`,
+  );
+
+  // Authoritative lifecycle bridge: retry noise is ignored, final
+  // agent_end is delivered, ask_user_question wakes, and explicit
+  // delete/kill while a turn is open emits a stopped-without-agent_end item.
+  await store.registerWorker({ supervisorId: "sup-1", workerId: "w-state" });
+  const fakeSession = {
+    messages: [
+      {
+        role: "assistant",
+        stopReason: "end_turn",
+        content: [{ type: "text", text: "Done with the worker task." }],
+      },
+    ],
+  };
+  await eventBridge.bridgeWorkerAgentEvent(
+    { sessionId: "w-state", session: fakeSession },
+    { type: "agent_start" },
+  );
+  const runningRec = await store.getWorkerRecord("w-state");
+  assert(
+    "agent_start records running open turn",
+    runningRec?.state === "running" && runningRec.turnOpen === true,
+    JSON.stringify(runningRec),
+  );
+  await eventBridge.bridgeWorkerAgentEvent(
+    { sessionId: "w-state", session: fakeSession },
+    { type: "auto_retry_end", success: false, finalError: "temporary provider failure" },
+  );
+  assert(
+    "transient retry failure does not enqueue inbox item",
+    (await store.pendingInboxCount("sup-1")) === 0,
+    `got ${await store.pendingInboxCount("sup-1")}`,
+  );
+  await eventBridge.bridgeWorkerAgentEvent(
+    { sessionId: "w-state", session: fakeSession },
+    { type: "agent_end" },
+  );
+  let lifecycleItems = await store.readPendingInbox("sup-1");
+  assert(
+    "final agent_end enqueues worker.ended",
+    lifecycleItems.length === 1 && lifecycleItems[0]?.type === "worker.ended",
+    JSON.stringify(lifecycleItems),
+  );
+  const endedRec = await store.getWorkerRecord("w-state");
+  assert(
+    "agent_end closes turn state",
+    endedRec?.turnOpen === false && endedRec.state === "ended",
+    JSON.stringify(endedRec),
+  );
+  await store.clearInbox("sup-1");
+
+  await eventBridge.bridgeWorkerAskUserQuestion(
+    "w-state",
+    [{ header: "Decision", question: "Which branch should I use?" }],
+    "rq-state",
+  );
+  lifecycleItems = await store.readPendingInbox("sup-1");
+  assert(
+    "pending question enqueues worker.ask_user",
+    lifecycleItems.length === 1 && lifecycleItems[0]?.type === "worker.ask_user",
+    JSON.stringify(lifecycleItems),
+  );
+  assert(
+    "pending question records awaiting_question state",
+    (await store.getWorkerRecord("w-state"))?.state === "awaiting_question",
+  );
+  await store.clearInbox("sup-1");
+
+  await eventBridge.bridgeWorkerAgentEvent(
+    { sessionId: "w-state", session: fakeSession },
+    { type: "agent_start" },
+  );
+  await eventBridge.bridgeWorkerDeleted("w-state", { wasLive: true, reason: "killed" });
+  lifecycleItems = await store.readPendingInbox("sup-1");
+  assert(
+    "explicit stop without agent_end enqueues authoritative stop item",
+    lifecycleItems.length === 2 &&
+      lifecycleItems[0]?.type === "worker.execution_stopped_without_agent_end" &&
+      lifecycleItems[1]?.type === "worker.deleted",
+    JSON.stringify(lifecycleItems),
+  );
+  assert(
+    "explicit stop clears open turn and records deleted state",
+    (await store.getWorkerRecord("w-state"))?.turnOpen === false &&
+      (await store.getWorkerRecord("w-state"))?.state === "deleted",
   );
 
   // Clear inbox
@@ -702,6 +818,10 @@ async function main(): Promise<void> {
       "utf8",
     );
     await store.registerWorker({ supervisorId: realSid, workerId: realWorkerId });
+    await eventBridge.bridgeWorkerAgentEvent(
+      { sessionId: realWorkerId, session: { messages: [] } },
+      { type: "agent_start" },
+    );
     const preKillNestedList = await jsend(
       onSrv.base,
       "GET",
@@ -739,6 +859,17 @@ async function main(): Promise<void> {
         (killRes.body as { wasLive?: boolean; archiveStatus?: string }).archiveStatus ===
           "archived",
       JSON.stringify(killRes.body),
+    );
+    const killInboxItems = await store.readAllInbox(realSid);
+    const killStopItem = killInboxItems.find(
+      (item) =>
+        item.workerId === realWorkerId &&
+        item.type === "worker.execution_stopped_without_agent_end",
+    );
+    assert(
+      "kill worker records stopped-without-agent_end reason=killed",
+      killStopItem?.data.reason === "killed",
+      JSON.stringify(killInboxItems),
     );
     const afterKillList = await jsend(
       onSrv.base,

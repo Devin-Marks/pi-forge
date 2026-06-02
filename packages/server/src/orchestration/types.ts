@@ -27,6 +27,10 @@ export const ORCHESTRATION_VERSION = 1 as const;
 export const INBOX_EVENT_TYPES = [
   "worker.ended",
   "worker.ask_user",
+  "worker.execution_stopped_without_agent_end",
+  // Legacy inbox history can contain this from older builds. New
+  // retry failures are intentionally not enqueued; final agent_end
+  // or explicit stop-without-agent_end carries the authoritative outcome.
   "worker.auto_retry_failed",
   "worker.process_alert",
   "worker.deleted",
@@ -63,6 +67,15 @@ export interface SupervisorRecord {
   workerIds: string[];
 }
 
+export type WorkerLifecycleState =
+  | "idle"
+  | "running"
+  | "ended"
+  | "errored"
+  | "stopped"
+  | "deleted"
+  | "awaiting_question";
+
 export interface WorkerRecord {
   supervisorId: string;
   spawnedAt: string;
@@ -72,6 +85,19 @@ export interface WorkerRecord {
     sessionId: string;
     mode: "fresh" | "summary";
   };
+  /**
+   * Last authoritative lifecycle state observed for this worker.
+   * Updated only from explicit signals (agent_start/agent_end,
+   * ask_user_question, delete/kill/dispose), never timeouts.
+   */
+  state?: WorkerLifecycleState;
+  /** True after agent_start until agent_end or an explicit stop/delete. */
+  turnOpen?: boolean;
+  lastStateAt?: string;
+  lastAgentStartAt?: string;
+  lastAgentEndAt?: string;
+  stopReason?: string | null;
+  errorMessage?: string | null;
 }
 
 /**

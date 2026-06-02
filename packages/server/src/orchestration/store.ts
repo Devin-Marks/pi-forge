@@ -30,6 +30,7 @@ import {
   ORCHESTRATION_VERSION,
   type OrchestrationStore,
   type SupervisorRecord,
+  type WorkerLifecycleState,
   type WorkerRecord,
 } from "./types.js";
 
@@ -72,6 +73,20 @@ function isSupervisorRecord(v: unknown): v is SupervisorRecord {
   );
 }
 
+const WORKER_LIFECYCLE_STATES = new Set<WorkerLifecycleState>([
+  "idle",
+  "running",
+  "ended",
+  "errored",
+  "stopped",
+  "deleted",
+  "awaiting_question",
+]);
+
+function isWorkerLifecycleState(v: unknown): v is WorkerLifecycleState {
+  return typeof v === "string" && WORKER_LIFECYCLE_STATES.has(v as WorkerLifecycleState);
+}
+
 function isWorkerRecord(v: unknown): v is WorkerRecord {
   if (typeof v !== "object" || v === null) return false;
   const r = v as Record<string, unknown>;
@@ -80,6 +95,14 @@ function isWorkerRecord(v: unknown): v is WorkerRecord {
     const sf = r.spawnedFrom as Record<string, unknown>;
     if (typeof sf.sessionId !== "string") return false;
     if (sf.mode !== "fresh" && sf.mode !== "summary") return false;
+  }
+  if (r.state !== undefined && !isWorkerLifecycleState(r.state)) return false;
+  if (r.turnOpen !== undefined && typeof r.turnOpen !== "boolean") return false;
+  for (const key of ["lastStateAt", "lastAgentStartAt", "lastAgentEndAt"] as const) {
+    if (r[key] !== undefined && typeof r[key] !== "string") return false;
+  }
+  for (const key of ["stopReason", "errorMessage"] as const) {
+    if (r[key] !== undefined && r[key] !== null && typeof r[key] !== "string") return false;
   }
   return true;
 }
@@ -205,9 +228,13 @@ export async function registerWorker(opts: {
       );
     }
     sup.workerIds.push(opts.workerId);
+    const now = new Date().toISOString();
     const wrec: WorkerRecord = {
       supervisorId: opts.supervisorId,
-      spawnedAt: new Date().toISOString(),
+      spawnedAt: now,
+      state: "idle",
+      turnOpen: false,
+      lastStateAt: now,
     };
     if (opts.spawnedFrom !== undefined) wrec.spawnedFrom = opts.spawnedFrom;
     s.workers[opts.workerId] = wrec;
@@ -264,6 +291,31 @@ export async function getWorkerIds(supervisorId: string): Promise<string[]> {
 export async function getWorkerRecord(workerId: string): Promise<WorkerRecord | undefined> {
   const s = await readStoreFile();
   return s.workers[workerId];
+}
+
+export async function updateWorkerLifecycle(
+  workerId: string,
+  patch: Partial<
+    Pick<
+      WorkerRecord,
+      | "state"
+      | "turnOpen"
+      | "lastStateAt"
+      | "lastAgentStartAt"
+      | "lastAgentEndAt"
+      | "stopReason"
+      | "errorMessage"
+    >
+  >,
+): Promise<WorkerRecord | undefined> {
+  return withStoreLock(async () => {
+    const s = await readStoreFile();
+    const rec = s.workers[workerId];
+    if (rec === undefined) return undefined;
+    Object.assign(rec, patch);
+    await writeStoreFile(s);
+    return { ...rec };
+  });
 }
 
 // ---- orchestrator-inbox.json (queue) ----
