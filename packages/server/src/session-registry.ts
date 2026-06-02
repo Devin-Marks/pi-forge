@@ -276,23 +276,37 @@ function readSubagentResultFile(resultPath: string): SubagentResultFileData | un
   }
 }
 
-function hasTerminalSubagentStatusFile(child: DiscoveredSession): boolean {
-  if (child.parentSessionId === undefined || child.runId === undefined) return false;
+function readMatchingSubagentStatusFile(
+  child: DiscoveredSession,
+): { statusPath: string; status: SubagentStatusFileData } | undefined {
+  if (child.parentSessionId === undefined || child.runId === undefined) return undefined;
   const statusPath = join(
     resolvePiSubagentsTempRoot(),
     "async-subagent-runs",
     child.runId,
     "status.json",
   );
-  if (!existsSync(statusPath)) return false;
+  if (!existsSync(statusPath)) return undefined;
   const status = readSubagentStatusFile(statusPath);
-  if (status === undefined) return false;
-  if (typeof status.sessionId === "string" && status.sessionId !== child.parentSessionId)
-    return false;
-  if (!isTerminalSubagentState(status.state)) return false;
-  const parentLive = registry.get(child.parentSessionId);
+  if (status === undefined) return undefined;
+  if (typeof status.sessionId === "string" && status.sessionId !== child.parentSessionId) {
+    return undefined;
+  }
+  return { statusPath, status };
+}
+
+function hasActiveSubagentStatusFile(child: DiscoveredSession): boolean {
+  const match = readMatchingSubagentStatusFile(child);
+  return match !== undefined && isActiveSubagentState(match.status.state);
+}
+
+function hasTerminalSubagentStatusFile(child: DiscoveredSession): boolean {
+  const match = readMatchingSubagentStatusFile(child);
+  if (match === undefined) return false;
+  if (!isTerminalSubagentState(match.status.state)) return false;
+  const parentLive = child.parentSessionId ? registry.get(child.parentSessionId) : undefined;
   if (parentLive !== undefined) {
-    void bridgeSubagentStatusFileToParent(parentLive, statusPath).catch(() => undefined);
+    void bridgeSubagentStatusFileToParent(parentLive, match.statusPath).catch(() => undefined);
   }
   return true;
 }
@@ -330,16 +344,16 @@ function hasCompletedSubagentResultFile(child: DiscoveredSession): boolean {
 
 function isSubagentChildExternallyLive(child: DiscoveredSession): boolean {
   if (child.parentSessionId === undefined) return false;
-  const active = activeSubagentParents.get(child.parentSessionId);
-  if (active === undefined) return false;
-  if (active.runIds.size > 0 && (child.runId === undefined || !active.runIds.has(child.runId))) {
-    return false;
-  }
   if (hasCompletedSubagentResultFile(child) || hasTerminalSubagentStatusFile(child)) {
-    clearActiveSubagentParent(child.parentSessionId);
+    if (child.runId !== undefined) finishActiveSubagentRun(child.parentSessionId, child.runId);
+    else clearActiveSubagentParent(child.parentSessionId);
     return false;
   }
-  return true;
+  const active = activeSubagentParents.get(child.parentSessionId);
+  const isMarkedActive =
+    active !== undefined &&
+    (active.runIds.size === 0 || (child.runId !== undefined && active.runIds.has(child.runId)));
+  return isMarkedActive || hasActiveSubagentStatusFile(child);
 }
 
 export interface ExternallyActiveSubagentChild {
@@ -424,6 +438,10 @@ function readSubagentStatusFile(statusPath: string): SubagentStatusFileData | un
 
 function isTerminalSubagentState(state: unknown): state is "complete" | "failed" | "paused" {
   return state === "complete" || state === "failed" || state === "paused";
+}
+
+function isActiveSubagentState(state: unknown): state is "queued" | "running" {
+  return state === "queued" || state === "running";
 }
 
 function finishActiveSubagentRun(parentSessionId: string, runId: string): void {

@@ -416,6 +416,99 @@ async function main(): Promise<void> {
     );
     await registry.disposeSession(childB);
 
+    const statusOnlyRunId = "run-" + randomUUID().slice(0, 8);
+    const statusOnlyChildId = randomUUID();
+    const statusOnlyChildPath = join(
+      projectSessionDir,
+      parent.sessionId,
+      statusOnlyRunId,
+      `${statusOnlyChildId}.jsonl`,
+    );
+    await writeChildSessionFile(statusOnlyChildPath, statusOnlyChildId, project.path);
+    const statusOnlyDir = join(piSubagentsAsyncRunsDir(), statusOnlyRunId);
+    await mkdir(statusOnlyDir, { recursive: true });
+    await writeFile(
+      join(statusOnlyDir, "status.json"),
+      `${JSON.stringify({
+        runId: statusOnlyRunId,
+        sessionId: parent.sessionId,
+        state: "running",
+        summary: "status-only running",
+        sessionFile: statusOnlyChildPath,
+        steps: [{ agent: "worker", status: "running", sessionFile: statusOnlyChildPath }],
+      })}\n`,
+    );
+    const statusOnlyActiveList = await registry.listSessionsForProject(project.id, project.path);
+    const statusOnlyActiveChild = statusOnlyActiveList.find(
+      (s) => s.sessionId === statusOnlyChildId,
+    );
+    assert(
+      "running status.json marks child externally live without in-memory parent state",
+      statusOnlyActiveChild?.isExternalLive === true,
+      `isExternalLive=${statusOnlyActiveChild?.isExternalLive}`,
+    );
+    const statusOnlySummary = (await (
+      await fetch(`${listenAddr}/api/v1/sessions/${statusOnlyChildId}`)
+    ).json()) as { isExternalLive?: boolean; isLive?: boolean };
+    assert(
+      "session metadata exposes status-only external live child",
+      statusOnlySummary.isExternalLive === true && statusOnlySummary.isLive === false,
+      `summary=${JSON.stringify(statusOnlySummary)}`,
+    );
+    const statusOnlyStreamBlocked = await fetch(
+      `${listenAddr}/api/v1/sessions/${statusOnlyChildId}/stream`,
+      { headers: { Accept: "text/event-stream" } },
+    );
+    assert(
+      "stream route returns 409 for status-only externally active child",
+      statusOnlyStreamBlocked.status === 409,
+      `status=${statusOnlyStreamBlocked.status}`,
+    );
+    await statusOnlyStreamBlocked.body?.cancel();
+    const statusOnlyMessages = await fetch(
+      `${listenAddr}/api/v1/sessions/${statusOnlyChildId}/messages`,
+    );
+    assert(
+      "messages route returns read-only snapshot for status-only active child",
+      statusOnlyMessages.status === 200,
+      `status=${statusOnlyMessages.status}`,
+    );
+    assert(
+      "status-only read-only open did not live-resume child",
+      registry.getSession(statusOnlyChildId) === undefined,
+    );
+    await writeFile(
+      join(statusOnlyDir, "status.json"),
+      `${JSON.stringify({
+        runId: statusOnlyRunId,
+        sessionId: parent.sessionId,
+        state: "complete",
+        summary: "status-only done",
+        sessionFile: statusOnlyChildPath,
+        steps: [{ agent: "worker", status: "completed", sessionFile: statusOnlyChildPath }],
+      })}\n`,
+    );
+    const statusOnlyCompletedList = await registry.listSessionsForProject(project.id, project.path);
+    const statusOnlyCompletedChild = statusOnlyCompletedList.find(
+      (s) => s.sessionId === statusOnlyChildId,
+    );
+    assert(
+      "terminal status.json clears status-only external-live child state",
+      statusOnlyCompletedChild?.isExternalLive !== true,
+      `isExternalLive=${statusOnlyCompletedChild?.isExternalLive}`,
+    );
+    const statusOnlyStreamAfterComplete = await fetch(
+      `${listenAddr}/api/v1/sessions/${statusOnlyChildId}/stream`,
+      { headers: { Accept: "text/event-stream" } },
+    );
+    assert(
+      "stream route allows status-only child after terminal status.json",
+      statusOnlyStreamAfterComplete.status === 200,
+      `status=${statusOnlyStreamAfterComplete.status}`,
+    );
+    await statusOnlyStreamAfterComplete.body?.cancel();
+    await registry.disposeSession(statusOnlyChildId);
+
     const statusRunId = "run-" + randomUUID().slice(0, 8);
     const statusChildId = randomUUID();
     const statusChildPath = join(
