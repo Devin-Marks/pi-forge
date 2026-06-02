@@ -119,6 +119,7 @@ interface TestLive {
   session: {
     sessionId: string;
     sessionFile?: string;
+    messages: unknown[];
     sessionManager: { appendMessage: (msg: unknown) => string };
   };
   sessionId: string;
@@ -160,6 +161,15 @@ interface TestProjectManager {
 interface TestOrchestrationStore {
   enableSupervisor: (sessionId: string) => Promise<unknown>;
   registerWorker: (opts: { supervisorId: string; workerId: string }) => Promise<void>;
+}
+
+async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<boolean> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (condition()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return condition();
 }
 
 function appendFixtureMessage(live: TestLive, text: string): void {
@@ -368,6 +378,19 @@ async function main(): Promise<void> {
         results: [{ agent: "worker", success: true, output: "done", sessionFile: childBPath }],
       })}\n`,
     );
+    const parentGotNotify = await waitFor(() =>
+      parent.session.messages.some((message) => {
+        if (typeof message !== "object" || message === null) return false;
+        const m = message as { role?: unknown; customType?: unknown; content?: unknown };
+        return (
+          m.role === "custom" &&
+          m.customType === "subagent-notify" &&
+          typeof m.content === "string" &&
+          m.content.includes("Background task completed")
+        );
+      }),
+    );
+    assert("async result file is bridged into parent custom notification", parentGotNotify);
     const completedList = await registry.listSessionsForProject(project.id, project.path);
     const completedChild = completedList.find((s) => s.sessionId === childB);
     assert(
