@@ -726,7 +726,7 @@ function ChatEditDiff({
           <span className="ml-1 text-red-400 light:text-red-700">−{dels}</span>
         </span>
         <span className="flex shrink-0 items-center gap-1">
-          <CopyButton getText={() => diff} title="Copy edit output" />
+          <CopyButton getText={() => diff} title="Copy edit output" compact />
           <button
             onClick={(e) => {
               // The summary's default click toggles the <details>; stop
@@ -1787,7 +1787,7 @@ function ToolCallEntry({
         <details className="border-t border-neutral-800/60">
           <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-neutral-500 hover:text-neutral-300">
             <span>Input</span>
-            <CopyButton getText={() => argsText} title={`Copy ${name} input`} />
+            <CopyButton getText={() => argsText} title={`Copy ${name} input`} compact />
           </summary>
           <pre className="overflow-auto px-3 pb-2 font-mono text-[11px] text-neutral-400">
             {argsText}
@@ -1813,6 +1813,7 @@ function ToolCallEntry({
             <CopyButton
               getText={() => editDiff ?? (outputText.length > 0 ? outputText : "(empty)")}
               title={`Copy ${name} output`}
+              compact
             />
           </summary>
           {editDiff !== undefined && editStats !== undefined ? (
@@ -1865,7 +1866,7 @@ function ToolResult({ message }: { message: AgentMessageLike }) {
             <span className="text-neutral-500">read{fn !== undefined ? " " : ""}</span>
             {fn !== undefined && <span className="font-mono">{fn}</span>}
           </span>
-          <CopyButton getText={() => text} title="Copy read output" />
+          <CopyButton getText={() => text} title="Copy read output" compact />
         </summary>
         <pre className="overflow-auto px-3 pb-2 font-mono text-[11px] text-neutral-400">{text}</pre>
       </details>
@@ -1883,7 +1884,7 @@ function ToolResult({ message }: { message: AgentMessageLike }) {
             <span className="text-neutral-500">bash{cmd !== undefined ? " → " : " output"}</span>
             {cmd !== undefined && <span className="font-mono">{cmd}</span>}
           </span>
-          <CopyButton getText={() => text} title="Copy bash output" />
+          <CopyButton getText={() => text} title="Copy bash output" compact />
         </div>
         <pre className="max-h-64 overflow-auto px-3 pb-2 font-mono text-[11px] text-neutral-300">
           {text}
@@ -1902,7 +1903,7 @@ function ToolResult({ message }: { message: AgentMessageLike }) {
             {fn !== undefined && <span className="font-mono">{fn}</span>}
             <span className="ml-2 text-neutral-500">({text.split("\n").length} lines)</span>
           </span>
-          <CopyButton getText={() => text} title="Copy write output" />
+          <CopyButton getText={() => text} title="Copy write output" compact />
         </summary>
         <pre className="overflow-auto px-3 pb-2 font-mono text-[11px] text-neutral-400">{text}</pre>
       </details>
@@ -1927,7 +1928,7 @@ function ToolResult({ message }: { message: AgentMessageLike }) {
           <span className="text-neutral-500">{toolName}</span>
           {isError && <span className="ml-2 text-red-400 light:text-red-700">error</span>}
         </span>
-        <CopyButton getText={() => text} title={`Copy ${toolName} output`} />
+        <CopyButton getText={() => text} title={`Copy ${toolName} output`} compact />
       </summary>
       <pre className="overflow-auto px-3 pb-2 font-mono text-[11px] text-neutral-400">{text}</pre>
     </details>
@@ -2138,7 +2139,7 @@ function SubagentResultCard({
         <details className="border-t border-sky-900/30">
           <summary className="flex cursor-pointer items-center justify-between gap-2 px-2.5 py-1 text-[11px] text-neutral-500 hover:text-neutral-300">
             <span>Input</span>
-            <CopyButton getText={() => argsText} title="Copy subagent input" />
+            <CopyButton getText={() => argsText} title="Copy subagent input" compact />
           </summary>
           <pre className="overflow-auto px-2.5 pb-2 font-mono text-[11px] text-neutral-400">
             {argsText}
@@ -2155,7 +2156,7 @@ function SubagentResultCard({
         >
           <summary className="flex cursor-pointer items-center justify-between gap-2 px-2.5 py-1 text-[11px] text-neutral-500 hover:text-neutral-300">
             <span>Output</span>
-            <CopyButton getText={() => outputText} title="Copy subagent output" />
+            <CopyButton getText={() => outputText} title="Copy subagent output" compact />
           </summary>
           <pre className="overflow-auto px-2.5 pb-2 font-mono text-[11px] text-neutral-300 whitespace-pre-wrap">
             {outputText}
@@ -2306,7 +2307,15 @@ function BashExecution({ message }: { message: AgentMessageLike }) {
  * back to a synthetic textarea when the async clipboard API isn't
  * available (older Safari, insecure HTTP origins).
  */
-function CopyButton({ getText, title }: { getText: () => string; title: string }) {
+function CopyButton({
+  getText,
+  title,
+  compact = false,
+}: {
+  getText: () => string;
+  title: string;
+  compact?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
   const onClick = (): void => {
     const text = getText();
@@ -2347,7 +2356,9 @@ function CopyButton({ getText, title }: { getText: () => string; title: string }
         e.stopPropagation();
         onClick();
       }}
-      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1.5 py-0.5 text-neutral-500 hover:bg-neutral-700/40 hover:text-neutral-300 md:min-h-0 md:min-w-0"
+      className={`inline-flex items-center justify-center rounded text-neutral-500 hover:bg-neutral-700/40 hover:text-neutral-300 ${
+        compact ? "h-5 w-5 shrink-0 p-0" : "min-h-11 min-w-11 px-1.5 py-0.5 md:min-h-0 md:min-w-0"
+      }`}
       title={title}
       aria-label={title}
     >
