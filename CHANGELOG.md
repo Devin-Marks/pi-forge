@@ -15,6 +15,40 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.3.7] — 2026-06-03
+
+### Added
+
+- **LDAP login integration.** pi-forge can authenticate users against LDAP while
+  keeping the local `admin` account reserved for pi-forge admin auth, with
+  improved TLS, bind, and diagnostics configuration.
+- **Process and worker lifecycle status cards.** Process exits and orchestration
+  worker updates now render as dedicated custom lifecycle notifications instead
+  of plain chat messages, with trigger-turn behavior based on event severity.
+
+### Changed
+
+- **Orchestrator mode is enabled by default.** The orchestration feature now
+  starts enabled unless explicitly disabled via configuration, and related docs
+  and health/config surfaces reflect the new default.
+- **Compaction summaries are easier to collapse near the bottom of chat.** The
+  expanded summary opens upward without pulling the transcript away from the
+  bottom and includes collapse controls at both ends.
+
+### Fixed
+
+- **MCP polling and truncation warnings are more reliable.** MCP status polling
+  handles disabled/error states more cleanly, and truncation warnings are surfaced
+  without noisy transport failures.
+- **Codex transport failures no longer create UI noise.** Codex transport errors
+  are logged without surfacing spurious browser-facing failure states.
+- **Orchestration retry noise is filtered.** Transient worker retry events no
+  longer wake supervisors unnecessarily.
+- **External pi-subagents state is authoritative.** Active pi-subagents child
+  sessions open read-only with auto-refresh, completion notifications dedupe
+  across restarts, parent turns restart for terminal completions, and active
+  external children are no longer resumed or disposed as pi-forge live sessions.
+
 ## [1.3.6] — 2026-05-29
 
 ### Added
