@@ -79,6 +79,8 @@ interface PoolEntry {
   /** Pre-built ToolDefinitions, rebuilt every reconnect so the closure
    *  captures the latest client instance. */
   bridged: ToolDefinition[];
+  /** In-flight reconnect shared by concurrent stale-session recoveries. */
+  reconnecting?: Promise<boolean>;
 }
 
 function entryKey(scope: Scope, name: string): string {
@@ -472,6 +474,7 @@ async function connectEntry(entry: PoolEntry): Promise<void> {
         description: t.description,
         inputSchema: t.inputSchema,
         getClient: () => pool.get(entryKey(entry.scope, entry.name))?.client,
+        recoverStaleSession: () => recoverStaleSession(entry.scope, entry.name),
       }),
     );
     entry.state = "connected";
@@ -482,6 +485,22 @@ async function connectEntry(entry: PoolEntry): Promise<void> {
     entry.bridged = [];
     entry.state = "error";
     entry.lastError = err instanceof Error ? err.message : String(err);
+  }
+}
+
+async function recoverStaleSession(scope: Scope, name: string): Promise<boolean> {
+  const entry = pool.get(entryKey(scope, name));
+  if (entry === undefined || entry.config.enabled === false) return false;
+  if (entry.reconnecting !== undefined) return await entry.reconnecting;
+  entry.reconnecting = (async () => {
+    await disconnectEntry(entry);
+    await connectEntry(entry);
+    return entry.state === "connected" && entry.client !== undefined;
+  })();
+  try {
+    return await entry.reconnecting;
+  } finally {
+    if (entry.reconnecting !== undefined) delete entry.reconnecting;
   }
 }
 
