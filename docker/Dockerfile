@@ -176,10 +176,12 @@ COPY --from=builder --chown=pi:pi /app/packages/client/dist ./packages/client/di
 # but not by the restricted tool identity.
 RUN mkdir -p /workspace /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local \
  && chown -R pi-tools:pi-tools /workspace \
+ && chown root:root /home/pi \
  && chown -R root:pi /home/pi/.pi /home/pi/.pi-forge \
  && chown -R pi:pi /home/pi/.local \
  && chmod 0775 /workspace \
- && chmod 0750 /home/pi /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local
+ && chmod 0755 /home/pi \
+ && chmod 0750 /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local
 
 USER root
 
