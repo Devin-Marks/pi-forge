@@ -436,6 +436,7 @@ function SessionRow(props: SessionRowProps) {
         <input
           autoFocus
           value={renameDraft}
+          onFocus={(e) => e.currentTarget.select()}
           onChange={(e) => onChangeRename(e.target.value)}
           onKeyDown={(e) => onRenameKeyDown(e, s.sessionId)}
           onBlur={() => onCommitRename(s.sessionId)}
