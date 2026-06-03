@@ -139,7 +139,7 @@ ARG PTOOLS_GID=1001
 #     present when `apt-get install gh` runs.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      tini git ripgrep bash curl ca-certificates less procps make g++ gnupg \
+      tini gosu git ripgrep bash curl ca-certificates less procps make g++ gnupg \
  && install -dm 0755 /etc/apt/keyrings \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -170,18 +170,37 @@ COPY --from=builder --chown=pi:pi /app/packages/server/dist ./packages/server/di
 COPY --from=builder --chown=pi:pi /app/packages/client/package.json ./packages/client/package.json
 COPY --from=builder --chown=pi:pi /app/packages/client/dist ./packages/client/dist
 
-# Workspace + pi config + pi-forge data dirs are mounted at runtime;
-# create defaults with the intended split: `pi-tools` can read/write the
-# workspace, while pi config / forge data are readable by the root server
-# but not by the restricted tool identity.
+# Workspace + pi config + pi-forge data dirs are mounted at runtime.
+# Image-layer defaults preserve the historical non-sandbox posture:
+# the server runs as `pi`, and pi-owned config/data dirs are writable by it.
+# Sandbox deployments must explicitly permission their mounts; see
+# docs/agent-tool-sandbox.md.
 RUN mkdir -p /workspace /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local \
  && chown -R pi-tools:pi-tools /workspace \
  && chown root:root /home/pi \
- && chown -R root:pi /home/pi/.pi /home/pi/.pi-forge \
- && chown -R pi:pi /home/pi/.local \
+ && chown -R pi:pi /home/pi/.pi /home/pi/.pi-forge /home/pi/.local \
  && chmod 0775 /workspace \
  && chmod 0755 /home/pi \
- && chmod 0750 /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local
+ && chmod 0700 /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local
+
+RUN cat >/usr/local/bin/pi-forge-entrypoint <<'EOF'
+#!/bin/sh
+set -eu
+case "$(printf '%s' "${AGENT_TOOL_SANDBOX_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')" in
+  1|true|yes|on)
+    # Sandbox mode: keep the server as root so it can setuid/setgid
+    # model/user tool children to AGENT_TOOL_UID:GID. Mount ownership is
+    # an operator contract; see docs/agent-tool-sandbox.md.
+    exec "$@"
+    ;;
+  *)
+    # Legacy/default mode: run the server as pi, matching historical
+    # container behavior and pi-owned image defaults.
+    exec gosu pi "$@"
+    ;;
+esac
+EOF
+RUN chmod 0755 /usr/local/bin/pi-forge-entrypoint
 
 USER root
 
@@ -213,5 +232,5 @@ ENV NODE_ENV=production \
 
 EXPOSE 3000
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/pi-forge-entrypoint"]
 CMD ["node", "packages/server/dist/index.js"]

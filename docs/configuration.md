@@ -74,27 +74,12 @@ are documented in [`deployment.md`](./deployment.md).
 
 ### Agent tool identity sandbox
 
-`AGENT_TOOL_SANDBOX_ENABLED=false` by default. When enabled, pi-forge
-keeps the server process privileged enough to read server-owned config
-and secrets, but runs model/user shell surfaces as the configured
-restricted UID/GID: the agent `bash` tool, process tool, integrated
-terminal, quick-action command chips, and chat `!` / `!!` exec. Their
-environment is scrubbed with the same allowlist used by the terminal.
-
-Model file tools and `@file` expansion are path-scoped to the project
-workspace and non-secret files under `PI_CONFIG_DIR`. They reject
-protected Pi config files (`auth.json`, `models.json`, `settings.json`),
-`FORGE_DATA_DIR`, `/proc`, `/etc`, mounted secret paths such as
-`/run/secrets` and `/var/run/secrets`, home secret dirs such as `.ssh`,
-`.aws`, `.kube`, `.gnupg`, traversal escapes, and symlink escapes.
-
-Protected: server env secrets are not inherited by child shells,
-`/proc/<server-pid>/environ` is protected by UID separation when the
-container/cluster honors the UID split, and server-owned config/data
-files can be mode-owned away from the restricted UID. Not protected:
-secrets stored in the workspace, host/container misconfiguration,
-third-party extensions or tools that bypass pi-forge's overrides, or a
-server compromise (the server can still read server-accessible secrets).
+The identity sandbox is off by default and has a strict mount-permission
+contract. Read [`agent-tool-sandbox.md`](./agent-tool-sandbox.md) before
+enabling it. In short: pi-forge runs the server as root, drops
+model/user shell surfaces to `AGENT_TOOL_UID:GID`, scopes model file
+access, and requires workspace / Pi config / forge data mounts to have
+specific ownership and mode bits.
 
 When this mode is enabled, LDAP bind password file references are
 rejected (`LDAP_BIND_PASSWORD_FILE` and CLI/env `@file` forms). Use a

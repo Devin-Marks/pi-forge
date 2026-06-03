@@ -13,9 +13,10 @@ spec:
         app: pi-forge
     spec:
       serviceAccountName: pi-forge
-      # Pod-level security context. Identity sandbox requires an SCC
-      # that permits UID 0 plus SETUID/SETGID; restricted-v2 random UID
-      # cannot support this mode (see kubernetes/DEPLOY.md).
+      # Pod-level security context. The container starts as root so the
+      # entrypoint can either drop the server to pi (default) or keep it
+      # root for the opt-in identity sandbox. restricted-v2 random UID
+      # cannot support sandbox mode (see kubernetes/DEPLOY.md).
       securityContext:
         runAsUser: 0
         runAsGroup: 0
@@ -31,7 +32,7 @@ spec:
             [
               "sh",
               "-c",
-              "mkdir -p /workspace /home/pi/.pi/agent /home/pi/.pi-forge && chown -R 1001:1001 /workspace && chown -R 0:0 /home/pi/.pi/agent /home/pi/.pi-forge && chmod 775 /workspace && chmod 700 /home/pi/.pi/agent /home/pi/.pi-forge || true",
+              "mkdir -p /workspace /home/pi/.pi/agent /home/pi/.pi-forge && chown -R 1000:1000 /workspace /home/pi/.pi/agent /home/pi/.pi-forge && chmod 700 /workspace /home/pi/.pi/agent /home/pi/.pi-forge || true",
             ]
           securityContext:
             allowPrivilegeEscalation: false
