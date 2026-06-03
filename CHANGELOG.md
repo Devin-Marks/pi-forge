@@ -15,6 +15,8 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.3.7] — 2026-06-03
+
 ### Added
 
 - **LDAP login integration.** pi-forge can authenticate users against LDAP while
