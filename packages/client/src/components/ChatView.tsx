@@ -206,20 +206,30 @@ export function ChatView({ sessionId }: Props) {
   // the check would always say "user scrolled away" during streaming and
   // auto-scroll would never fire. Reading the ref reflects the user's
   // last actual scroll position before the content grew.
-  const NEAR_BOTTOM_PX = 96;
+  const NEAR_BOTTOM_PX = 24;
   const isFollowingBottomRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
 
   const onScroll = (): void => {
     const el = scrollRef.current;
     if (el === null) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    isFollowingBottomRef.current = distance <= NEAR_BOTTOM_PX;
+    const scrolledUp = el.scrollTop < lastScrollTopRef.current - 1;
+    // Be conservative: any explicit upward scroll means "stop following"
+    // until the user intentionally returns to the very bottom. The old
+    // 96px cushion re-engaged while users were still reading near the tail,
+    // making streaming output feel like it was yanking the viewport around.
+    isFollowingBottomRef.current = !scrolledUp && distance <= NEAR_BOTTOM_PX;
+    lastScrollTopRef.current = el.scrollTop;
   };
 
   useEffect(() => {
     const el = scrollRef.current;
     if (el === null) return;
-    if (isFollowingBottomRef.current) el.scrollTop = el.scrollHeight;
+    if (isFollowingBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+      lastScrollTopRef.current = el.scrollTop;
+    }
   }, [messages, streamingText, isStreaming]);
 
   // Force scroll-to-bottom + re-engage follow mode whenever a NEW
@@ -233,7 +243,10 @@ export function ChatView({ sessionId }: Props) {
     const userCount = messages.reduce((n, m) => (m.role === "user" ? n + 1 : n), 0);
     if (userCount > lastUserMessageCountRef.current) {
       const el = scrollRef.current;
-      if (el !== null) el.scrollTop = el.scrollHeight;
+      if (el !== null) {
+        el.scrollTop = el.scrollHeight;
+        lastScrollTopRef.current = el.scrollTop;
+      }
       isFollowingBottomRef.current = true;
     }
     lastUserMessageCountRef.current = userCount;
@@ -712,24 +725,27 @@ function ChatEditDiff({
           <span className="ml-2 text-emerald-400 light:text-emerald-700">+{adds}</span>
           <span className="ml-1 text-red-400 light:text-red-700">−{dels}</span>
         </span>
-        <button
-          onClick={(e) => {
-            // The summary's default click toggles the <details>; stop
-            // propagation so flipping the view doesn't also collapse
-            // the diff the user just opened.
-            e.preventDefault();
-            e.stopPropagation();
-            setViewType(viewType === "split" ? "unified" : "split");
-          }}
-          className="rounded p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
-          title={
-            viewType === "split"
-              ? "Switch chat diffs to unified view"
-              : "Switch chat diffs to side-by-side view"
-          }
-        >
-          {viewType === "split" ? <Rows2 size={11} /> : <Columns2 size={11} />}
-        </button>
+        <span className="flex shrink-0 items-center gap-1">
+          <CopyButton getText={() => diff} title="Copy edit output" compact />
+          <button
+            onClick={(e) => {
+              // The summary's default click toggles the <details>; stop
+              // propagation so flipping the view doesn't also collapse
+              // the diff the user just opened.
+              e.preventDefault();
+              e.stopPropagation();
+              setViewType(viewType === "split" ? "unified" : "split");
+            }}
+            className="rounded p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+            title={
+              viewType === "split"
+                ? "Switch chat diffs to unified view"
+                : "Switch chat diffs to side-by-side view"
+            }
+          >
+            {viewType === "split" ? <Rows2 size={11} /> : <Columns2 size={11} />}
+          </button>
+        </span>
       </summary>
       <DiffBlock diff={diff} viewType={viewType} />
     </details>
@@ -1771,6 +1787,9 @@ function ToolCallEntry({
         <details className="border-t border-neutral-800/60">
           <summary className="cursor-pointer px-3 py-1.5 text-[11px] text-neutral-500 hover:text-neutral-300">
             Input
+            <span className="float-right ml-2">
+              <CopyButton getText={() => argsText} title={`Copy ${name} input`} compact />
+            </span>
           </summary>
           <pre className="overflow-auto px-3 pb-2 font-mono text-[11px] text-neutral-400">
             {argsText}
@@ -1791,6 +1810,13 @@ function ToolCallEntry({
             {editFn !== undefined && (
               <span className="ml-2 font-mono text-[10px] text-neutral-500">{editFn}</span>
             )}
+            <span className="float-right ml-2">
+              <CopyButton
+                getText={() => editDiff ?? (outputText.length > 0 ? outputText : "(empty)")}
+                title={`Copy ${name} output`}
+                compact
+              />
+            </span>
           </summary>
           {editDiff !== undefined && editStats !== undefined ? (
             <div className="px-3 pb-2">
@@ -1837,9 +1863,12 @@ function ToolResult({ message }: { message: AgentMessageLike }) {
     const fn = extractFilename(message);
     return (
       <details className="rounded border border-neutral-800 bg-neutral-950 text-xs">
-        <summary className="cursor-pointer px-3 py-2 text-neutral-300">
-          <span className="text-neutral-500">read{fn !== undefined ? " " : ""}</span>
-          {fn !== undefined && <span className="font-mono">{fn}</span>}
+        <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-neutral-300">
+          <span>
+            <span className="text-neutral-500">read{fn !== undefined ? " " : ""}</span>
+            {fn !== undefined && <span className="font-mono">{fn}</span>}
+          </span>
+          <CopyButton getText={() => text} title="Copy read output" compact />
         </summary>
         <pre className="overflow-auto px-3 pb-2 font-mono text-[11px] text-neutral-400">{text}</pre>
       </details>
@@ -1852,9 +1881,12 @@ function ToolResult({ message }: { message: AgentMessageLike }) {
       <div
         className={`rounded border ${isError ? "border-red-700/40" : "border-neutral-800"} bg-neutral-950 text-xs`}
       >
-        <div className="px-3 py-2 text-neutral-400">
-          <span className="text-neutral-500">bash{cmd !== undefined ? " → " : " output"}</span>
-          {cmd !== undefined && <span className="font-mono">{cmd}</span>}
+        <div className="flex items-center justify-between gap-2 px-3 py-2 text-neutral-400">
+          <span className="min-w-0 truncate">
+            <span className="text-neutral-500">bash{cmd !== undefined ? " → " : " output"}</span>
+            {cmd !== undefined && <span className="font-mono">{cmd}</span>}
+          </span>
+          <CopyButton getText={() => text} title="Copy bash output" compact />
         </div>
         <pre className="max-h-64 overflow-auto px-3 pb-2 font-mono text-[11px] text-neutral-300">
           {text}
@@ -1867,10 +1899,13 @@ function ToolResult({ message }: { message: AgentMessageLike }) {
     const fn = extractFilename(message);
     return (
       <details className="rounded border border-neutral-800 bg-neutral-950 text-xs">
-        <summary className="cursor-pointer px-3 py-2 text-neutral-300">
-          <span className="text-neutral-500">write{fn !== undefined ? " " : ""}</span>
-          {fn !== undefined && <span className="font-mono">{fn}</span>}
-          <span className="ml-2 text-neutral-500">({text.split("\n").length} lines)</span>
+        <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-neutral-300">
+          <span>
+            <span className="text-neutral-500">write{fn !== undefined ? " " : ""}</span>
+            {fn !== undefined && <span className="font-mono">{fn}</span>}
+            <span className="ml-2 text-neutral-500">({text.split("\n").length} lines)</span>
+          </span>
+          <CopyButton getText={() => text} title="Copy write output" compact />
         </summary>
         <pre className="overflow-auto px-3 pb-2 font-mono text-[11px] text-neutral-400">{text}</pre>
       </details>
@@ -1890,9 +1925,12 @@ function ToolResult({ message }: { message: AgentMessageLike }) {
     <details
       className={`rounded border ${isError ? "border-red-700/40 light:border-red-300" : "border-neutral-800"} bg-neutral-950 text-xs`}
     >
-      <summary className="cursor-pointer px-3 py-2 text-neutral-300">
-        <span className="text-neutral-500">{toolName}</span>
-        {isError && <span className="ml-2 text-red-400 light:text-red-700">error</span>}
+      <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-neutral-300">
+        <span>
+          <span className="text-neutral-500">{toolName}</span>
+          {isError && <span className="ml-2 text-red-400 light:text-red-700">error</span>}
+        </span>
+        <CopyButton getText={() => text} title={`Copy ${toolName} output`} compact />
       </summary>
       <pre className="overflow-auto px-3 pb-2 font-mono text-[11px] text-neutral-400">{text}</pre>
     </details>
@@ -2101,8 +2139,9 @@ function SubagentResultCard({
           surface here as Output content rather than disappearing. */}
       {argsText.length > 0 && (
         <details className="border-t border-sky-900/30">
-          <summary className="cursor-pointer px-2.5 py-1 text-[11px] text-neutral-500 hover:text-neutral-300">
-            Input
+          <summary className="flex cursor-pointer items-center justify-between gap-2 px-2.5 py-1 text-[11px] text-neutral-500 hover:text-neutral-300">
+            <span>Input</span>
+            <CopyButton getText={() => argsText} title="Copy subagent input" compact />
           </summary>
           <pre className="overflow-auto px-2.5 pb-2 font-mono text-[11px] text-neutral-400">
             {argsText}
@@ -2117,8 +2156,9 @@ function SubagentResultCard({
           open={isError}
           className="border-t border-sky-900/30"
         >
-          <summary className="cursor-pointer px-2.5 py-1 text-[11px] text-neutral-500 hover:text-neutral-300">
-            Output
+          <summary className="flex cursor-pointer items-center justify-between gap-2 px-2.5 py-1 text-[11px] text-neutral-500 hover:text-neutral-300">
+            <span>Output</span>
+            <CopyButton getText={() => outputText} title="Copy subagent output" compact />
           </summary>
           <pre className="overflow-auto px-2.5 pb-2 font-mono text-[11px] text-neutral-300 whitespace-pre-wrap">
             {outputText}
@@ -2269,7 +2309,15 @@ function BashExecution({ message }: { message: AgentMessageLike }) {
  * back to a synthetic textarea when the async clipboard API isn't
  * available (older Safari, insecure HTTP origins).
  */
-function CopyButton({ getText, title }: { getText: () => string; title: string }) {
+function CopyButton({
+  getText,
+  title,
+  compact = false,
+}: {
+  getText: () => string;
+  title: string;
+  compact?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
   const onClick = (): void => {
     const text = getText();
@@ -2305,12 +2353,20 @@ function CopyButton({ getText, title }: { getText: () => string; title: string }
   return (
     <button
       type="button"
-      onClick={onClick}
-      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1.5 py-0.5 text-neutral-500 hover:bg-neutral-700/40 hover:text-neutral-300 md:min-h-0 md:min-w-0"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClick();
+      }}
+      className={`inline-flex items-center justify-center rounded text-neutral-500 hover:bg-neutral-700/40 hover:text-neutral-300 ${
+        compact
+          ? "h-3.5 w-3.5 shrink-0 p-0"
+          : "min-h-11 min-w-11 px-1.5 py-0.5 md:min-h-0 md:min-w-0"
+      }`}
       title={title}
       aria-label={title}
     >
-      {copied ? <Check size={14} /> : <Copy size={14} />}
+      {copied ? <Check size={compact ? 11 : 14} /> : <Copy size={compact ? 11 : 14} />}
     </button>
   );
 }

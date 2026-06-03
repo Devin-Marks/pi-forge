@@ -409,12 +409,12 @@ function SessionRow(props: SessionRowProps) {
       // by 2 px. Blue, not emerald, to disambiguate from any future
       // success / drop affordances on these rows.
       style={depth > 0 ? { marginLeft: `${Math.min(depth, 3) * 8}px` } : undefined}
-      className={`group flex items-center gap-1 rounded border-l-2 px-2 py-0.5 text-xs ${
+      className={`group flex items-center gap-1 rounded border-l-2 border-t border-t-neutral-800/40 px-2 py-0.5 text-xs light:border-t-neutral-200 ${
         isSelected
-          ? "border-blue-400 bg-blue-500/15 text-neutral-100 hover:bg-blue-500/25"
+          ? "border-l-blue-400 bg-blue-500/15 text-neutral-100 hover:bg-blue-500/25"
           : isActive
-            ? "border-transparent bg-neutral-800 text-neutral-100"
-            : "border-transparent text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
+            ? "border-l-transparent bg-neutral-800 text-neutral-100"
+            : "border-l-transparent text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
       }`}
     >
       {/* Chevron column. Only parents with children get an interactive
@@ -436,6 +436,7 @@ function SessionRow(props: SessionRowProps) {
         <input
           autoFocus
           value={renameDraft}
+          onFocus={(e) => e.currentTarget.select()}
           onChange={(e) => onChangeRename(e.target.value)}
           onKeyDown={(e) => onRenameKeyDown(e, s.sessionId)}
           onBlur={() => onCommitRename(s.sessionId)}
@@ -452,7 +453,7 @@ function SessionRow(props: SessionRowProps) {
             }
             onSelect(s.sessionId);
           }}
-          onDoubleClick={() => onStartRename(s.sessionId, s.name ?? "")}
+          onDoubleClick={() => onStartRename(s.sessionId, label)}
           className="flex-1 truncate text-left"
           title={`${s.sessionId} — double-click to rename, Cmd/Ctrl+click to select for bulk delete`}
         >
