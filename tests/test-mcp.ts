@@ -7,6 +7,7 @@
  * against it and exercises:
  *   - global config load → connect → list tools
  *   - bridged ToolDefinition execute → MCP server tool ran
+ *   - stale MCP session id after server restart → reconnect + retry succeeds
  *   - per-server `enabled: false` → skipped, no tools contributed
  *   - master `disabled: true` → no tools at all (master toggle)
  *   - probe() → forced reconnect → status flips back to connected
@@ -44,6 +45,8 @@ interface FixtureServer {
   url: string;
   /** Counts tool invocations since spawn — handy for probe assertions. */
   callCount: () => number;
+  /** Simulates an MCP server restart that drops known session ids while keeping the URL stable. */
+  dropSessions: () => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -63,31 +66,35 @@ interface FixtureServer {
  */
 async function spawnFixtureServer(opts?: { toolPrefix?: string }): Promise<FixtureServer> {
   const prefix = opts?.toolPrefix ?? "";
-  const mcp = new McpServer({ name: "fixture", version: "0.0.1" });
 
   let calls = 0;
-  mcp.registerTool(
-    `${prefix}echo`,
-    {
-      description: "Echoes the input string.",
-      inputSchema: { text: z.string() },
-    },
-    ({ text }) => {
-      calls += 1;
-      return { content: [{ type: "text", text }] };
-    },
-  );
-  mcp.registerTool(
-    `${prefix}add`,
-    {
-      description: "Adds two numbers.",
-      inputSchema: { a: z.number(), b: z.number() },
-    },
-    ({ a, b }) => {
-      calls += 1;
-      return { content: [{ type: "text", text: String(a + b) }] };
-    },
-  );
+  const createMcp = (): McpServer => {
+    const server = new McpServer({ name: "fixture", version: "0.0.1" });
+    server.registerTool(
+      `${prefix}echo`,
+      {
+        description: "Echoes the input string.",
+        inputSchema: { text: z.string() },
+      },
+      ({ text }) => {
+        calls += 1;
+        return { content: [{ type: "text", text }] };
+      },
+    );
+    server.registerTool(
+      `${prefix}add`,
+      {
+        description: "Adds two numbers.",
+        inputSchema: { a: z.number(), b: z.number() },
+      },
+      ({ a, b }) => {
+        calls += 1;
+        return { content: [{ type: "text", text: String(a + b) }] };
+      },
+    );
+    return server;
+  };
+  let mcp = createMcp();
 
   // SSEServerTransport is per-connection. Track sessions by id so
   // POST /messages can route to the right transport (and so a
@@ -111,8 +118,15 @@ async function spawnFixtureServer(opts?: { toolPrefix?: string }): Promise<Fixtu
           const sessionId = url.searchParams.get("sessionId") ?? "";
           const transport = sessions.get(sessionId);
           if (transport === undefined) {
-            res.statusCode = 404;
-            res.end("session not found");
+            res.statusCode = 400;
+            res.setHeader("content-type", "application/json");
+            res.end(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: null,
+                error: { code: -32600, message: "Sesstion not found" },
+              }),
+            );
             return;
           }
           await transport.handlePostMessage(req, res);
@@ -141,6 +155,13 @@ async function spawnFixtureServer(opts?: { toolPrefix?: string }): Promise<Fixtu
   return {
     url,
     callCount: () => calls,
+    dropSessions: async () => {
+      const oldSessions = Array.from(sessions.values());
+      sessions.clear();
+      await Promise.allSettled(oldSessions.map((t) => t.close()));
+      await mcp.close().catch(() => undefined);
+      mcp = createMcp();
+    },
     close: async () => {
       for (const t of sessions.values()) {
         await t.close().catch(() => undefined);
@@ -262,6 +283,33 @@ async function main(): Promise<void> {
         "echo execute: result text matches input",
         text === "hello-from-bridge",
         `got=${String(text)}`,
+      );
+
+      // ---- Case C2: stale MCP session id after server restart recovers ----
+      await fixture.dropSessions();
+      const staleCallsBefore = fixture.callCount();
+      const recoveredResult = await echo.execute(
+        "tcid-stale",
+        { text: "hello-after-restart" },
+        undefined,
+        undefined,
+        {} as Parameters<typeof echo.execute>[4],
+      );
+      const recoveredText =
+        recoveredResult.content[0]?.type === "text" ? recoveredResult.content[0].text : undefined;
+      assert(
+        "stale session: reconnect retried the call",
+        fixture.callCount() === staleCallsBefore + 1,
+        `before=${staleCallsBefore} after=${fixture.callCount()}`,
+      );
+      assert(
+        "stale session: recovered result text matches input",
+        recoveredText === "hello-after-restart",
+        `got=${String(recoveredText)}`,
+      );
+      assert(
+        "stale session: status remains connected",
+        manager.getStatus()[0]?.state === "connected",
       );
     }
 
