@@ -359,6 +359,9 @@ export function cloneRepository(opts: CloneOptions): SpawnedClone {
           if (opts.token !== undefined) {
             await stripTokenFromOrigin(target, displayUrl).catch(() => undefined);
           }
+          if (opts.insecureTls === true) {
+            await persistInsecureTlsForOrigin(target, displayUrl).catch(() => undefined);
+          }
           finish({ type: "done", target });
           resolveOuter();
           return;
@@ -386,15 +389,29 @@ export function cloneRepository(opts: CloneOptions): SpawnedClone {
  * any failure is swallowed by the caller.
  */
 async function stripTokenFromOrigin(target: string, cleanUrl: string): Promise<void> {
+  await runGitQuiet(target, ["remote", "set-url", "origin", cleanUrl]);
+}
+
+/**
+ * Persist the clone-time TLS opt-in for future fetch/pull/push from the
+ * same repo without changing global git config. URL scoping keeps the
+ * relaxed verification tied to the cloned origin URL instead of every
+ * HTTPS remote on the machine.
+ */
+async function persistInsecureTlsForOrigin(target: string, cleanUrl: string): Promise<void> {
+  await runGitQuiet(target, ["config", "--local", `http.${cleanUrl}.sslVerify`, "false"]);
+}
+
+async function runGitQuiet(cwd: string, args: string[]): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn("git", ["-C", target, "remote", "set-url", "origin", cleanUrl], {
+    const child = spawn("git", ["-C", cwd, ...args], {
       env: scrubbedEnv(),
       stdio: "ignore",
     });
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`set-url exited ${code}`));
+      else reject(new Error(`git ${args[0] ?? "command"} exited ${code}`));
     });
   });
 }

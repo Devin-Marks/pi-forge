@@ -467,7 +467,9 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
           "the clone — necessary for internal Git hosts with self-signed " +
           "certs (corporate GHE, on-prem GitLab with a private CA, etc.). " +
           "Logs a `git-clone-insecure-tls` line to stderr on every use so " +
-          "the relaxed posture is visible in operator logs.",
+          "the relaxed posture is visible in operator logs, and persists a " +
+          "local URL-scoped `http.<origin>.sslVerify=false` setting in the " +
+          "cloned repo for future fetch/pull/push without changing global git config.",
         tags: ["projects"],
         body: {
           type: "object",

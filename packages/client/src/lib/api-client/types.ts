@@ -617,6 +617,7 @@ export interface GitRemote {
   name: string;
   fetchUrl: string;
   pushUrl: string;
+  insecureTls: boolean;
 }
 
 export interface GitRemotesResponse {

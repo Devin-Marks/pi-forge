@@ -79,6 +79,7 @@ export function GitPanel() {
   const [showAddRemote, setShowAddRemote] = useState(false);
   const [newRemoteName, setNewRemoteName] = useState("");
   const [newRemoteUrl, setNewRemoteUrl] = useState("");
+  const [newRemoteInsecureTls, setNewRemoteInsecureTls] = useState(false);
   const [removeRemoteName, setRemoveRemoteName] = useState<string | undefined>(undefined);
 
   const reloadRemotes = async (): Promise<void> => {
@@ -99,10 +100,29 @@ export function GitPanel() {
     setRemoteBusy(name);
     setOpError(undefined);
     try {
-      await api.gitRemoteAdd(project.id, name, url, selectedWorktreePath);
+      const opts: { insecureTls: boolean; worktreePath?: string } = {
+        insecureTls: newRemoteInsecureTls,
+      };
+      if (selectedWorktreePath !== undefined) opts.worktreePath = selectedWorktreePath;
+      await api.gitRemoteAdd(project.id, name, url, opts);
       setShowAddRemote(false);
       setNewRemoteName("");
       setNewRemoteUrl("");
+      setNewRemoteInsecureTls(false);
+      await reloadRemotes();
+    } catch (err) {
+      setOpError(err instanceof ApiError ? err.message || err.code : (err as Error).message);
+    } finally {
+      setRemoteBusy(undefined);
+    }
+  };
+
+  const handleToggleRemoteTls = async (name: string, insecureTls: boolean): Promise<void> => {
+    if (project === undefined) return;
+    setRemoteBusy(name);
+    setOpError(undefined);
+    try {
+      await api.gitRemoteSetInsecureTls(project.id, name, insecureTls, selectedWorktreePath);
       await reloadRemotes();
     } catch (err) {
       setOpError(err instanceof ApiError ? err.message || err.code : (err as Error).message);
@@ -1043,9 +1063,8 @@ export function GitPanel() {
         </div>
 
         {/* Remotes section — same lazy-load pattern as Log + Branches.
-            Read-only for now; managing remotes (`git remote add/remove`)
-            is rare enough that the integrated terminal handles it
-            without a dedicated UI. */}
+            Supports add/remove plus the per-remote local TLS opt-in used by
+            internal Git hosts with private/self-signed certificates. */}
         <div className="border-t border-neutral-800/60">
           <button
             onClick={() => setShowRemotes((v) => !v)}
@@ -1082,6 +1101,14 @@ export function GitPanel() {
                                   fetch ≠ push
                                 </span>
                               )}
+                              {r.insecureTls && (
+                                <span
+                                  className="rounded bg-amber-900/40 px-1 py-0.5 text-[9px] uppercase tracking-wider text-amber-300 light:bg-amber-100 light:text-amber-800"
+                                  title="TLS certificate verification disabled for this remote URL in local git config"
+                                >
+                                  ignore tls
+                                </span>
+                              )}
                               <button
                                 onClick={() => setRemoveRemoteName(r.name)}
                                 disabled={busy}
@@ -1105,6 +1132,20 @@ export function GitPanel() {
                                 push → {r.pushUrl}
                               </span>
                             )}
+                            <label className="mt-0.5 flex items-start gap-1.5 text-[10px] text-neutral-500">
+                              <input
+                                type="checkbox"
+                                checked={r.insecureTls}
+                                onChange={(e) =>
+                                  void handleToggleRemoteTls(r.name, e.target.checked)
+                                }
+                                disabled={busy}
+                                className="mt-0.5 h-3 w-3"
+                              />
+                              <span>
+                                Ignore SSL/TLS verification for this remote (local repo config only)
+                              </span>
+                            </label>
                           </li>
                         );
                       })}
@@ -1114,6 +1155,7 @@ export function GitPanel() {
                     onClick={() => {
                       setNewRemoteName("");
                       setNewRemoteUrl("");
+                      setNewRemoteInsecureTls(false);
                       setShowAddRemote(true);
                     }}
                     className="mt-2 flex items-center gap-1 rounded px-1 py-0.5 text-[11px] text-neutral-400 hover:bg-neutral-900 hover:text-neutral-100"
@@ -1176,6 +1218,24 @@ export function GitPanel() {
               placeholder="git@github.com:user/repo.git"
               className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-1.5 font-mono text-sm text-neutral-100 outline-none focus:border-neutral-500"
             />
+          </label>
+          <label className="flex items-start gap-2 rounded border border-amber-900/40 bg-amber-950/30 px-2 py-1.5 text-xs light:border-amber-300 light:bg-amber-50">
+            <input
+              type="checkbox"
+              checked={newRemoteInsecureTls}
+              onChange={(e) => setNewRemoteInsecureTls(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="text-amber-200 light:text-amber-800">
+                Ignore SSL/TLS verification for this remote
+              </span>
+              <br />
+              <span className="text-[11px] text-amber-300/70 light:text-amber-700/80">
+                Persists only in this repository as URL-scoped git config. Use only for internal Git
+                hosts with a known self-signed/private-CA certificate.
+              </span>
+            </span>
           </label>
           <footer className="flex justify-end gap-2 pt-1">
             <button
