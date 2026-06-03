@@ -516,6 +516,49 @@ async function main(): Promise<void> {
     const upstreamPath = join(workspacePath, "upstream.git");
     await mkdir(upstreamPath, { recursive: true });
     await execFileAsync("git", ["init", "-q", "--bare", upstreamPath]);
+
+    // ---- remote TLS settings are local, URL-scoped git config ----
+    {
+      const corpUrl = "https://git.example.internal/acme/demo.git";
+      const add = await jsend(
+        "POST",
+        `${base}/api/v1/git/remote/add`,
+        { projectId: gitProjectId, name: "corp", url: corpUrl, insecureTls: true },
+        auth,
+      );
+      assert("remote/add with insecureTls → 200", add.status === 200);
+      const tlsValue = (
+        await execFileAsync(
+          "git",
+          ["config", "--local", "--get-urlmatch", "http.sslVerify", corpUrl],
+          { cwd: projectPath },
+        )
+      ).stdout.trim();
+      assert("remote TLS config persisted as sslVerify=false", tlsValue === "false");
+      const listed = await jget(
+        `${base}/api/v1/git/remotes?projectId=${encodeURIComponent(gitProjectId)}`,
+        auth,
+      );
+      const body = listed.body as { remotes: { name: string; insecureTls: boolean }[] };
+      assert(
+        "remotes list marks insecure TLS remote",
+        body.remotes.some((r) => r.name === "corp" && r.insecureTls),
+      );
+      const disable = await jsend(
+        "POST",
+        `${base}/api/v1/git/remote/tls`,
+        { projectId: gitProjectId, name: "corp", insecureTls: false },
+        auth,
+      );
+      assert("remote/tls disable → 200", disable.status === 200);
+      const disabled = await execFileAsync(
+        "git",
+        ["config", "--local", "--get-urlmatch", "http.sslVerify", corpUrl],
+        { cwd: projectPath },
+      ).catch((err: unknown) => err as { code?: number });
+      assert("remote TLS config unset on disable", "code" in disabled && disabled.code === 1);
+    }
+
     await git(projectPath, ["remote", "add", "origin", upstreamPath]);
     {
       const r = await jsend(

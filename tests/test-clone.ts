@@ -82,25 +82,50 @@ async function waitFor(url: string, timeoutMs = 10_000): Promise<void> {
   throw new Error(`timeout waiting for ${url}`);
 }
 
+function gitEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    // Deterministic identity so commits succeed without the
+    // host user's git config.
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@example.com",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@example.com",
+  };
+}
+
 function runGit(cwd: string, args: string[]): Promise<void> {
   return new Promise((resolveFn, rejectFn) => {
     const child = spawn("git", args, {
       cwd,
       stdio: "ignore",
-      env: {
-        ...process.env,
-        // Deterministic identity so commits succeed without the
-        // host user's git config.
-        GIT_AUTHOR_NAME: "Test",
-        GIT_AUTHOR_EMAIL: "test@example.com",
-        GIT_COMMITTER_NAME: "Test",
-        GIT_COMMITTER_EMAIL: "test@example.com",
-      },
+      env: gitEnv(),
     });
     child.on("error", rejectFn);
     child.on("close", (code) => {
       if (code === 0) resolveFn();
       else rejectFn(new Error(`git ${args.join(" ")} exited ${code}`));
+    });
+  });
+}
+
+function gitOutput(cwd: string, args: string[]): Promise<string> {
+  return new Promise((resolveFn, rejectFn) => {
+    const child = spawn("git", args, {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: gitEnv(),
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => (stdout += chunk));
+    child.stderr.on("data", (chunk: string) => (stderr += chunk));
+    child.on("error", rejectFn);
+    child.on("close", (code) => {
+      if (code === 0) resolveFn(stdout);
+      else rejectFn(new Error(`git ${args.join(" ")} exited ${code}: ${stderr}`));
     });
   });
 }
@@ -344,6 +369,26 @@ async function main(): Promise<void> {
       assert("cloned target contains README.md", readme.isFile());
       const dotGit = await stat(join(srv.workspacePath, "cloned-repo", ".git"));
       assert("cloned target contains .git directory", dotGit.isDirectory());
+
+      const insecure = await streamClone(srv.base, {
+        url: sourceUrl,
+        parentPath: srv.workspacePath,
+        folderName: "insecure-cloned-repo",
+        projectName: "Insecure Cloned Repo",
+        insecureTls: true,
+      });
+      assert("clone with insecureTls HTTP status 200", insecure.status === 200);
+      const persistedTls = await gitOutput(join(srv.workspacePath, "insecure-cloned-repo"), [
+        "config",
+        "--local",
+        "--get-urlmatch",
+        "http.sslVerify",
+        sourceUrl,
+      ]);
+      assert(
+        "clone insecureTls persists local URL-scoped sslVerify=false",
+        persistedTls.trim() === "false",
+      );
 
       // Second clone into the same folder fails fast with 409.
       const second = await streamClone(srv.base, {

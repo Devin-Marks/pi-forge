@@ -12,6 +12,7 @@ import {
   getBranches,
   getRemotes,
   removeRemote,
+  setRemoteInsecureTls,
   getDiff,
   getFileDiff,
   getLog,
@@ -132,11 +133,12 @@ const remotesSchema = {
       type: "array",
       items: {
         type: "object",
-        required: ["name", "fetchUrl", "pushUrl"],
+        required: ["name", "fetchUrl", "pushUrl", "insecureTls"],
         properties: {
           name: { type: "string" },
           fetchUrl: { type: "string" },
           pushUrl: { type: "string" },
+          insecureTls: { type: "boolean" },
         },
       },
     },
@@ -554,7 +556,15 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
       withGitCwd(req.query.projectId, req.query.worktreePath, reply, (cwd) => getRemotes(cwd)),
   );
 
-  fastify.post<{ Body: { projectId: string; name: string; url: string; worktreePath?: string } }>(
+  fastify.post<{
+    Body: {
+      projectId: string;
+      name: string;
+      url: string;
+      insecureTls?: boolean;
+      worktreePath?: string;
+    };
+  }>(
     "/git/remote/add",
     {
       schema: {
@@ -562,7 +572,9 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
           "Add a git remote (`git remote add <name> <url>`). Name is " +
           "validated against the same character set as branch names. " +
           "URL accepts any string git itself accepts (https://, git@, " +
-          "file://, etc.). Duplicate name → 400 `git_failed`.",
+          "file://, etc.). Optional `insecureTls: true` persists a local, " +
+          "URL-scoped `http.<url>.sslVerify=false` setting for this repo. " +
+          "Duplicate name → 400 `git_failed`.",
         tags: ["git"],
         body: {
           type: "object",
@@ -572,6 +584,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
             projectId: { type: "string", minLength: 1 },
             name: { type: "string", minLength: 1 },
             url: { type: "string", minLength: 1, maxLength: 1024 },
+            insecureTls: { type: "boolean" },
             ...worktreeBodyProperty,
           },
         },
@@ -585,7 +598,46 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) =>
       withGitCwd(req.body.projectId, req.body.worktreePath, reply, async (cwd) => {
-        await addRemote(cwd, req.body.name, req.body.url);
+        await addRemote(cwd, req.body.name, req.body.url, {
+          insecureTls: req.body.insecureTls === true,
+        });
+        return { ok: true };
+      }),
+  );
+
+  fastify.post<{
+    Body: { projectId: string; name: string; insecureTls: boolean; worktreePath?: string };
+  }>(
+    "/git/remote/tls",
+    {
+      schema: {
+        description:
+          "Enable or disable TLS certificate verification for one remote in this repository. " +
+          "The setting is persisted in local git config as URL-scoped `http.<url>.sslVerify=false`; " +
+          "it does not change global git config or store credentials.",
+        tags: ["git"],
+        body: {
+          type: "object",
+          required: ["projectId", "name", "insecureTls"],
+          additionalProperties: false,
+          properties: {
+            projectId: { type: "string", minLength: 1 },
+            name: { type: "string", minLength: 1 },
+            insecureTls: { type: "boolean" },
+            ...worktreeBodyProperty,
+          },
+        },
+        response: {
+          200: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+          400: errorSchema,
+          404: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) =>
+      withGitCwd(req.body.projectId, req.body.worktreePath, reply, async (cwd) => {
+        await setRemoteInsecureTls(cwd, req.body.name, req.body.insecureTls);
         return { ok: true };
       }),
   );

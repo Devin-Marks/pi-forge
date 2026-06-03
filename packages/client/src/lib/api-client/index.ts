@@ -1327,11 +1327,12 @@ function vGitRemotes(value: unknown, status: number): GitRemotesResponse {
         !isObject(r) ||
         typeof r.name !== "string" ||
         typeof r.fetchUrl !== "string" ||
-        typeof r.pushUrl !== "string"
+        typeof r.pushUrl !== "string" ||
+        typeof r.insecureTls !== "boolean"
       ) {
         fail(status, "expected GitRemote");
       }
-      return { name: r.name, fetchUrl: r.fetchUrl, pushUrl: r.pushUrl };
+      return { name: r.name, fetchUrl: r.fetchUrl, pushUrl: r.pushUrl, insecureTls: r.insecureTls };
     }),
   };
 }
@@ -2695,7 +2696,12 @@ export const api = {
     request(`/api/v1/git/branches?${gitQuery(projectId, worktreePath)}`, vGitBranches),
   gitRemotes: (projectId: string, worktreePath?: string) =>
     request(`/api/v1/git/remotes?${gitQuery(projectId, worktreePath)}`, vGitRemotes),
-  gitRemoteAdd: (projectId: string, name: string, url: string, worktreePath?: string) =>
+  gitRemoteAdd: (
+    projectId: string,
+    name: string,
+    url: string,
+    opts?: { insecureTls?: boolean; worktreePath?: string },
+  ) =>
     request(
       "/api/v1/git/remote/add",
       (v, s) => {
@@ -2704,7 +2710,35 @@ export const api = {
       },
       {
         method: "POST",
-        body: { projectId, name, url, ...(worktreePath !== undefined ? { worktreePath } : {}) },
+        body: {
+          projectId,
+          name,
+          url,
+          ...(opts?.insecureTls === true ? { insecureTls: true } : {}),
+          ...(opts?.worktreePath !== undefined ? { worktreePath: opts.worktreePath } : {}),
+        },
+      },
+    ),
+  gitRemoteSetInsecureTls: (
+    projectId: string,
+    name: string,
+    insecureTls: boolean,
+    worktreePath?: string,
+  ) =>
+    request(
+      "/api/v1/git/remote/tls",
+      (v, s) => {
+        if (!isObject(v) || v.ok !== true) fail(s, "expected { ok: true }");
+        return { ok: true as const };
+      },
+      {
+        method: "POST",
+        body: {
+          projectId,
+          name,
+          insecureTls,
+          ...(worktreePath !== undefined ? { worktreePath } : {}),
+        },
       },
     ),
   gitRemoteRemove: (projectId: string, name: string, worktreePath?: string) =>

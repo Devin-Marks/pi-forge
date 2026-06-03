@@ -518,6 +518,8 @@ export interface RemoteEntry {
    *  separately (e.g. read-only mirror + write-through fork). Surfaced
    *  alongside fetch so the UI can flag the divergence when present. */
   pushUrl: string;
+  /** True when this repo has local URL-scoped SSL verification disabled for the remote URL. */
+  insecureTls: boolean;
 }
 
 /**
@@ -552,7 +554,7 @@ export async function getRemotes(cwd: string): Promise<RemotesResult> {
     if (existing === undefined) {
       // Pre-fill the OTHER URL with the same value; if the second
       // line for this remote contradicts, we overwrite below.
-      map.set(name, { name, fetchUrl: url, pushUrl: url });
+      map.set(name, { name, fetchUrl: url, pushUrl: url, insecureTls: false });
     } else if (dir === "push") {
       existing.pushUrl = url;
     } else {
@@ -560,6 +562,11 @@ export async function getRemotes(cwd: string): Promise<RemotesResult> {
     }
   }
   const remotes = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  await Promise.all(
+    remotes.map(async (remote) => {
+      remote.insecureTls = await remoteHasInsecureTls(cwd, remote);
+    }),
+  );
   return { isGitRepo: true, remotes };
 }
 
@@ -571,8 +578,21 @@ export async function getRemotes(cwd: string): Promise<RemotesResult> {
  * metachars. Common shapes: `https://github.com/foo/bar.git`,
  * `git@github.com:foo/bar.git`, `file:///abs/path`.
  */
-export async function addRemote(cwd: string, name: string, url: string): Promise<void> {
+export async function addRemote(
+  cwd: string,
+  name: string,
+  url: string,
+  opts: { insecureTls?: boolean } = {},
+): Promise<void> {
   assertRemoteName(name);
+  assertRemoteUrl(url);
+  await runGit(cwd, ["remote", "add", name, url]);
+  if (opts.insecureTls === true) {
+    await setUrlInsecureTls(cwd, url, true);
+  }
+}
+
+function assertRemoteUrl(url: string): void {
   if (url.length === 0 || url.length > 1024) {
     throw new InvalidBranchNameError(`invalid remote URL`);
   }
@@ -582,7 +602,56 @@ export async function addRemote(cwd: string, name: string, url: string): Promise
   if (url.startsWith("-")) {
     throw new InvalidBranchNameError(`invalid remote URL`);
   }
-  await runGit(cwd, ["remote", "add", name, url]);
+}
+
+async function getRemoteUrls(cwd: string, name: string): Promise<string[]> {
+  assertRemoteName(name);
+  const urls = new Set<string>();
+  const fetchUrl = await runGit(cwd, ["remote", "get-url", name]);
+  const pushUrl = await runGit(cwd, ["remote", "get-url", "--push", name]).catch(() => undefined);
+  const fetch = fetchUrl.stdout.trim();
+  const push = pushUrl?.stdout.trim();
+  if (fetch.length > 0) urls.add(fetch);
+  if (push !== undefined && push.length > 0) urls.add(push);
+  return [...urls];
+}
+
+async function remoteHasInsecureTls(cwd: string, remote: RemoteEntry): Promise<boolean> {
+  const urls = new Set([remote.fetchUrl, remote.pushUrl].filter((url) => url.length > 0));
+  for (const url of urls) {
+    try {
+      const { stdout } = await runGit(cwd, [
+        "config",
+        "--local",
+        "--get-urlmatch",
+        "http.sslVerify",
+        url,
+      ]);
+      if (stdout.trim().toLowerCase() === "false") return true;
+    } catch {
+      // No local URL-specific match for this URL.
+    }
+  }
+  return false;
+}
+
+async function setUrlInsecureTls(cwd: string, url: string, enabled: boolean): Promise<void> {
+  assertRemoteUrl(url);
+  const key = `http.${url}.sslVerify`;
+  if (enabled) {
+    await runGit(cwd, ["config", "--local", key, "false"]);
+    return;
+  }
+  await runGit(cwd, ["config", "--local", "--unset-all", key]).catch(() => undefined);
+}
+
+export async function setRemoteInsecureTls(
+  cwd: string,
+  name: string,
+  enabled: boolean,
+): Promise<void> {
+  const urls = await getRemoteUrls(cwd, name);
+  await Promise.all(urls.map((url) => setUrlInsecureTls(cwd, url, enabled)));
 }
 
 /**

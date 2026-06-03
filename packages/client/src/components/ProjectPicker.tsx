@@ -640,9 +640,10 @@ function CloneForm({
           </span>
           <br />
           <span className="text-[11px] text-amber-300/70 light:text-amber-700/80">
-            ⚠ Disables MITM protection for this clone. Use only for internal Git hosts with known
-            self-signed certs (corporate GHE, on-prem GitLab with a private CA). The server logs{" "}
-            <code>git-clone-insecure-tls</code> to stderr on every use.
+            ⚠ Disables MITM protection for this clone and persists a URL-scoped local git config
+            entry for future fetch/pull/push. Use only for internal Git hosts with known self-signed
+            certs/private CAs. The server logs <code>git-clone-insecure-tls</code> to stderr on
+            every use.
           </span>
         </span>
       </label>
