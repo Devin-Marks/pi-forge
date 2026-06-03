@@ -1,9 +1,8 @@
-import { spawn } from "node:child_process";
 import type { FastifyPluginAsync } from "fastify";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import { errorSchema } from "./_schemas.js";
 import { getSession } from "../session-registry.js";
-import { scrubbedEnv } from "../pty-manager.js";
+import { createForgeBashOperations } from "../agent-bash-operations.js";
 
 /**
  * One-shot user bash execution — the chat input's `!` / `!!` prefix.
@@ -46,56 +45,6 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 interface ExecBody {
   command: string;
   excludeFromContext?: boolean;
-}
-
-/**
- * Build a BashOperations that delegates to local spawn, but with our
- * scrubbed env. createLocalBashOperations from the SDK would inherit
- * `process.env` verbatim, leaking secrets the pi-forge process
- * carries (JWT_SECRET, API_KEY, etc.) — see
- * pty-manager.TERMINAL_ENV_ALLOWLIST for the full set of allowed
- * passthrough vars and rationale.
- */
-function forgeBashOperations(): BashOperations {
-  return {
-    exec: (command, cwd, options) => {
-      return new Promise<{ exitCode: number | null }>((resolve, reject) => {
-        const proc = spawn("/bin/sh", ["-c", command], {
-          cwd,
-          env: scrubbedEnv(),
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        // Honor an external AbortSignal (the SDK ties this to its own
-        // _bashAbortController so abortBash() propagates).
-        const onAbort = (): void => {
-          try {
-            proc.kill("SIGTERM");
-          } catch {
-            // best-effort
-          }
-          // SIGKILL after grace if SIGTERM is ignored.
-          setTimeout(() => {
-            try {
-              proc.kill("SIGKILL");
-            } catch {
-              // best-effort
-            }
-          }, 2000);
-        };
-        if (options.signal !== undefined) {
-          if (options.signal.aborted) onAbort();
-          else options.signal.addEventListener("abort", onAbort, { once: true });
-        }
-        // Stream chunks back so the SDK's truncation-and-buffering
-        // logic gets to apply (executor caps total output, writes
-        // overflow to a temp file, etc.).
-        proc.stdout?.on("data", (data: Buffer) => options.onData(data));
-        proc.stderr?.on("data", (data: Buffer) => options.onData(data));
-        proc.on("error", (err) => reject(err));
-        proc.on("close", (code) => resolve({ exitCode: code }));
-      });
-    },
-  };
 }
 
 /**
@@ -193,7 +142,10 @@ export const execRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         const result = await live.session.executeBash(command, undefined, {
           excludeFromContext,
-          operations: timeoutOperations(forgeBashOperations(), timeoutController.signal),
+          operations: timeoutOperations(
+            createForgeBashOperations(live.workspacePath),
+            timeoutController.signal,
+          ),
         });
         const durationMs = Date.now() - started;
         live.lastActivityAt = new Date();

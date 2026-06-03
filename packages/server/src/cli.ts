@@ -30,7 +30,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 type FlagType = "string" | "number" | "boolean" | "list";
-type FlagGroup = "network" | "paths" | "auth" | "rate-limits" | "features" | "terminal";
+type FlagGroup = "network" | "paths" | "auth" | "rate-limits" | "features" | "terminal" | "sandbox";
 
 interface FlagDef {
   name: string; // kebab-case CLI flag (without leading --)
@@ -331,6 +331,31 @@ const FLAGS: readonly FlagDef[] = [
     desc: "Append a secret-hygiene rule to the agent's system prompt",
     defaultText: "false",
   },
+  // sandbox
+  {
+    name: "agent-tool-sandbox-enabled",
+    env: "AGENT_TOOL_SANDBOX_ENABLED",
+    type: "boolean",
+    group: "sandbox",
+    desc: "Run model/user shell surfaces as restricted UID/GID with path-scoped file tools",
+    defaultText: "false",
+  },
+  {
+    name: "agent-tool-uid",
+    env: "AGENT_TOOL_UID",
+    type: "number",
+    group: "sandbox",
+    desc: "Numeric UID for sandboxed model/user shell processes",
+    defaultText: "(required when sandbox enabled)",
+  },
+  {
+    name: "agent-tool-gid",
+    env: "AGENT_TOOL_GID",
+    type: "number",
+    group: "sandbox",
+    desc: "Numeric GID for sandboxed model/user shell processes",
+    defaultText: "(required when sandbox enabled)",
+  },
   // rate limits
   {
     name: "rate-limit-login-max",
@@ -572,6 +597,26 @@ export function parseCliArgs(argv: string[]): ParseResult {
     );
   }
 
+  const sandboxRaw =
+    parsed.values["agent-tool-sandbox-enabled"] ?? process.env.AGENT_TOOL_SANDBOX_ENABLED;
+  const sandboxEnabled =
+    sandboxRaw !== undefined && BOOL_TRUE.has(String(sandboxRaw).toLowerCase());
+  const ldapBindPasswordRaw = parsed.values["ldap-bind-password"];
+  if (
+    sandboxEnabled &&
+    typeof ldapBindPasswordRaw === "string" &&
+    ldapBindPasswordRaw.startsWith("@")
+  ) {
+    result.errors.push(
+      "LDAP bind password file references are not allowed when AGENT_TOOL_SANDBOX_ENABLED=true. Use an environment variable value or external secret broker.",
+    );
+  }
+  if (sandboxEnabled && parsed.values["ldap-bind-password-file"] !== undefined) {
+    result.errors.push(
+      "LDAP bind password file references are not allowed when AGENT_TOOL_SANDBOX_ENABLED=true. Use an environment variable value or external secret broker.",
+    );
+  }
+
   for (const f of FLAGS) {
     const raw = parsed.values[f.name];
     if (raw === undefined) continue;
@@ -636,6 +681,7 @@ const GROUP_LABELS: Record<FlagGroup, string> = {
   paths: "Paths",
   auth: "Authentication",
   features: "Features",
+  sandbox: "Agent tool sandbox",
   "rate-limits": "Rate limits",
   terminal: "Terminal",
 };
@@ -654,7 +700,15 @@ export function buildHelpText(version: string): string {
   );
   out.push("");
 
-  const groups: FlagGroup[] = ["network", "paths", "auth", "features", "rate-limits", "terminal"];
+  const groups: FlagGroup[] = [
+    "network",
+    "paths",
+    "auth",
+    "features",
+    "sandbox",
+    "rate-limits",
+    "terminal",
+  ];
   for (const group of groups) {
     const flags = FLAGS.filter((f) => f.group === group);
     if (flags.length === 0) continue;

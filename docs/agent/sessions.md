@@ -42,6 +42,11 @@ These are facts about the pi SDK that are easy to get wrong:
   every `createAgentSession` call as `customTools`. See
   [`docs/mcp.md`](../mcp.md) for the user-facing surface; the doc-comment
   at the top of `mcp/manager.ts` is the integration contract.
+- When `AGENT_TOOL_SANDBOX_ENABLED=true`, `session-registry.ts` appends
+  pi-forge custom tool definitions that override the SDK built-in
+  read/grep/find/ls/edit/write/bash tools. Keep all create/resume/fork/tool-refresh
+  `createAgentSession()` paths using the same sandbox override helper so live and
+  cold sessions have identical tool behavior.
 
 ---
 

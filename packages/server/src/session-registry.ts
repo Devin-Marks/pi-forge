@@ -9,6 +9,7 @@ import {
   type SessionInfo,
 } from "@earendil-works/pi-coding-agent";
 import { buildForgeResourceLoader } from "./agent-resource-loader.js";
+import { createSandboxedToolDefinitions } from "./agent-tool-overrides.js";
 import { config } from "./config.js";
 import { makeDedupe, makeLock } from "./concurrency.js";
 import { effectivePromptsForProject, effectiveSkillsForProject } from "./config-manager.js";
@@ -617,6 +618,14 @@ async function resolveOrchestrationTools(sessionId: string): Promise<ToolDefinit
   return createOrchestrationTools(sessionId);
 }
 
+function applyAgentToolSandbox(
+  workspacePath: string,
+  customTools: readonly ToolDefinition[],
+): ToolDefinition[] {
+  if (!config.agentToolSandbox.enabled) return [...customTools];
+  return [...customTools, ...createSandboxedToolDefinitions(workspacePath)];
+}
+
 export async function createSession(
   projectId: string,
   workspacePath: string,
@@ -646,6 +655,7 @@ export async function createSession(
     processTool,
     ...orchestrationTools,
   ];
+  const effectiveCustomTools = applyAgentToolSandbox(workspacePath, customTools);
   const settingsManager = await buildSessionSettingsManager(workspacePath, projectId);
   const resourceLoader = await buildForgeResourceLoader(
     workspacePath,
@@ -659,8 +669,8 @@ export async function createSession(
     settingsManager,
     resourceLoader,
     agentDir: config.piConfigDir,
-    customTools,
-    tools: await buildToolsAllowlist(customTools, projectId, workspacePath),
+    customTools: effectiveCustomTools,
+    tools: await buildToolsAllowlist(effectiveCustomTools, projectId, workspacePath),
   });
 
   const now = new Date();
@@ -938,6 +948,7 @@ export async function resumeSession(
       processTool,
       ...orchestrationTools,
     ];
+    const effectiveCustomTools = applyAgentToolSandbox(workspacePath, customTools);
     // Resumed session — refresh the todo cache from the branch so
     // the UI panel sees the persisted state on first SSE connect,
     // not an empty list.
@@ -955,8 +966,8 @@ export async function resumeSession(
       settingsManager,
       resourceLoader,
       agentDir: config.piConfigDir,
-      customTools,
-      tools: await buildToolsAllowlist(customTools, projectId, workspacePath),
+      customTools: effectiveCustomTools,
+      tools: await buildToolsAllowlist(effectiveCustomTools, projectId, workspacePath),
     });
 
     const now = new Date();
@@ -1611,6 +1622,7 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
     processTool,
     ...orchestrationTools,
   ];
+  const effectiveCustomTools = applyAgentToolSandbox(source.workspacePath, customTools);
   // Forked session — replay the branch (which now belongs to the
   // fork) so the new session's todo cache reflects the inherited
   // state, not the parent's stale entry.
@@ -1628,8 +1640,8 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
     settingsManager,
     resourceLoader,
     agentDir: config.piConfigDir,
-    customTools,
-    tools: await buildToolsAllowlist(customTools, source.projectId, source.workspacePath),
+    customTools: effectiveCustomTools,
+    tools: await buildToolsAllowlist(effectiveCustomTools, source.projectId, source.workspacePath),
   });
 
   const now = new Date();
@@ -1705,6 +1717,10 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
         restoredProcessTool,
         ...restoredOrchestrationTools,
       ];
+      const restoredEffectiveCustomTools = applyAgentToolSandbox(
+        source.workspacePath,
+        restoredCustomTools,
+      );
       // Re-derive the original source's todo cache from the (now
       // un-mutated) source JSONL — the SDK's fork machinery left
       // the cache pointing at fork state.
@@ -1725,9 +1741,9 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
         settingsManager: restoredSettingsManager,
         resourceLoader: restoredResourceLoader,
         agentDir: config.piConfigDir,
-        customTools: restoredCustomTools,
+        customTools: restoredEffectiveCustomTools,
         tools: await buildToolsAllowlist(
-          restoredCustomTools,
+          restoredEffectiveCustomTools,
           source.projectId,
           source.workspacePath,
         ),
@@ -1839,6 +1855,7 @@ export async function rebuildAgentSessionForTools(
     processTool,
     ...orchestrationTools,
   ];
+  const effectiveCustomTools = applyAgentToolSandbox(live.workspacePath, customTools);
   const settingsManager = await buildSessionSettingsManager(live.workspacePath, live.projectId);
   const resourceLoader = await buildForgeResourceLoader(
     live.workspacePath,
@@ -1852,8 +1869,8 @@ export async function rebuildAgentSessionForTools(
     settingsManager,
     resourceLoader,
     agentDir: config.piConfigDir,
-    customTools,
-    tools: await buildToolsAllowlist(customTools, live.projectId, live.workspacePath),
+    customTools: effectiveCustomTools,
+    tools: await buildToolsAllowlist(effectiveCustomTools, live.projectId, live.workspacePath),
   });
   // Drop the old AgentSession only AFTER the new one is constructed
   // — if createAgentSession throws, we still have a working session.

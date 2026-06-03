@@ -14,6 +14,8 @@ services:
         # Override in .env to match `id -u` / `id -g` for writable bind mounts.
         PUID: ${PUID:-1000}
         PGID: ${PGID:-1000}
+        PTOOLS_UID: ${AGENT_TOOL_UID:-1001}
+        PTOOLS_GID: ${AGENT_TOOL_GID:-1001}
     image: pi-forge:latest
     container_name: ${CONTAINER_NAME:-pi-forge}
     restart: unless-stopped
@@ -50,12 +52,20 @@ services:
       - ORCHESTRATION_DISABLED=${ORCHESTRATION_DISABLED:-false}
       - ORCHESTRATION_ENABLED=${ORCHESTRATION_ENABLED:-}
       - ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR=${ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR:-8}
+      # Identity sandbox — disabled by default. When true, the root
+      # server drops model/user shell surfaces to pi-tools via SETUID/SETGID.
+      - AGENT_TOOL_SANDBOX_ENABLED=${AGENT_TOOL_SANDBOX_ENABLED:-false}
+      - AGENT_TOOL_UID=${AGENT_TOOL_UID:-1001}
+      - AGENT_TOOL_GID=${AGENT_TOOL_GID:-1001}
     # Hardening (mirrors the k8s manifests). Not read-only because the
     # agent's bash tool needs to write to /home/pi/.npm, /tmp, etc.
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - SETUID
+      - SETGID
     pids_limit: 512
     mem_limit: 2g
     cpus: "1.0"

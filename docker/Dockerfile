@@ -4,7 +4,9 @@
 #
 #   builder  → install deps, compile server TS, build Vite client
 #   runtime  → node:22-bookworm-slim with Python 3.12 + pip, compiled
-#              output, and hoisted node_modules; runs as a non-root user.
+#              output, and hoisted node_modules. The server runs as root
+#              so the opt-in identity sandbox can drop tool processes to
+#              the restricted pi-tools UID/GID.
 #
 # Why bookworm-slim and not alpine: the Node native-module ecosystem
 # (node-pty, bcrypt, sharp, better-sqlite3, …) ships prebuilt binaries
@@ -87,14 +89,16 @@ FROM node-python-base AS runtime
 # shutdown of pi-forge's onClose hook). Without it, dropped SIGTERMs
 # leave SSE clients hanging on `docker compose down`.
 #
-# PUID/PGID build args let the user match the container's `pi` user to
-# their host UID/GID. Default 1000 is the common Linux interactive UID.
-# Without this, the system-allocated UID won't match the host owner of
-# the bind-mounted /workspace + ~/.pi-forge dirs, and the container
-# can't write to them. Override at build time:
+# PUID/PGID build args let the legacy `pi` user match the host owner of
+# mounted config/data directories. PTOOLS_UID/PTOOLS_GID create the
+# restricted `pi-tools` identity used by AGENT_TOOL_SANDBOX_ENABLED.
+# Override at build time when your host bind mounts require different
+# ownership:
 #   docker compose build --build-arg PUID=$(id -u) --build-arg PGID=$(id -g)
 ARG PUID=1000
 ARG PGID=1000
+ARG PTOOLS_UID=1001
+ARG PTOOLS_GID=1001
 
 # Some upstream base images have shipped a pre-baked `node` user/group
 # at UID/GID 1000 — the same default we want for `pi`. Drop it before
@@ -148,7 +152,9 @@ RUN apt-get update \
  && (userdel node 2>/dev/null || true) \
  && (groupdel node 2>/dev/null || true) \
  && groupadd -g $PGID pi \
- && useradd -m -u $PUID -g $PGID -s /bin/bash pi
+ && useradd -m -u $PUID -g $PGID -s /bin/bash pi \
+ && groupadd -g $PTOOLS_GID pi-tools \
+ && useradd -M -u $PTOOLS_UID -g $PTOOLS_GID -s /usr/sbin/nologin pi-tools
 
 WORKDIR /app
 
@@ -165,12 +171,17 @@ COPY --from=builder --chown=pi:pi /app/packages/client/package.json ./packages/c
 COPY --from=builder --chown=pi:pi /app/packages/client/dist ./packages/client/dist
 
 # Workspace + pi config + pi-forge data dirs are mounted at runtime;
-# create them so non-root `pi` can read them on first start even if the
-# host bind is currently empty.
+# create defaults with the intended split: `pi-tools` can read/write the
+# workspace, while pi config / forge data are readable by the root server
+# but not by the restricted tool identity.
 RUN mkdir -p /workspace /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local \
- && chown -R pi:pi /workspace /home/pi/.pi /home/pi/.pi-forge /home/pi/.local
+ && chown -R pi-tools:pi-tools /workspace \
+ && chown -R root:pi /home/pi/.pi /home/pi/.pi-forge \
+ && chown -R pi:pi /home/pi/.local \
+ && chmod 0775 /workspace \
+ && chmod 0750 /home/pi /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local
 
-USER pi
+USER root
 
 # SHELL=/bin/bash so node-pty spawns bash for the integrated terminal
 # (pty-manager.ts uses `process.env.SHELL || '/bin/sh'`). TERM hint
@@ -187,6 +198,9 @@ USER pi
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \
+    HOME=/home/pi \
+    USER=pi \
+    LOGNAME=pi \
     PATH=/home/pi/.local/bin:/app/node_modules/.bin:$PATH \
     WORKSPACE_PATH=/workspace \
     PI_CONFIG_DIR=/home/pi/.pi/agent \

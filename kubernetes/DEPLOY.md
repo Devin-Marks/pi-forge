@@ -94,10 +94,10 @@ oc apply -f kubernetes/openshift/base.yaml
 # 3. DeploymentConfig
 oc apply -f kubernetes/openshift/deployment.yaml
 
-# 4. Allow the pod to run as UID 1000 (the image's `pi` user).
-#    OpenShift's default SCC assigns a random UID per namespace, which
-#    breaks the chown'd /workspace and /home/pi paths in the image.
-#    The `anyuid` SCC bypasses that for the project's ServiceAccount.
+# 4. Allow the pod to run as UID 0 when using the identity sandbox.
+#    OpenShift restricted-v2 assigns a random non-root UID and cannot
+#    support pi-forge's UID/GID-switching identity sandbox. Bind an SCC
+#    that allows UID 0 and SETUID/SETGID for the ServiceAccount.
 oc adm policy add-scc-to-user anyuid -z pi-forge -n pi-forge
 
 # 5. Verify
@@ -142,6 +142,49 @@ in [`docs/configuration.md`](../docs/configuration.md) and
   preferably, as a mounted Secret file with `LDAP_BIND_PASSWORD_FILE`
   pointing at the mount path. `LDAP_BIND_PASSWORD` itself is a literal
   env value; it does not expand `@/path`. See `docs/configuration.md#ldap-browser-login`.
+- **Agent tool identity sandbox.** `AGENT_TOOL_SANDBOX_ENABLED=false`
+  by default. To enable it on vanilla Kubernetes, the container security
+  context must run the server as root and permit only the identity-switch
+  capabilities:
+
+  ```yaml
+  securityContext:
+    runAsUser: 0
+    runAsGroup: 0
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+      add: ["SETUID", "SETGID"]
+  ```
+
+  The workspace PVC must be writable by `AGENT_TOOL_UID:GID`; Pi config,
+  forge data, and mounted secrets should be root/server-readable but not
+  readable by that restricted UID. The sandbox path-scopes model file
+  tools and `@file` expansion, scrubs env for bash/process/terminal, and
+  runs those shells as the restricted identity. It does not protect
+  secrets placed in `/workspace` or third-party extensions that bypass
+  pi-forge's policy hooks.
+- **OpenShift SCC.** restricted-v2 random UID will not support identity
+  sandbox. Use `anyuid` for a simple deployment, or a custom SCC that
+  allows UID 0 plus `SETUID`/`SETGID`; privileged mode is not required.
+  Keep the SCC RoleBinding with namespace/security bootstrap, not inside
+  the `DeploymentConfig`. Declarative example:
+
+  ```yaml
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: RoleBinding
+  metadata:
+    name: pi-forge-anyuid
+    namespace: pi-forge
+  roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: ClusterRole
+    name: system:openshift:scc:anyuid
+  subjects:
+    - kind: ServiceAccount
+      name: pi-forge
+      namespace: pi-forge
+  ```
 - **Resource defaults** per pod: requests 512 Mi / 250 m CPU; limits
   2 Gi / 1 CPU. Memory is the typical ceiling for long agent
   contexts or compiling inside the integrated terminal.

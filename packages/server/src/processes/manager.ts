@@ -2,6 +2,7 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child
 import { rm } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
+import { sandboxSpawnIdentity } from "../agent-bash-operations.js";
 import { config } from "../config.js";
 import { scrubbedEnv } from "../pty-manager.js";
 import { LogChannel, processLogDir } from "./log-store.js";
@@ -106,6 +107,7 @@ class ProcessManagerRegistry {
       cwd,
       env: scrubbedEnv(),
       stdio: ["pipe", "pipe", "pipe"],
+      ...sandboxSpawnIdentity(),
       // Put each managed command in its own process group. The
       // tracked child is only the `/bin/sh -c` wrapper; npm scripts,
       // concurrently, Vite, test watchers, etc. commonly spawn

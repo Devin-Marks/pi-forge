@@ -22,7 +22,7 @@ runtime (Node + native bindings), and makes deploys reproducible.
 | `python-base` | `python:3.12-slim-bookworm` | Source for the Python 3.12 + pip runtime copied into the shared Node base |
 | `node-python-base` | `node:22-bookworm-slim` | Shared Debian slim base with Node.js 22 plus Python 3.12 + pip |
 | `builder` | `node-python-base` | Installs all deps including devDeps, compiles native bindings (`node-pty`), runs `npm run build` for both packages |
-| `runtime` | `node-python-base` | Production deps + built artifacts only. Adds `git`, `ripgrep`, `bash`, `curl`, `less`, `procps`, and the C++ toolchain needed for native-module rebuilds during in-container development. Runs as non-root `pi`; `SHELL=/bin/bash` so xterm sessions land in bash, not dash |
+| `runtime` | `node-python-base` | Production deps + built artifacts only. Adds `git`, `ripgrep`, `bash`, `curl`, `less`, `procps`, and the C++ toolchain needed for native-module rebuilds during in-container development. Runs the server as root so the opt-in identity sandbox can drop model/user tool processes to `pi-tools`; `SHELL=/bin/bash` so xterm sessions land in bash, not dash |
 
 Final image size varies by architecture and cache state. Debian-based
 (not Alpine) because the Node native-module ecosystem ships glibc
@@ -42,10 +42,20 @@ Installed at runtime:
 
 ### User and permissions
 
-The image creates a `pi` user (uid/gid configurable via `PUID` /
-`PGID` build args; default `1000:1000`). For bind mounts to be
-writable, the container `pi` user must match the host owner of the
-mounted directory. On Linux:
+The image creates two users:
+
+- `pi` (`PUID` / `PGID`, default `1000:1000`) owns the home layout and
+  preserves legacy path/env expectations.
+- `pi-tools` (`AGENT_TOOL_UID` / `AGENT_TOOL_GID` in compose, default
+  `1001:1001`) is the restricted identity used when
+  `AGENT_TOOL_SANDBOX_ENABLED=true`.
+
+The server runtime user is root. This is deliberate: the identity
+sandbox needs the server to call `setuid` / `setgid` for child tools
+while keeping server-owned config, forge data, and mounted secrets
+unreadable by `pi-tools`. For bind mounts to be writable by sandboxed
+commands, `/workspace` must be owned by or group-writable to
+`pi-tools`. On Linux:
 
 ```bash
 PUID=$(id -u) PGID=$(id -g) docker compose -f docker/docker-compose.yml up -d --build
@@ -115,6 +125,8 @@ in `docker/.env`:
 | `PI_CONFIG_DIR` | `/home/pi/.pi/agent` |
 | `FORGE_DATA_DIR` | `/home/pi/.pi-forge` |
 | `PYTHONUSERBASE` | `/home/pi/.local` |
+| `AGENT_TOOL_SANDBOX_ENABLED` | `false` by default; set `true` to run tool children as `pi-tools` |
+| `AGENT_TOOL_UID` / `AGENT_TOOL_GID` | `1001` / `1001` in compose defaults |
 
 Set `UI_PASSWORD` and / or `API_KEY` in `.env` for any non-loopback
 deploy — without them, auth is disabled.
@@ -200,11 +212,19 @@ SSE-buffering and WebSocket-upgrade settings live in
 
 ## Security inside the container
 
-- **Non-root.** Runs as `pi:pi`. `tini` forwards signals so
-  `docker stop` shuts down cleanly.
-- **No extra capabilities.** No privileged mode, host PID, or
-  `--cap-add` needed. If you find yourself adding any, you're working
-  around the threat model — open an issue first.
+- **Root server, restricted tools (opt-in).** The server runs as root;
+  when `AGENT_TOOL_SANDBOX_ENABLED=true`, model/user shell surfaces run
+  as `pi-tools` and file tools / `@file` references are path-scoped.
+  Keep secrets out of `/workspace`; workspace content is intentionally
+  readable by the agent.
+- **Minimal capabilities.** Compose drops all capabilities and adds back
+  only `SETUID` / `SETGID`, which are required for the identity switch.
+  No privileged mode or host PID is needed.
+- **Secret mounts.** Mount Pi config, forge data, LDAP/UI secret files,
+  and cloud credentials so they are readable by the root server but not
+  by `pi-tools` (for example mode `0600` root-owned files or `0700`
+  directories). The sandbox also blocks `/run/secrets` and
+  `/var/run/secrets` from model file tools.
 - **Read-only root filesystem (optional).** Add `read_only: true` to
   compose with `tmpfs` mounts for `/tmp` and `/home/pi/.npm` if you
   want a hardened deploy. Native modules + node_modules live in the
