@@ -453,7 +453,7 @@ function SessionRow(props: SessionRowProps) {
             }
             onSelect(s.sessionId);
           }}
-          onDoubleClick={() => onStartRename(s.sessionId, s.name ?? "")}
+          onDoubleClick={() => onStartRename(s.sessionId, label)}
           className="flex-1 truncate text-left"
           title={`${s.sessionId} — double-click to rename, Cmd/Ctrl+click to select for bulk delete`}
         >
