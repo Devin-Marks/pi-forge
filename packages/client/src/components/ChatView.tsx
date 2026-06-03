@@ -1784,9 +1784,12 @@ function ToolCallEntry({
       </div>
 
       {argsText.length > 0 && (
-        <details className="border-t border-neutral-800/60">
-          <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-neutral-500 hover:text-neutral-300">
-            <span>Input</span>
+        <details className="group/details border-t border-neutral-800/60">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-neutral-500 hover:text-neutral-300">
+            <span className="flex items-center gap-1">
+              <DetailsChevron />
+              Input
+            </span>
             <CopyButton getText={() => argsText} title={`Copy ${name} input`} compact />
           </summary>
           <pre className="overflow-auto px-3 pb-2 font-mono text-[11px] text-neutral-400">
@@ -1796,19 +1799,24 @@ function ToolCallEntry({
       )}
 
       {result !== undefined && (
-        <details className="border-t border-neutral-800/60">
-          <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-neutral-500 hover:text-neutral-300">
-            <span>
-              Output
-              {editStats !== undefined && (
-                <span className="ml-2 font-mono text-[10px]">
-                  <span className="text-emerald-400 light:text-emerald-700">+{editStats.adds}</span>{" "}
-                  <span className="text-red-400 light:text-red-700">-{editStats.dels}</span>
-                </span>
-              )}
-              {editFn !== undefined && (
-                <span className="ml-2 font-mono text-[10px] text-neutral-500">{editFn}</span>
-              )}
+        <details className="group/details border-t border-neutral-800/60">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-neutral-500 hover:text-neutral-300">
+            <span className="flex items-center gap-1">
+              <DetailsChevron />
+              <span>
+                Output
+                {editStats !== undefined && (
+                  <span className="ml-2 font-mono text-[10px]">
+                    <span className="text-emerald-400 light:text-emerald-700">
+                      +{editStats.adds}
+                    </span>{" "}
+                    <span className="text-red-400 light:text-red-700">-{editStats.dels}</span>
+                  </span>
+                )}
+                {editFn !== undefined && (
+                  <span className="ml-2 font-mono text-[10px] text-neutral-500">{editFn}</span>
+                )}
+              </span>
             </span>
             <CopyButton
               getText={() => editDiff ?? (outputText.length > 0 ? outputText : "(empty)")}
@@ -2307,6 +2315,15 @@ function BashExecution({ message }: { message: AgentMessageLike }) {
  * back to a synthetic textarea when the async clipboard API isn't
  * available (older Safari, insecure HTTP origins).
  */
+function DetailsChevron() {
+  return (
+    <span className="inline-flex h-3 w-3 shrink-0 items-center justify-center text-neutral-600">
+      <ChevronRight size={11} className="group-open/details:hidden" />
+      <ChevronDown size={11} className="hidden group-open/details:block" />
+    </span>
+  );
+}
+
 function CopyButton({
   getText,
   title,
