@@ -2357,12 +2357,14 @@ function CopyButton({
         onClick();
       }}
       className={`inline-flex items-center justify-center rounded text-neutral-500 hover:bg-neutral-700/40 hover:text-neutral-300 ${
-        compact ? "h-5 w-5 shrink-0 p-0" : "min-h-11 min-w-11 px-1.5 py-0.5 md:min-h-0 md:min-w-0"
+        compact
+          ? "h-3.5 w-3.5 shrink-0 p-0"
+          : "min-h-11 min-w-11 px-1.5 py-0.5 md:min-h-0 md:min-w-0"
       }`}
       title={title}
       aria-label={title}
     >
-      {copied ? <Check size={14} /> : <Copy size={14} />}
+      {copied ? <Check size={compact ? 11 : 14} /> : <Copy size={compact ? 11 : 14} />}
     </button>
   );
 }
