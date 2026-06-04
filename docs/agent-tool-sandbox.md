@@ -122,6 +122,7 @@ sudo chmod -R u+rwX,go-rwx ~/.pi-forge-docker
 sudo chown root:1001 ~/.pi
 sudo chmod 0750 ~/.pi
 sudo chown -R root:1001 ~/.pi/agent
+sudo chmod 0750 ~/.pi/agent
 sudo find ~/.pi/agent -type d -exec chmod 0750 {} +
 sudo find ~/.pi/agent -type f -exec chmod 0640 {} +
 
@@ -192,6 +193,7 @@ chmod -R u+rwX,go-rwx /home/pi/.pi-forge
 chown root:pi-tools /home/pi/.pi
 chmod 0750 /home/pi/.pi
 chown -R root:pi-tools /home/pi/.pi/agent
+chmod 0750 /home/pi/.pi/agent
 find /home/pi/.pi/agent -type d -exec chmod 0750 {} +
 find /home/pi/.pi/agent -type f -exec chmod 0640 {} +
 
