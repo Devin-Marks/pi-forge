@@ -28,6 +28,11 @@ If both `UI_PASSWORD` and `API_KEY` are unset, auth is disabled entirely.
 Production deploys should set at least one. Setting both is common — browser
 users log in with the password, scripts use the API key.
 
+`AGENT_TOOL_SANDBOX_ENABLED` defaults false. When true, config startup requires
+numeric `AGENT_TOOL_UID` and `AGENT_TOOL_GID`, and LDAP bind-password file
+references are rejected. Keep sandbox env parsing in `config.ts` and the CLI
+surface in `cli.ts` together.
+
 ---
 
 ## Config Files

@@ -115,12 +115,16 @@ export function spawnPty(opts: SpawnOptions): ManagedPty {
   const cols = opts.cols ?? 80;
   const rows = opts.rows ?? 24;
   const env = opts.env ?? process.env;
+  const identity = config.agentToolSandbox.enabled
+    ? { uid: config.agentToolSandbox.uid, gid: config.agentToolSandbox.gid }
+    : {};
   const proc = nodePty.spawn(shell, [], {
     name: "xterm-color",
     cols,
     rows,
     cwd: opts.cwd,
     env: filterEnv(env),
+    ...identity,
   });
   const ptyId = randomUUID();
   const managed: ManagedPty = {

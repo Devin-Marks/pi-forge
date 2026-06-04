@@ -62,6 +62,12 @@ const SOURCES = [
     subtitle: "What's inside the Docker image, how it's structured, and why.",
   },
   {
+    src: "docs/agent-tool-sandbox.md",
+    out: "agent-tool-sandbox.html",
+    title: "Agent Tool Sandbox",
+    subtitle: "Optional UID/GID split, path policy, mount permissions, and verification.",
+  },
+  {
     src: "docs/deployment.md",
     out: "deployment.html",
     title: "Deployment",
@@ -357,6 +363,11 @@ ${HEADER_NAV_LANDING}
         <div class="feature-icon">&#128104;&#8205;&#128104;&#8205;&#128103;</div>
         <h3>Session orchestration</h3>
         <p>Default-available supervisor mode lets one session spawn, observe, and coordinate worker sessions in the same project. Worker events stream into the supervisor's inbox.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128737;&#65039;</div>
+        <h3>Optional tool sandbox</h3>
+        <p>Opt-in hardening mode runs agent/user shell surfaces as a restricted UID/GID, scopes model file tools, and keeps server-side config and forge data out of that identity.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#128268;</div>

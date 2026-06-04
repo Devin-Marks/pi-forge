@@ -40,6 +40,7 @@
         <a href="architecture.html">Architecture</a>
         <a href="configuration.html" class="active">Configuration</a>
         <a href="containers.html">Containers</a>
+        <a href="agent-tool-sandbox.html">Agent Tool Sandbox</a>
         <a href="deployment.html">Deployment</a>
         <a href="mobile.html">Mobile</a>
         <a href="api.html">API Examples</a>
@@ -81,9 +82,11 @@ pi-forge --no-expose-docs --minimal-ui
 pi-forge --api-key @/run/secrets/api-key   # @&lt;path&gt; reads from file
 </code></pre>
 <ul>
-<li><strong>Sensitive flags</strong> (<code>--ui-password</code>, <code>--api-key</code>, <code>--jwt-secret</code>)
-accept <code>@&lt;path&gt;</code> to read from a file (keeps secrets out of shell
-history and <code>ps</code>).</li>
+<li><strong>Sensitive flags</strong> (<code>--ui-password</code>, <code>--api-key</code>, <code>--jwt-secret</code>,
+<code>--ldap-bind-password</code>) accept <code>@&lt;path&gt;</code> to read from a file (keeps
+secrets out of shell history and <code>ps</code>). Environment variables do not
+use <code>@</code> expansion; use the dedicated <code>*_FILE</code> env vars for mounted
+secret files.</li>
 <li><strong>Boolean flags</strong> accept <code>true|false|on|off|1|0|yes|no</code>. Bare
 <code>--flag</code> means <code>true</code>; <code>--no-flag</code> means <code>false</code>.</li>
 </ul>
@@ -129,7 +132,12 @@ in <code>cli.ts</code>). The most-touched ones:</p>
 <tr>
 <td><code>UI_PASSWORD</code></td>
 <td>(unset)</td>
-<td>Enables browser JWT auth. After the user changes it via the UI, a scrypt hash is persisted to <code>${FORGE_DATA_DIR}/password-hash</code> and the env value is ignored.</td>
+<td>Enables browser JWT auth. Literal env value only; it does not expand <code>@/path</code>. After the user changes it via the UI, a scrypt hash is persisted to <code>${FORGE_DATA_DIR}/password-hash</code> and the env value is ignored.</td>
+</tr>
+<tr>
+<td><code>UI_PASSWORD_FILE</code></td>
+<td>(unset)</td>
+<td>File containing the browser login password (for Kubernetes/OpenShift mounted Secrets). Takes precedence over <code>UI_PASSWORD</code>. Equivalent CLI: <code>--ui-password-file</code>; CLI <code>--ui-password @/path</code> is also supported.</td>
 </tr>
 <tr>
 <td><code>API_KEY</code></td>
@@ -139,7 +147,62 @@ in <code>cli.ts</code>). The most-touched ones:</p>
 <tr>
 <td><code>JWT_SECRET</code></td>
 <td>(auto-generated)</td>
-<td>HS256 signing key. Auto-generated and persisted to <code>${FORGE_DATA_DIR}/jwt-secret</code> (mode 0600) when <code>UI_PASSWORD</code> or <code>password-hash</code> is in play. Set explicitly (<code>openssl rand -hex 32</code>) to override; delete the file to rotate.</td>
+<td>HS256 signing key. Auto-generated and persisted to <code>${FORGE_DATA_DIR}/jwt-secret</code> (mode 0600) when <code>UI_PASSWORD</code>, LDAP auth, or <code>password-hash</code> is in play. Set explicitly (<code>openssl rand -hex 32</code>) to override; delete the file to rotate.</td>
+</tr>
+<tr>
+<td><code>LDAP_ENABLED</code></td>
+<td><code>false</code></td>
+<td>Enables LDAP username/password browser login. Requires the LDAP variables below.</td>
+</tr>
+<tr>
+<td><code>LDAP_URL</code></td>
+<td>(unset)</td>
+<td>LDAP server URL, e.g. <code>ldap://ldap.example.com:389</code> or <code>ldaps://ldap.example.com:636</code>.</td>
+</tr>
+<tr>
+<td><code>LDAP_BIND_DN</code></td>
+<td>(unset)</td>
+<td>Service-account bind DN used only to search for the user entry.</td>
+</tr>
+<tr>
+<td><code>LDAP_BIND_PASSWORD</code></td>
+<td>(unset)</td>
+<td>Service-account bind password. Literal env value only; it does not expand <code>@/path</code>. Prefer <code>LDAP_BIND_PASSWORD_FILE</code> or <code>--ldap-bind-password @/path</code> for secret mounts.</td>
+</tr>
+<tr>
+<td><code>LDAP_BIND_PASSWORD_FILE</code></td>
+<td>(unset)</td>
+<td>File containing the service-account password (for Kubernetes/OpenShift mounted Secrets). Takes precedence over <code>LDAP_BIND_PASSWORD</code>.</td>
+</tr>
+<tr>
+<td><code>LDAP_BASE_DN</code></td>
+<td>(unset)</td>
+<td>Base DN for user searches.</td>
+</tr>
+<tr>
+<td><code>LDAP_USER_FILTER</code></td>
+<td>`(</td>
+<td>(uid={{username}})(sAMAccountName={{username}})(mail={{username}}))`</td>
+</tr>
+<tr>
+<td><code>LDAP_REQUIRED_GROUP_DN</code></td>
+<td>(unset)</td>
+<td>Optional required group DN. When set, the user&#39;s <code>memberOf</code> values must include it.</td>
+</tr>
+<tr>
+<td><code>LDAP_GROUP_ATTRIBUTE</code></td>
+<td><code>memberOf</code></td>
+<td>User attribute checked for group DNs. Change only for directories that expose group membership under a different attribute.</td>
+</tr>
+<tr>
+<td><code>LDAP_TIMEOUT_MS</code></td>
+<td><code>5000</code></td>
+<td>LDAP connect/operation timeout in milliseconds.</td>
+</tr>
+<tr>
+<td><code>LDAP_TLS_REJECT_UNAUTHORIZED</code></td>
+<td><code>true</code></td>
+<td>Reject untrusted TLS certificates for <code>ldaps://</code> connections. Set <code>false</code> only for local/self-signed testing.</td>
 </tr>
 <tr>
 <td><code>MINIMAL_UI</code></td>
@@ -166,9 +229,75 @@ in <code>cli.ts</code>). The most-touched ones:</p>
 <td><code>8</code></td>
 <td>Per-supervisor live-worker cap. Bounded to <code>[1, 100]</code>.</td>
 </tr>
+<tr>
+<td><code>AGENT_TOOL_SANDBOX_ENABLED</code></td>
+<td><code>false</code></td>
+<td>Opt-in identity/path sandbox for model/user tool surfaces. When <code>true</code>, <code>AGENT_TOOL_UID</code> and <code>AGENT_TOOL_GID</code> are required.</td>
+</tr>
+<tr>
+<td><code>AGENT_TOOL_UID</code></td>
+<td>(unset)</td>
+<td>Numeric UID used for sandboxed bash/process/terminal/quick-action/exec children. Required only when sandbox is enabled.</td>
+</tr>
+<tr>
+<td><code>AGENT_TOOL_GID</code></td>
+<td>(unset)</td>
+<td>Numeric GID used for sandboxed bash/process/terminal/quick-action/exec children. Required only when sandbox is enabled.</td>
+</tr>
 </tbody></table>
 <p>Production-tuning knobs (rate limits, JWT lifetime, TLS / proxy posture)
 are documented in <a href="./deployment.md"><code>deployment.md</code></a>.</p>
+<h3>Agent tool identity sandbox</h3>
+<p>The identity sandbox is off by default and has a strict mount-permission
+contract. Read <a href="./agent-tool-sandbox.md"><code>agent-tool-sandbox.md</code></a> before
+enabling it. In short: pi-forge runs the server as root, drops
+model/user shell surfaces to <code>AGENT_TOOL_UID:GID</code>, scopes model file
+access, and requires workspace / Pi config / forge data mounts to have
+specific ownership and mode bits.</p>
+<p>When this mode is enabled, LDAP bind password file references are
+rejected (<code>LDAP_BIND_PASSWORD_FILE</code> and CLI/env <code>@file</code> forms). Use a
+literal environment value or an external secret broker instead; child
+tool processes receive the scrubbed env and do not inherit it.</p>
+<h3>LDAP browser login</h3>
+<p>LDAP is opt-in and off by default. When <code>LDAP_ENABLED=true</code>, pi-forge&#39;s
+login form asks for a username and password. Username <code>admin</code> (and
+password-only API calls) always use the local pi-forge admin password
+from <code>UI_PASSWORD</code>, <code>UI_PASSWORD_FILE</code>, or the persisted password hash;
+all other usernames use LDAP. The server binds with the
+configured service account, searches under <code>LDAP_BASE_DN</code> using
+<code>LDAP_USER_FILTER</code>, optionally checks the returned user&#39;s <code>memberOf</code>
+(or <code>LDAP_GROUP_ATTRIBUTE</code>) against <code>LDAP_REQUIRED_GROUP_DN</code>, and then
+binds as the returned user DN with the presented password. A successful
+LDAP bind issues the same pi-forge JWT used by local <code>UI_PASSWORD</code>
+login. API-key auth is unchanged, and protected routes still require a
+valid bearer JWT or API key.</p>
+<p>Minimal example:</p>
+<pre><code class="language-bash">LDAP_ENABLED=true
+LDAP_URL=ldaps://ldap.example.com:636
+LDAP_BIND_DN=&#39;cn=pi-forge,ou=svc,dc=example,dc=com&#39;
+LDAP_BIND_PASSWORD_FILE=/run/secrets/ldap-bind-password
+LDAP_BASE_DN=&#39;ou=people,dc=example,dc=com&#39;
+LDAP_REQUIRED_GROUP_DN=&#39;cn=pi-forge-users,ou=groups,dc=example,dc=com&#39;
+# Local/self-signed test only:
+# LDAP_TLS_REJECT_UNAUTHORIZED=false
+</code></pre>
+<p><code>LDAP_BIND_PASSWORD_FILE</code> is intended for Kubernetes/OpenShift mounted
+Secrets and takes precedence over <code>LDAP_BIND_PASSWORD</code>. <code>LDAP_BIND_PASSWORD</code>
+is always a literal password value; unlike CLI sensitive flags, env vars
+are not <code>@</code>-expanded. The password is read only in <code>config.ts</code>, never
+returned by any API, and redacted from request logs. Do not put
+service-account passwords in container images or command-line history;
+use a mounted secret file or the CLI <code>--ldap-bind-password @/path/to/file</code>
+form instead.</p>
+<p>If both LDAP and local <code>UI_PASSWORD</code> / <code>UI_PASSWORD_FILE</code> / stored-password
+auth are present, username <code>admin</code> and password-only login use the local
+pi-forge password. Other usernames use LDAP. The username <code>admin</code> is
+reserved for local pi-forge admin auth while LDAP is enabled; an LDAP
+account named <code>admin</code> cannot be used unless this policy changes later.
+This preserves existing single-tenant admin access while allowing LDAP
+to be enabled during migration. LDAP login attempts write sanitized
+<code>[ldap]</code> lines to the server logs with the URL, base DN, username, TLS
+validation mode, and failure category; passwords are not logged.</p>
 <h2>Pi SDK config files</h2>
 <p>The pi SDK owns three JSON files under <code>${PI_CONFIG_DIR}</code> (default
 <code>~/.pi/agent</code>). Pi-forge reads/writes them through the
@@ -279,9 +408,7 @@ schemas at session create).</p>
 <pre><code class="language-json">{
   &quot;defaultProvider&quot;: &quot;anthropic&quot;,
   &quot;defaultModel&quot;: &quot;claude-sonnet-4-5-20250929&quot;,
-  &quot;defaultThinkingLevel&quot;: &quot;medium&quot;,
-  &quot;steeringMode&quot;: &quot;all&quot;,
-  &quot;followUpMode&quot;: &quot;all&quot;
+  &quot;defaultThinkingLevel&quot;: &quot;medium&quot;
 }
 </code></pre>
 <table>
@@ -306,16 +433,6 @@ schemas at session create).</p>
 <td><code>defaultThinkingLevel</code></td>
 <td><code>minimal</code> / <code>low</code> / <code>medium</code> / <code>high</code> / <code>xhigh</code></td>
 <td>Reasoning-capable models only</td>
-</tr>
-<tr>
-<td><code>steeringMode</code></td>
-<td><code>all</code> / <code>one-at-a-time</code></td>
-<td>How the SDK delivers queued steering messages — flush-all vs wait-between</td>
-</tr>
-<tr>
-<td><code>followUpMode</code></td>
-<td><code>all</code> / <code>one-at-a-time</code></td>
-<td>Same, for follow-up (post-idle) delivery</td>
 </tr>
 </tbody></table>
 <p>Other SDK keys are accepted by <code>PUT /api/v1/config/settings</code> and persist

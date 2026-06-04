@@ -40,6 +40,7 @@
         <a href="architecture.html">Architecture</a>
         <a href="configuration.html">Configuration</a>
         <a href="containers.html" class="active">Containers</a>
+        <a href="agent-tool-sandbox.html">Agent Tool Sandbox</a>
         <a href="deployment.html">Deployment</a>
         <a href="mobile.html">Mobile</a>
         <a href="api.html">API Examples</a>
@@ -84,35 +85,71 @@ runtime (Node + native bindings), and makes deploys reproducible.</p>
 </tr>
 </thead>
 <tbody><tr>
-<td><code>builder</code></td>
+<td><code>python-base</code></td>
+<td><code>python:3.12-slim-bookworm</code></td>
+<td>Source for the Python 3.12 + pip runtime copied into the shared Node base</td>
+</tr>
+<tr>
+<td><code>node-python-base</code></td>
 <td><code>node:22-bookworm-slim</code></td>
+<td>Shared Debian slim base with Node.js 22 plus Python 3.12 + pip</td>
+</tr>
+<tr>
+<td><code>builder</code></td>
+<td><code>node-python-base</code></td>
 <td>Installs all deps including devDeps, compiles native bindings (<code>node-pty</code>), runs <code>npm run build</code> for both packages</td>
 </tr>
 <tr>
 <td><code>runtime</code></td>
-<td><code>node:22-bookworm-slim</code></td>
-<td>Production deps + built artifacts only. Adds <code>git</code>, <code>ripgrep</code>, <code>bash</code>, <code>curl</code>, <code>less</code>, <code>procps</code>. Runs as non-root <code>pi</code>; <code>SHELL=/bin/bash</code> so xterm sessions land in bash, not dash</td>
+<td><code>node-python-base</code></td>
+<td>Production deps + built artifacts only. Adds <code>git</code>, <code>ripgrep</code>, <code>bash</code>, <code>curl</code>, <code>less</code>, <code>procps</code>, <code>gosu</code>, and the C++ toolchain needed for native-module rebuilds during in-container development. Default mode drops the server to <code>pi</code>; sandbox mode keeps the server as root so it can drop model/user tool processes to <code>pi-tools</code>; <code>SHELL=/bin/bash</code> so xterm sessions land in bash, not dash</td>
 </tr>
 </tbody></table>
-<p>Final image is ~330 MB. Debian-based (not Alpine) because the Node
-native-module ecosystem ships glibc prebuilds; on musl, those packages
-fall back to source builds.</p>
+<p>Final image size varies by architecture and cache state. Debian-based
+(not Alpine) because the Node native-module ecosystem ships glibc
+prebuilds; on musl, those packages fall back to source builds.</p>
 <p>Installed at runtime:</p>
 <ul>
 <li><strong>Node.js 22</strong></li>
+<li><strong>Python 3.12 + pip</strong> — callable as <code>python3</code>, <code>python</code>, or <code>py</code></li>
 <li><strong><code>tini</code></strong> — init for signal forwarding + zombie reaping</li>
 <li><strong><code>git</code></strong> — required by the agent&#39;s <code>bash</code> tool and the GitPanel routes</li>
 <li><strong><code>ripgrep</code></strong> — pi&#39;s <code>grep</code> tool delegates to <code>rg</code> when present;
 silently degrades to a Node walker without it</li>
+<li><strong><code>make</code>, <code>g++</code></strong> — keeps <code>npm install</code> / <code>npm rebuild</code> working
+inside the running container when native modules such as <code>node-pty</code>
+need to compile against the container&#39;s Node ABI</li>
 </ul>
 <h3>User and permissions</h3>
-<p>The image creates a <code>pi</code> user (uid/gid configurable via <code>PUID</code> /
-<code>PGID</code> build args; default <code>1000:1000</code>). For bind mounts to be
-writable, the container <code>pi</code> user must match the host owner of the
-mounted directory. On Linux:</p>
-<pre><code class="language-bash">PUID=$(id -u) PGID=$(id -g) docker compose -f docker/docker-compose.yml up -d --build
-</code></pre>
-<p>On Docker Desktop for macOS, UID translation is automatic.</p>
+<p>The image creates two users:</p>
+<ul>
+<li><code>pi</code> (<code>PUID</code> / <code>PGID</code>, default <code>1000:1000</code>) owns the home layout and
+preserves legacy path/env expectations.</li>
+<li><code>pi-tools</code> (<code>AGENT_TOOL_UID</code> / <code>AGENT_TOOL_GID</code> in compose, default
+<code>1001:1001</code>) is the restricted identity used when
+<code>AGENT_TOOL_SANDBOX_ENABLED=true</code>.</li>
+</ul>
+<p>By default (<code>AGENT_TOOL_SANDBOX_ENABLED=false</code>), the entrypoint drops
+the server to the legacy <code>pi</code> user. In sandbox mode, the server remains
+root. This is deliberate: the identity sandbox needs the server to call
+<code>setuid</code> / <code>setgid</code> for child tools while keeping server-owned config,
+forge data, and mounted secrets unreadable by <code>pi-tools</code>.</p>
+<p>Sandbox mode has a stricter volume permission contract than the default
+container. Read <a href="./agent-tool-sandbox.md"><code>agent-tool-sandbox.md</code></a>
+before enabling it; the short version is:</p>
+<ul>
+<li><code>/workspace</code> must be writable by <code>AGENT_TOOL_UID:GID</code>.</li>
+<li><code>/home/pi/.pi</code> and <code>/home/pi/.pi/agent</code> must be traversable/readable
+by <code>AGENT_TOOL_UID:GID</code> for non-secret skills/resources.</li>
+<li><code>/home/pi/.pi/agent/auth.json</code>, <code>models.json</code>, and <code>settings.json</code>
+must not be readable by <code>AGENT_TOOL_UID:GID</code>.</li>
+<li><code>/home/pi/.pi-forge</code> and mounted secret dirs/files must not be
+readable by <code>AGENT_TOOL_UID:GID</code>.</li>
+</ul>
+<p>On Docker Desktop / OrbStack / macOS, bind-mount ownership can be
+virtualized; verify numeric ownership and mode bits inside the
+container and from an app terminal. Use named volumes for sensitive
+mounts if the host file-sharing layer makes ownership inconsistent.</p>
 <h2>Volumes</h2>
 <p>Three bind-mounted volumes:</p>
 <table>
@@ -142,6 +179,30 @@ mounted directory. On Linux:</p>
 <p>Session JSONLs default to <code>${WORKSPACE_PATH}/.pi/sessions/</code> so they
 live on the workspace bind mount — backing up the workspace backs up
 conversation history. Override with <code>SESSION_DIR</code> to relocate.</p>
+<h3>Persistent Python packages outside this project</h3>
+<p>The image includes Python 3.12 and pip. Python is callable as <code>python3</code>,
+<code>python</code>, or <code>py</code>. The shipped compose file does not persist Python
+package installs by default. If you want package installs
+to survive image rebuilds/container replacement without storing them in
+the pi-forge checkout or workspace, mount an external host directory or
+named volume at <code>/home/pi/.local</code> from your own Docker Compose override
+or deployment wrapper:</p>
+<pre><code class="language-yaml">services:
+  pi-forge:
+    volumes:
+      - ~/.pi-forge-python:/home/pi/.local
+</code></pre>
+<p>Then install with:</p>
+<pre><code class="language-bash">python3 -m pip install --user &lt;package&gt;
+</code></pre>
+<p>The image sets <code>PYTHONUSERBASE=/home/pi/.local</code> and prepends
+<code>/home/pi/.local/bin</code> to <code>PATH</code>, so console scripts installed by pip are
+available automatically. On Linux, pre-create the host directory with the
+same owner as <code>PUID</code> / <code>PGID</code> if Docker would otherwise create it as
+root.</p>
+<p>For per-project isolation, create virtual environments inside
+<code>/workspace/&lt;project&gt;</code> instead; those persist because <code>/workspace</code> is a
+bind mount.</p>
 <h2>Environment variables</h2>
 <p>The full env-var reference lives in
 <a href="./configuration.md#environment-variables"><code>configuration.md</code></a>. The
@@ -173,6 +234,18 @@ in <code>docker/.env</code>:</p>
 <tr>
 <td><code>FORGE_DATA_DIR</code></td>
 <td><code>/home/pi/.pi-forge</code></td>
+</tr>
+<tr>
+<td><code>PYTHONUSERBASE</code></td>
+<td><code>/home/pi/.local</code></td>
+</tr>
+<tr>
+<td><code>AGENT_TOOL_SANDBOX_ENABLED</code></td>
+<td><code>false</code> by default; set <code>true</code> to run tool children as <code>pi-tools</code></td>
+</tr>
+<tr>
+<td><code>AGENT_TOOL_UID</code> / <code>AGENT_TOOL_GID</code></td>
+<td><code>1001</code> / <code>1001</code> in compose defaults</td>
 </tr>
 </tbody></table>
 <p>Set <code>UI_PASSWORD</code> and / or <code>API_KEY</code> in <code>.env</code> for any non-loopback
@@ -241,11 +314,19 @@ SSE-buffering and WebSocket-upgrade settings live in
 <a href="./deployment.md"><code>deployment.md</code></a>.</p>
 <h2>Security inside the container</h2>
 <ul>
-<li><strong>Non-root.</strong> Runs as <code>pi:pi</code>. <code>tini</code> forwards signals so
-<code>docker stop</code> shuts down cleanly.</li>
-<li><strong>No extra capabilities.</strong> No privileged mode, host PID, or
-<code>--cap-add</code> needed. If you find yourself adding any, you&#39;re working
-around the threat model — open an issue first.</li>
+<li><strong>Root server, restricted tools (opt-in).</strong> By default the server runs as <code>pi</code>.
+When <code>AGENT_TOOL_SANDBOX_ENABLED=true</code>, the server runs as root and model/user shell surfaces run
+as <code>pi-tools</code> and file tools / <code>@file</code> references are path-scoped.
+Keep secrets out of <code>/workspace</code>; workspace content is intentionally
+readable by the agent.</li>
+<li><strong>Minimal capabilities.</strong> Compose drops all capabilities and adds back
+only <code>SETUID</code> / <code>SETGID</code>, which are required for the identity switch.
+No privileged mode or host PID is needed.</li>
+<li><strong>Secret mounts.</strong> Mount Pi config, forge data, LDAP/UI secret files,
+and cloud credentials so they are readable by the root server but not
+by <code>pi-tools</code> (for example mode <code>0600</code> root-owned files or <code>0700</code>
+directories). The sandbox also blocks <code>/run/secrets</code> and
+<code>/var/run/secrets</code> from model file tools.</li>
 <li><strong>Read-only root filesystem (optional).</strong> Add <code>read_only: true</code> to
 compose with <code>tmpfs</code> mounts for <code>/tmp</code> and <code>/home/pi/.npm</code> if you
 want a hardened deploy. Native modules + node_modules live in the
@@ -272,9 +353,11 @@ container&#39;s defaults</li>
 </ul>
 <h3>Terminal fails to spawn (<code>posix_spawnp failed</code>)</h3>
 <p>The native <code>node-pty</code> binding doesn&#39;t match the runtime Node version.
-This is a host-only issue (the Docker image rebuilds the binding during
-its build stage). If you somehow hit it inside the container, your
-local image is stale — <code>docker compose up -d --build</code> (note <code>--build</code>).</p>
+Rebuild the image first: <code>docker compose up -d --build</code> (note <code>--build</code>).
+If you&#39;re using the running container as a development shell and running
+<code>npm install</code> against a bind-mounted checkout, the runtime image includes
+Python 3.12, <code>pip</code>, <code>make</code>, and <code>g++</code> so node-gyp can rebuild <code>node-pty</code>
+in place.</p>
 <h3>Health check failing on first start</h3>
 <p>The first request lazy-loads the project registry from disk, which on a
 slow filesystem (NFS, network bind mount) can take a few seconds. The

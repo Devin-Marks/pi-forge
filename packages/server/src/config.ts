@@ -13,7 +13,17 @@ function readInt(key: string, fallback: number): number {
   const v = readEnv(key);
   if (v === undefined) return fallback;
   const n = Number.parseInt(v, 10);
-  if (!Number.isFinite(n) || n < 0) {
+  if (!Number.isFinite(n) || n < 0 || String(n) !== v.trim()) {
+    throw new Error(`config: ${key} must be a non-negative integer (got ${v})`);
+  }
+  return n;
+}
+
+function readOptionalInt(key: string): number | undefined {
+  const v = readEnv(key);
+  if (v === undefined) return undefined;
+  const n = Number.parseInt(v, 10);
+  if (!Number.isFinite(n) || n < 0 || String(n) !== v.trim()) {
     throw new Error(`config: ${key} must be a non-negative integer (got ${v})`);
   }
   return n;
@@ -133,11 +143,28 @@ const UI_PASSWORD = UI_PASSWORD_FILE
 const API_KEY = readEnv("API_KEY");
 const CORS_ORIGIN = readEnv("CORS_ORIGIN");
 const PASSWORD_HASH_FILE = join(FORGE_DATA_DIR, "password-hash");
+const AGENT_TOOL_SANDBOX_ENABLED = readBool("AGENT_TOOL_SANDBOX_ENABLED", false);
+const AGENT_TOOL_UID = readOptionalInt("AGENT_TOOL_UID");
+const AGENT_TOOL_GID = readOptionalInt("AGENT_TOOL_GID");
+if (AGENT_TOOL_SANDBOX_ENABLED && (AGENT_TOOL_UID === undefined || AGENT_TOOL_GID === undefined)) {
+  throw new Error(
+    "config: AGENT_TOOL_SANDBOX_ENABLED=true requires numeric AGENT_TOOL_UID and AGENT_TOOL_GID",
+  );
+}
+const LDAP_FILE_REFERENCE_ERROR =
+  "LDAP bind password file references are not allowed when AGENT_TOOL_SANDBOX_ENABLED=true. Use an environment variable value or external secret broker.";
 const LDAP_ENABLED = readBool("LDAP_ENABLED", false);
 const LDAP_BIND_PASSWORD_FILE = readEnv("LDAP_BIND_PASSWORD_FILE");
+const LDAP_BIND_PASSWORD_ENV = readEnv("LDAP_BIND_PASSWORD");
+if (AGENT_TOOL_SANDBOX_ENABLED && LDAP_BIND_PASSWORD_FILE !== undefined) {
+  throw new Error(`config: ${LDAP_FILE_REFERENCE_ERROR}`);
+}
+if (AGENT_TOOL_SANDBOX_ENABLED && LDAP_BIND_PASSWORD_ENV?.startsWith("@")) {
+  throw new Error(`config: ${LDAP_FILE_REFERENCE_ERROR}`);
+}
 const LDAP_BIND_PASSWORD = LDAP_BIND_PASSWORD_FILE
   ? readSecretFile(LDAP_BIND_PASSWORD_FILE, "LDAP_BIND_PASSWORD_FILE")
-  : readEnv("LDAP_BIND_PASSWORD");
+  : LDAP_BIND_PASSWORD_ENV;
 
 /**
  * Load a JWT signing key from `${FORGE_DATA_DIR}/jwt-secret`, or
@@ -427,6 +454,11 @@ export const config = Object.freeze({
    * the same time they meet its caveats.
    */
   agentSecretHygieneRule: readBool("AGENT_SECRET_HYGIENE_RULE", false),
+  agentToolSandbox: Object.freeze({
+    enabled: AGENT_TOOL_SANDBOX_ENABLED,
+    uid: AGENT_TOOL_UID,
+    gid: AGENT_TOOL_GID,
+  }),
   /**
    * How long a detached PTY (its WebSocket closed but no replacement
    * attached yet) is held alive before being reaped. The 10-minute

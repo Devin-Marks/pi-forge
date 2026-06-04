@@ -40,6 +40,7 @@
         <a href="architecture.html">Architecture</a>
         <a href="configuration.html">Configuration</a>
         <a href="containers.html">Containers</a>
+        <a href="agent-tool-sandbox.html">Agent Tool Sandbox</a>
         <a href="deployment.html">Deployment</a>
         <a href="mobile.html">Mobile</a>
         <a href="api.html">API Examples</a>
@@ -208,7 +209,7 @@ types:</p>
 </tr>
 <tr>
 <td><code>worker.process_alert</code></td>
-<td>A background process the worker spawned exited (success / failure / external kill)</td>
+<td>Not enqueued for worker process alerts; process success/failure/kill notifications stay in the worker session and do not wake the supervisor</td>
 </tr>
 <tr>
 <td><code>worker.deleted</code></td>
@@ -390,8 +391,8 @@ supervisor. v1 disallows this by design — depth is capped at 1.</p>
 agent events&quot; surface. Webhooks fan out OVER HTTPS to external
 systems; orchestration fans IN to a supervisor session.</li>
 <li><a href="./processes.md"><code>processes.md</code></a> — workers can spawn background
-processes the same way standalone sessions can; process alerts
-fed back into the supervisor&#39;s inbox as <code>worker.process_alert</code>.</li>
+processes the same way standalone sessions can; process alerts stay
+local to the worker session and do not wake the supervisor.</li>
 <li><a href="./ask-user-question.md"><code>ask-user-question.md</code></a> — when a worker
 calls this tool, the supervisor sees a <code>worker.ask_user</code> inbox
 item and can answer via <code>orchestrate_send_to_worker</code>.</li>

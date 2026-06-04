@@ -1,4 +1,6 @@
 import { extname, join } from "node:path";
+import { resolveAgentToolPath } from "./agent-tool-policy.js";
+import { config } from "./config.js";
 import { checkFileReference, readFile } from "./file-manager.js";
 
 /**
@@ -144,8 +146,12 @@ export async function expandFileReferences(text: string, workspacePath: string):
   const classifications: Classification[] = await Promise.all(
     matches.map(async (mm): Promise<Classification> => {
       try {
-        const abs = join(workspacePath, mm.path);
-        const check = await checkFileReference(abs, workspacePath);
+        const abs = config.agentToolSandbox.enabled
+          ? resolveAgentToolPath(workspacePath, mm.path)
+          : join(workspacePath, mm.path);
+        const check = config.agentToolSandbox.enabled
+          ? await checkFileReference(abs, abs)
+          : await checkFileReference(abs, workspacePath);
         if (check.kind === "directory") return { kind: "directory" };
         if (check.binary) return { kind: "error", reason: "binary file" };
         if (check.size > INLINE_THRESHOLD_BYTES) return { kind: "deferLarge" };
@@ -155,8 +161,8 @@ export async function expandFileReferences(text: string, workspacePath: string):
         if (e.name === "NotFoundError" || e.code === "ENOENT") {
           return { kind: "error", reason: "file not found" };
         }
-        if (e.name === "PathOutsideRootError") {
-          return { kind: "error", reason: "path is outside the project root" };
+        if (e.name === "PathOutsideRootError" || e.name === "AgentToolPathDeniedError") {
+          return { kind: "error", reason: "path is outside allowed roots" };
         }
         // NotAFileError now only fires for non-regular non-directory
         // entries (sockets, devices, etc.) — directories are handled
@@ -212,7 +218,10 @@ export async function expandFileReferences(text: string, workspacePath: string):
       // c.kind === "inlineCandidate"
       if (!inlineSet.has(i)) return { kind: "defer" };
       try {
-        const result = await readFile(c.abs, workspacePath);
+        const result = await readFile(
+          c.abs,
+          config.agentToolSandbox.enabled ? c.abs : workspacePath,
+        );
         if (result.binary) return { kind: "error", reason: "binary file" };
         const mm = matches[i];
         if (mm === undefined) return { kind: "defer" };

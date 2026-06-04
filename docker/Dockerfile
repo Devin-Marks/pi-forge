@@ -4,7 +4,9 @@
 #
 #   builder  → install deps, compile server TS, build Vite client
 #   runtime  → node:22-bookworm-slim with Python 3.12 + pip, compiled
-#              output, and hoisted node_modules; runs as a non-root user.
+#              output, and hoisted node_modules. The server runs as root
+#              so the opt-in identity sandbox can drop tool processes to
+#              the restricted pi-tools UID/GID.
 #
 # Why bookworm-slim and not alpine: the Node native-module ecosystem
 # (node-pty, bcrypt, sharp, better-sqlite3, …) ships prebuilt binaries
@@ -87,14 +89,16 @@ FROM node-python-base AS runtime
 # shutdown of pi-forge's onClose hook). Without it, dropped SIGTERMs
 # leave SSE clients hanging on `docker compose down`.
 #
-# PUID/PGID build args let the user match the container's `pi` user to
-# their host UID/GID. Default 1000 is the common Linux interactive UID.
-# Without this, the system-allocated UID won't match the host owner of
-# the bind-mounted /workspace + ~/.pi-forge dirs, and the container
-# can't write to them. Override at build time:
+# PUID/PGID build args let the legacy `pi` user match the host owner of
+# mounted config/data directories. PTOOLS_UID/PTOOLS_GID create the
+# restricted `pi-tools` identity used by AGENT_TOOL_SANDBOX_ENABLED.
+# Override at build time when your host bind mounts require different
+# ownership:
 #   docker compose build --build-arg PUID=$(id -u) --build-arg PGID=$(id -g)
 ARG PUID=1000
 ARG PGID=1000
+ARG PTOOLS_UID=1001
+ARG PTOOLS_GID=1001
 
 # Some upstream base images have shipped a pre-baked `node` user/group
 # at UID/GID 1000 — the same default we want for `pi`. Drop it before
@@ -135,7 +139,7 @@ ARG PGID=1000
 #     present when `apt-get install gh` runs.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      tini git ripgrep bash curl ca-certificates less procps make g++ gnupg \
+      tini gosu git ripgrep bash curl ca-certificates less procps make g++ gnupg \
  && install -dm 0755 /etc/apt/keyrings \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -148,7 +152,10 @@ RUN apt-get update \
  && (userdel node 2>/dev/null || true) \
  && (groupdel node 2>/dev/null || true) \
  && groupadd -g $PGID pi \
- && useradd -m -u $PUID -g $PGID -s /bin/bash pi
+ && useradd -m -u $PUID -g $PGID -s /bin/bash pi \
+ && groupadd -g $PTOOLS_GID pi-tools \
+ && useradd -M -u $PTOOLS_UID -g $PTOOLS_GID -s /usr/sbin/nologin pi-tools \
+ && usermod -aG pi-tools pi
 
 WORKDIR /app
 
@@ -164,13 +171,41 @@ COPY --from=builder --chown=pi:pi /app/packages/server/dist ./packages/server/di
 COPY --from=builder --chown=pi:pi /app/packages/client/package.json ./packages/client/package.json
 COPY --from=builder --chown=pi:pi /app/packages/client/dist ./packages/client/dist
 
-# Workspace + pi config + pi-forge data dirs are mounted at runtime;
-# create them so non-root `pi` can read them on first start even if the
-# host bind is currently empty.
+# Workspace + pi config + pi-forge data dirs are mounted at runtime.
+# Image-layer defaults preserve the historical non-sandbox posture:
+# the server runs as `pi`, and pi-owned config/data dirs are writable by it.
+# Sandbox deployments must explicitly permission their mounts; see
+# docs/agent-tool-sandbox.md.
 RUN mkdir -p /workspace /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local \
- && chown -R pi:pi /workspace /home/pi/.pi /home/pi/.pi-forge /home/pi/.local
+ && chown -R pi-tools:pi-tools /workspace \
+ && chown root:root /home/pi \
+ && chown root:pi-tools /home/pi/.pi \
+ && chown -R pi:pi /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local \
+ && chmod 0775 /workspace \
+ && chmod 0755 /home/pi \
+ && chmod 0750 /home/pi/.pi \
+ && chmod 0700 /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local
 
-USER pi
+RUN cat >/usr/local/bin/pi-forge-entrypoint <<'EOF'
+#!/bin/sh
+set -eu
+case "$(printf '%s' "${AGENT_TOOL_SANDBOX_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')" in
+  1|true|yes|on)
+    # Sandbox mode: keep the server as root so it can setuid/setgid
+    # model/user tool children to AGENT_TOOL_UID:GID. Mount ownership is
+    # an operator contract; see docs/agent-tool-sandbox.md.
+    exec "$@"
+    ;;
+  *)
+    # Legacy/default mode: run the server as pi, matching historical
+    # container behavior and pi-owned image defaults.
+    exec gosu pi "$@"
+    ;;
+esac
+EOF
+RUN chmod 0755 /usr/local/bin/pi-forge-entrypoint
+
+USER root
 
 # SHELL=/bin/bash so node-pty spawns bash for the integrated terminal
 # (pty-manager.ts uses `process.env.SHELL || '/bin/sh'`). TERM hint
@@ -187,6 +222,9 @@ USER pi
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \
+    HOME=/home/pi \
+    USER=pi \
+    LOGNAME=pi \
     PATH=/home/pi/.local/bin:/app/node_modules/.bin:$PATH \
     WORKSPACE_PATH=/workspace \
     PI_CONFIG_DIR=/home/pi/.pi/agent \
@@ -197,5 +235,5 @@ ENV NODE_ENV=production \
 
 EXPOSE 3000
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/pi-forge-entrypoint"]
 CMD ["node", "packages/server/dist/index.js"]

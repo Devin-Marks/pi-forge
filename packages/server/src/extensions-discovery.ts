@@ -43,6 +43,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { config } from "./config.js";
 
+function isDisabledInSandboxPackageSource(source: string): boolean {
+  return config.agentToolSandbox.enabled && source.includes("pi-subagents");
+}
+
 export interface ExtensionToolInfo {
   /** Name as the agent sees it (what `pi.registerTool({ name })` set). */
   name: string;
@@ -110,6 +114,7 @@ export async function discoverExtensionResources(cwd: string): Promise<Extension
       if (!r.enabled) continue;
       const src = r.metadata.source;
       if (typeof src !== "string" || src.length === 0) continue;
+      if (isDisabledInSandboxPackageSource(src)) continue;
       extensionPathToPackage.set(r.path, src);
     }
     skillEntries = [];
@@ -124,6 +129,7 @@ export async function discoverExtensionResources(cwd: string): Promise<Extension
       if (r.metadata.origin !== "package") continue;
       const src = r.metadata.source;
       if (typeof src !== "string" || src.length === 0) continue;
+      if (isDisabledInSandboxPackageSource(src)) continue;
       skillEntries.push({ packageSource: src, skillPath: r.path });
     }
   } catch (err) {

@@ -96,10 +96,12 @@ console.log("flag round-trip");
           argv.push(`--${def.name}`, "1234");
           expected.set(def.env, "1234");
           break;
-        case "boolean":
-          argv.push(`--${def.name}`, "true");
-          expected.set(def.env, "true");
+        case "boolean": {
+          const value = def.name === "agent-tool-sandbox-enabled" ? "false" : "true";
+          argv.push(`--${def.name}`, value);
+          expected.set(def.env, value);
           break;
+        }
         case "list":
           argv.push(`--${def.name}`, "a,b,c");
           expected.set(def.env, "a,b,c");
@@ -218,6 +220,36 @@ console.log("\n@file syntax");
       blank.errors.some((e) => e.includes("--api-key")),
       blank.errors.join("; "),
     );
+    const sandboxLdapFile = parseCliArgs([
+      "--agent-tool-sandbox-enabled",
+      "--agent-tool-uid",
+      "1234",
+      "--agent-tool-gid",
+      "1234",
+      "--ldap-bind-password",
+      `@${secretFile}`,
+    ]);
+    assert(
+      "--ldap-bind-password @file is rejected when sandbox enabled",
+      sandboxLdapFile.errors.some((e) => e.includes("LDAP bind password file references")),
+      sandboxLdapFile.errors.join("; "),
+    );
+
+    const sandboxLdapRaw = parseCliArgs([
+      "--agent-tool-sandbox-enabled",
+      "--agent-tool-uid",
+      "1234",
+      "--agent-tool-gid",
+      "1234",
+      "--ldap-bind-password",
+      "raw-secret",
+    ]);
+    assert(
+      "--ldap-bind-password raw value is accepted when sandbox enabled",
+      envFor(sandboxLdapRaw, "LDAP_BIND_PASSWORD") === "raw-secret" &&
+        sandboxLdapRaw.errors.length === 0,
+      sandboxLdapRaw.errors.join("; "),
+    );
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -239,7 +271,15 @@ console.log("\nhelp + version");
 
   const helpText = buildHelpText("9.9.9");
   assert("buildHelpText embeds the version", helpText.startsWith("pi-forge 9.9.9"));
-  const helpGroups = ["Network", "Paths", "Authentication", "Features", "Rate limits", "Terminal"];
+  const helpGroups = [
+    "Network",
+    "Paths",
+    "Authentication",
+    "Features",
+    "Agent tool sandbox",
+    "Rate limits",
+    "Terminal",
+  ];
   assert(
     "buildHelpText lists at least one flag from each group",
     helpGroups.every((g) => helpText.includes(`${g}:`)),

@@ -273,10 +273,13 @@ function executeLogs(sessionId: string, p: ToolParams): ExecuteResult {
   }
   const files = processManager.logFiles(sessionId, p.id);
   if (files === undefined) return err("logs", `Process not found: ${p.id}`);
+  const sandboxNote = config.agentToolSandbox.enabled
+    ? "\n\nSandbox note: process log files live under server-private forge data and may not be readable by model file tools. Use process output for recent stdout/stderr from sandboxed sessions."
+    : "";
   return ok({
     action: "logs",
     success: true,
-    message: `Log files for ${p.id}:\n  stdout: ${files.stdoutFile}\n  stderr: ${files.stderrFile}\n\nUse the read tool to inspect them.`,
+    message: `Log files for ${p.id}:\n  stdout: ${files.stdoutFile}\n  stderr: ${files.stderrFile}\n\nUse the read tool to inspect them.${sandboxNote}`,
     logFiles: files,
   });
 }

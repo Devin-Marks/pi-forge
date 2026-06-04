@@ -65,9 +65,26 @@ in `cli.ts`). The most-touched ones:
 | `ORCHESTRATION_DISABLED` | `false` | Disable the chat-view `Orch` toggle and orchestration REST/tool surface. Orchestration is enabled by default; hard-disabled under `MINIMAL_UI` regardless. See [`orchestration.md`](./orchestration.md). |
 | `ORCHESTRATION_ENABLED` | `true` | Legacy compatibility switch. `false` disables orchestration; `true`/unset keep the default enabled behavior. Prefer `ORCHESTRATION_DISABLED=true` for new deployments. |
 | `ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR` | `8` | Per-supervisor live-worker cap. Bounded to `[1, 100]`. |
+| `AGENT_TOOL_SANDBOX_ENABLED` | `false` | Opt-in identity/path sandbox for model/user tool surfaces. When `true`, `AGENT_TOOL_UID` and `AGENT_TOOL_GID` are required. |
+| `AGENT_TOOL_UID` | (unset) | Numeric UID used for sandboxed bash/process/terminal/quick-action/exec children. Required only when sandbox is enabled. |
+| `AGENT_TOOL_GID` | (unset) | Numeric GID used for sandboxed bash/process/terminal/quick-action/exec children. Required only when sandbox is enabled. |
 
 Production-tuning knobs (rate limits, JWT lifetime, TLS / proxy posture)
 are documented in [`deployment.md`](./deployment.md).
+
+### Agent tool identity sandbox
+
+The identity sandbox is off by default and has a strict mount-permission
+contract. Read [`agent-tool-sandbox.md`](./agent-tool-sandbox.md) before
+enabling it. In short: pi-forge runs the server as root, drops
+model/user shell surfaces to `AGENT_TOOL_UID:GID`, scopes model file
+access, and requires workspace / Pi config / forge data mounts to have
+specific ownership and mode bits.
+
+When this mode is enabled, LDAP bind password file references are
+rejected (`LDAP_BIND_PASSWORD_FILE` and CLI/env `@file` forms). Use a
+literal environment value or an external secret broker instead; child
+tool processes receive the scrubbed env and do not inherit it.
 
 ### LDAP browser login
 

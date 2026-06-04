@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type { FastifyPluginAsync, FastifyReply } from "fastify";
+import { sandboxSpawnIdentity } from "../agent-bash-operations.js";
 import { config } from "../config.js";
 import { getProject } from "../project-manager.js";
 import { scrubbedEnv } from "../pty-manager.js";
@@ -147,6 +148,7 @@ async function runCommand(
       cwd,
       env: scrubbedEnv(),
       stdio: ["ignore", "pipe", "pipe"],
+      ...sandboxSpawnIdentity(),
     });
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];

@@ -13,17 +13,12 @@ spec:
       labels:
         app: pi-forge
     spec:
-      # Pod-level security context — these apply to every container.
-      # `fsGroup` + `fsGroupChangePolicy: OnRootMismatch` lets the kubelet
-      # chown the volume mounts to GID 1000 on first attach, replacing
-      # the previous `chmod -R 777` init container (which was a wildly
-      # permissive mode that defeated the purpose of fsGroup).
+      # Pod-level security context. The container starts as root so the
+      # entrypoint can either drop the server to pi (default) or keep it
+      # root for the opt-in identity sandbox. No privileged mode is required.
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
-        fsGroupChangePolicy: OnRootMismatch
+        runAsUser: 0
+        runAsGroup: 0
         seccompProfile:
           type: RuntimeDefault
       initContainers:
@@ -46,7 +41,7 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-              # CHOWN is required for `chown -R 1000:1000`. Without it
+              # CHOWN is required for volume ownership fixups. Without it
               # the init container fails on the chown step. We don't
               # need to run as root for this — the busybox shell does
               # the chown via its own UID.
@@ -79,8 +74,8 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+              add: ["SETUID", "SETGID"]
             readOnlyRootFilesystem: true
-            runAsNonRoot: true
             seccompProfile:
               type: RuntimeDefault
           ports:
@@ -103,6 +98,12 @@ spec:
               value: "1000"
             - name: PGID
               value: "1000"
+            - name: AGENT_TOOL_SANDBOX_ENABLED
+              value: "false"
+            - name: AGENT_TOOL_UID
+              value: "1001"
+            - name: AGENT_TOOL_GID
+              value: "1001"
             - name: LOG_LEVEL
               value: info
             - name: TRUST_PROXY

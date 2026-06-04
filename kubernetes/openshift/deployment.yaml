@@ -13,13 +13,13 @@ spec:
         app: pi-forge
     spec:
       serviceAccountName: pi-forge
-      # Pod-level security context. OpenShift's `restricted-v2` SCC will
-      # typically inject a UID for you, but specifying these here gives
-      # a stable, audit-friendly baseline that works on clusters with
-      # looser SCC defaults too. Verify your cluster's SCC binding
-      # accepts these (see kubernetes/DEPLOY.md).
+      # Pod-level security context. The container starts as root so the
+      # entrypoint can either drop the server to pi (default) or keep it
+      # root for the opt-in identity sandbox. restricted-v2 random UID
+      # cannot support sandbox mode (see kubernetes/DEPLOY.md).
       securityContext:
-        runAsNonRoot: true
+        runAsUser: 0
+        runAsGroup: 0
         seccompProfile:
           type: RuntimeDefault
       initContainers:
@@ -62,8 +62,8 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+              add: ["SETUID", "SETGID"]
             readOnlyRootFilesystem: true
-            runAsNonRoot: true
           ports:
             - containerPort: 3000
               name: http
@@ -86,6 +86,12 @@ spec:
               value: "1000"
             - name: PGID
               value: "1000"
+            - name: AGENT_TOOL_SANDBOX_ENABLED
+              value: "false"
+            - name: AGENT_TOOL_UID
+              value: "1001"
+            - name: AGENT_TOOL_GID
+              value: "1001"
             - name: LOG_LEVEL
               value: info
             - name: TRUST_PROXY
