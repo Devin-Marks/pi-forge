@@ -142,6 +142,23 @@ interface ToolsModule {
   }[];
 }
 
+interface SessionRegistryModule {
+  createSession: (
+    projectId: string,
+    workspacePath: string,
+  ) => Promise<{
+    sessionId: string;
+    session: { getActiveToolNames: () => string[] };
+  }>;
+  rebuildAgentSessionForTools: (sessionId: string) => Promise<
+    | {
+        session: { getActiveToolNames: () => string[] };
+      }
+    | undefined
+  >;
+  disposeSession: (sessionId: string) => Promise<void>;
+}
+
 let failures = 0;
 function assert(label: string, ok: boolean, detail?: string): void {
   if (ok) console.log(`  PASS  ${label}`);
@@ -317,6 +334,42 @@ async function main(): Promise<void> {
   const eventBridge = (await import(
     resolve(repoRoot, "packages/server/dist/orchestration/event-bridge.js")
   )) as unknown as EventBridgeModule;
+  const sessionRegistry = (await import(
+    resolve(repoRoot, "packages/server/dist/session-registry.js")
+  )) as unknown as SessionRegistryModule;
+
+  // ===== pre-prompt live-session tool rebuild =====
+  console.log("\n[test-orchestration] pre-prompt supervisor tool activation");
+  const prePromptProjectId = `preprompt-${randomUUID()}`;
+  const prePromptSession = await sessionRegistry.createSession(prePromptProjectId, sharedWs);
+  try {
+    assert(
+      "fresh pre-prompt session starts without orchestration tools",
+      !prePromptSession.session.getActiveToolNames().includes("orchestrate_spawn_worker"),
+      prePromptSession.session.getActiveToolNames().join(","),
+    );
+    await store.enableSupervisor(prePromptSession.sessionId);
+    const rebuilt = await sessionRegistry.rebuildAgentSessionForTools(prePromptSession.sessionId);
+    const enabledToolNames = rebuilt?.session.getActiveToolNames() ?? [];
+    assert(
+      "enable before first prompt activates orchestration tools",
+      enabledToolNames.includes("orchestrate_spawn_worker") &&
+        enabledToolNames.includes("orchestrate_list_workers"),
+      enabledToolNames.join(","),
+    );
+    await store.disableSupervisor(prePromptSession.sessionId);
+    const rebuiltDisabled = await sessionRegistry.rebuildAgentSessionForTools(
+      prePromptSession.sessionId,
+    );
+    const disabledToolNames = rebuiltDisabled?.session.getActiveToolNames() ?? [];
+    assert(
+      "disable before first prompt removes orchestration tools",
+      !disabledToolNames.includes("orchestrate_spawn_worker"),
+      disabledToolNames.join(","),
+    );
+  } finally {
+    await sessionRegistry.disposeSession(prePromptSession.sessionId).catch(() => undefined);
+  }
 
   // ===== enable / disable supervisor =====
   await store.enableSupervisor("sup-1");

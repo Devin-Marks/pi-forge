@@ -35,7 +35,7 @@ import { processManager } from "./processes/manager.js";
 import { bridgeAgentSessionEvent, bridgeSessionCreated } from "./webhooks/event-bridge.js";
 import { isOrchestrationEnabled } from "./orchestration/config.js";
 import { isSupervisor, readStore } from "./orchestration/store.js";
-import { createOrchestrationTools } from "./orchestration/tools.js";
+import { createOrchestrationTools, ORCHESTRATION_TOOL_NAMES } from "./orchestration/tools.js";
 import { bridgeWorkerAgentEvent } from "./orchestration/event-bridge.js";
 import { notifySupervisorDisposed, notifySupervisorIdle } from "./orchestration/inbox.js";
 import { archiveSessionFiles } from "./session-archive.js";
@@ -241,16 +241,24 @@ async function buildToolsAllowlist(
 ): Promise<string[]> {
   const overrides = await readToolOverrides();
   // Pi extensions register tools programmatically — those names are
-  // invisible to BUILTIN_TOOL_NAMES and to `customTools` (which only
-  // covers our MCP shim). Without enumerating them here, the
-  // strict-allowlist semantics in the SDK's `_refreshToolRegistry`
-  // would silently drop every extension-contributed tool. See
-  // packages/server/src/extensions-discovery.ts for the discovery
-  // contract.
+  // invisible to BUILTIN_TOOL_NAMES and to `customTools` (which covers
+  // MCP plus forge-native custom tools like ask_user_question, process,
+  // todo, and supervisor-only orchestrate_*). Without enumerating
+  // extensions here, the strict-allowlist semantics in the SDK's
+  // `_refreshToolRegistry` would silently drop every extension-
+  // contributed tool. See packages/server/src/extensions-discovery.ts
+  // for the discovery contract.
   const extensionResources = await discoverExtensionResources(workspacePath);
+  const forgeNativeCustomToolNames = new Set<string>([
+    ...BUILTIN_TOOL_NAMES,
+    ...ORCHESTRATION_TOOL_NAMES,
+  ]);
   const candidates = [
     ...BUILTIN_TOOL_NAMES.map((name) => ({ family: "builtin" as const, name })),
-    ...customTools.map((t) => ({ family: "mcp" as const, name: t.name })),
+    ...customTools.map((t) => ({
+      family: forgeNativeCustomToolNames.has(t.name) ? ("builtin" as const) : ("mcp" as const),
+      name: t.name,
+    })),
     ...extensionResources.tools.map((t) => ({ family: "extension" as const, name: t.name })),
   ];
   return filterEnabledTools(overrides, projectId, candidates);
