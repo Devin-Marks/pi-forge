@@ -95,19 +95,27 @@ secret Pi config files by policy and filesystem mode, while leaving non-secret
 resources loadable.
 
 The Docker image's built-in directory ownership remains optimized for regular
-mode (`pi` owns `/home/pi/.pi` and `/home/pi/.pi-forge`). Enabling sandbox with
-bind mounts or persistent volumes is an explicit operator step: adjust the mount
-permissions to the table above before relying on filesystem isolation. Switching
-an existing deployment between regular and sandbox mode may require changing
-volume ownership/modes.
+mode (`pi` owns `/home/pi/.pi/agent` and `/home/pi/.pi-forge`). Enabling sandbox
+with bind mounts or persistent volumes is an explicit operator step: adjust the
+mount permissions to the table above before relying on filesystem isolation.
+Switching an existing deployment between regular and sandbox mode may require
+changing volume ownership/modes.
 
-## Native Linux host example
+## Docker Compose: native Linux bind mounts
 
-On native Linux bind mounts, host numeric ownership is normally what the
-container sees. With default Docker sandbox IDs (`1001:1001`), run this on the
-**host** before starting the container. This works best on native Linux; for
-Docker Desktop / OrbStack / macOS, prefer the inside-container commands in the
-next section.
+Use this section for regular Docker Engine on Linux. You can keep the default
+bind mounts from `docker/docker-compose.yml`:
+
+```yaml
+volumes:
+  - ${WORKSPACE_HOST_PATH:-../workspace}:/workspace
+  - ${PI_CONFIG_HOST_PATH:-~/.pi/agent}:/home/pi/.pi/agent
+  - ${FORGE_DATA_HOST_PATH:-~/.pi-forge-docker}:/home/pi/.pi-forge
+```
+
+Native Linux bind mounts normally preserve host numeric ownership in the
+container. With default sandbox IDs (`1001:1001`), run these commands on the
+**host** before starting the container:
 
 ```bash
 # Workspace: writable by pi-tools.
@@ -121,9 +129,9 @@ sudo chown -R root:root ~/.pi-forge-docker
 sudo chmod -R u+rwX,go-rwx ~/.pi-forge-docker
 
 # Pi config: pi-tools can traverse/read non-secret resources.
-# If you bind-mount only ~/.pi/agent (the compose default), the image-owned
-# /home/pi/.pi parent is already traversable by pi-tools. If you bind-mount
-# the whole ~/.pi directory instead, set the parent permissions too:
+# The image-owned /home/pi/.pi parent is already traversable by pi-tools when
+# only ~/.pi/agent is mounted. If you mount the whole ~/.pi directory, set the
+# parent permissions too.
 sudo chown root:1001 ~/.pi
 sudo chmod 0750 ~/.pi
 sudo chown -R root:1001 ~/.pi/agent
@@ -136,7 +144,7 @@ sudo chown root:root ~/.pi/agent/auth.json ~/.pi/agent/models.json ~/.pi/agent/s
 sudo chmod 0600 ~/.pi/agent/auth.json ~/.pi/agent/models.json ~/.pi/agent/settings.json 2>/dev/null || true
 ```
 
-Then in `docker/.env`:
+Set sandbox env in `docker/.env`:
 
 ```txt
 AGENT_TOOL_SANDBOX_ENABLED=true
@@ -144,7 +152,19 @@ AGENT_TOOL_UID=1001
 AGENT_TOOL_GID=1001
 ```
 
-Rebuild/recreate:
+Compose capabilities for native Linux should be:
+
+```yaml
+cap_drop:
+  - ALL
+cap_add:
+  - SETUID
+  - SETGID
+security_opt:
+  - no-new-privileges:true
+```
+
+Then rebuild/recreate:
 
 ```bash
 cd docker
@@ -152,16 +172,80 @@ docker compose down
 docker compose up -d --build
 ```
 
-## Docker one-shot volume init container
+## Docker Compose: OrbStack / Docker Desktop / macOS
 
-If pi-forge cannot start because a named volume has regular-mode ownership
-(for example `/home/pi/.pi-forge` is `1000:1000 0700` while sandbox mode keeps
-the server as root with limited capabilities), run a one-shot helper container
-before starting pi-forge.
+Use this section for OrbStack or Docker Desktop on macOS. Host file sharing can
+translate ownership differently depending on the container and the accessing
+UID, so host-side `chown` may not produce stable results inside pi-forge.
 
-This example assumes the compose file uses named volumes called
-`docker_pi-config` and `docker_forge-data` and the default sandbox UID/GID
-`1001:1001`:
+Recommended differences from native Linux:
+
+1. Keep `/workspace` as a host bind mount if you want to edit code from macOS.
+2. Use Docker named volumes for `/home/pi/.pi/agent` and `/home/pi/.pi-forge`.
+3. Initialize those named volumes with a one-shot helper container.
+4. Add `DAC_OVERRIDE` only for local OrbStack/Docker Desktop testing if the root
+   server cannot write the id-mapped `.pi-forge` volume.
+
+### Compose volume changes
+
+Change the service volumes from host binds for Pi config / forge data to named
+volumes:
+
+```yaml
+services:
+  pi-forge:
+    volumes:
+      - ${WORKSPACE_HOST_PATH:-../workspace}:/workspace
+      - pi-config:/home/pi/.pi/agent
+      - forge-data:/home/pi/.pi-forge
+
+volumes:
+  pi-config:
+  forge-data:
+```
+
+If you want stable names for helper commands:
+
+```yaml
+volumes:
+  pi-config:
+    name: docker_pi-config
+  forge-data:
+    name: docker_forge-data
+```
+
+### Compose capability changes
+
+Start with the native capability set:
+
+```yaml
+cap_drop:
+  - ALL
+cap_add:
+  - SETUID
+  - SETGID
+security_opt:
+  - no-new-privileges:true
+```
+
+If OrbStack/Docker Desktop shows `.pi-forge` as `1000:1000 0700` inside the
+pi-forge container even after the helper volume init chowns it to `root:root`,
+add `DAC_OVERRIDE` for local testing:
+
+```yaml
+cap_add:
+  - SETUID
+  - SETGID
+  - DAC_OVERRIDE # local OrbStack/Docker Desktop workaround only
+```
+
+Keep production/native-Linux deployments to `SETUID` and `SETGID` when mounts
+can be permissioned normally.
+
+### One-shot volume init commands
+
+This example assumes the named volumes are `docker_pi-config` and
+`docker_forge-data`, and the sandbox UID/GID is `1001:1001`:
 
 ```bash
 cd docker
@@ -173,7 +257,7 @@ docker run --rm \
   -v docker_pi-config:/home/pi/.pi/agent \
   debian:bookworm-slim sh -lc 'cp -a /src/. /home/pi/.pi/agent/'
 
-# Permission the volumes for sandbox mode.
+# Permission the named volumes for sandbox mode.
 docker run --rm \
   -v docker_pi-config:/home/pi/.pi/agent \
   -v docker_forge-data:/home/pi/.pi-forge \
@@ -204,113 +288,54 @@ chmod 0600 \
 
 stat -c "%u:%g %a %n" /home/pi/.pi/agent /home/pi/.pi-forge
 '
+```
 
+Set sandbox env in `docker/.env`:
+
+```txt
+AGENT_TOOL_SANDBOX_ENABLED=true
+AGENT_TOOL_UID=1001
+AGENT_TOOL_GID=1001
+```
+
+Start pi-forge:
+
+```bash
 docker compose up -d --build
 ```
 
-If you use different volume names, inspect them first:
+Verify the actual mounts and ownership inside pi-forge:
 
 ```bash
-docker compose config --volumes
-docker volume ls | grep -E 'pi-config|forge-data'
-```
-
-## Docker Desktop / OrbStack / macOS note
-
-On macOS file-sharing layers, bind-mount ownership can be virtualized. A host
-path owned by your macOS user may appear as `pi`, `pi-tools`, or another mapped
-identity inside the container. In some cases, ownership may appear differently
-from a root shell and from the restricted app terminal.
-
-Always verify inside the running container:
-
-```bash
-docker compose exec pi-forge sh -lc '
+docker compose run --rm pi-forge sh -lc '
 id
-id pi-tools
 stat -c "%u:%g %a %n" /workspace /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge
+touch /home/pi/.pi-forge/probe && rm /home/pi/.pi-forge/probe
 '
 ```
 
-Then verify from the app terminal:
+Then verify from the app terminal (which runs as `pi-tools`):
 
 ```bash
 id
 stat -c "%u:%g %a %n" /workspace /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge
 cat /home/pi/.pi-forge/jwt-secret
+cat /home/pi/.pi/agent/auth.json
 ```
 
-If the restricted terminal can read `.pi-forge`, the host bind mount cannot
-reliably test this isolation. Use Docker named volumes for sensitive mounts
-while testing on macOS/OrbStack.
+Expected: `id` shows `pi-tools`; workspace writes work; `.pi/agent` traversal
+works; `.pi-forge` and protected config files are permission denied.
 
-### Required when host ownership is translated: run inside the container
+## Kubernetes
 
-If host-side ownership changes are ignored or translated (common with Docker
-Desktop / OrbStack / macOS), apply the sandbox permissions from a root shell
-**inside the running container** instead. These commands affect the container's
-view of the mounts, which is the view that matters for `pi-tools`:
+Use this section for vanilla Kubernetes. You do **not** need Docker named
+volumes. Use PVCs and an initContainer to set the ownership/modes before the
+pi-forge app container starts.
 
-```bash
-docker compose exec pi-forge sh -lc '
-# Workspace: writable by pi-tools.
-chown -R pi-tools:pi-tools /workspace
-chmod -R u+rwX,g+rwX,o-rwx /workspace
+### App container security context
 
-# Forge data: server-only.
-chown -R root:root /home/pi/.pi-forge
-chmod -R u+rwX,go-rwx /home/pi/.pi-forge
-
-# Pi config: pi-tools can traverse/read non-secret resources.
-chown root:pi-tools /home/pi/.pi
-chmod 0750 /home/pi/.pi
-chown -R root:pi-tools /home/pi/.pi/agent
-chmod 0750 /home/pi/.pi/agent
-find /home/pi/.pi/agent -type d -exec chmod 0750 {} +
-find /home/pi/.pi/agent -type f -exec chmod 0640 {} +
-
-# Pi config secrets: server-only.
-chown root:root /home/pi/.pi/agent/auth.json /home/pi/.pi/agent/models.json /home/pi/.pi/agent/settings.json 2>/dev/null || true
-chmod 0600 /home/pi/.pi/agent/auth.json /home/pi/.pi/agent/models.json /home/pi/.pi/agent/settings.json 2>/dev/null || true
-
-stat -c "%U:%G %u:%g %a %n" /workspace /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge
-'
-```
-
-## Docker Compose requirements
-
-The server must be able to switch child identity. Compose therefore needs:
-
-```yaml
-cap_drop:
-  - ALL
-cap_add:
-  - SETUID
-  - SETGID
-security_opt:
-  - no-new-privileges:true
-```
-
-No privileged mode or host PID is required.
-
-On OrbStack / Docker Desktop, id-mapped volumes may appear as `1000:1000 0700`
-inside the pi-forge image even after a helper container chowns them to
-`root:root`. If the root server cannot write `/home/pi/.pi-forge` in sandbox
-mode, add `DAC_OVERRIDE` for local testing:
-
-```yaml
-cap_add:
-  - SETUID
-  - SETGID
-  - DAC_OVERRIDE # local OrbStack/Docker Desktop workaround only
-```
-
-Keep production/native-Linux deployments to `SETUID` and `SETGID` when the
-mounts can be permissioned normally.
-
-## Kubernetes / OpenShift requirements
-
-Vanilla Kubernetes container security context example:
+The app container must start as UID 0 so the server can drop tool children to
+`AGENT_TOOL_UID:GID`:
 
 ```yaml
 securityContext:
@@ -320,11 +345,26 @@ securityContext:
   capabilities:
     drop: ["ALL"]
     add: ["SETUID", "SETGID"]
+  seccompProfile:
+    type: RuntimeDefault
 ```
 
-A Kubernetes initContainer should set the PVC permissions before the pi-forge
-container starts. This example assumes default IDs (`pi=1000`, `pi-tools=1001`)
-and the shipped volume names/mount paths:
+### Required env
+
+```yaml
+env:
+  - name: AGENT_TOOL_SANDBOX_ENABLED
+    value: "true"
+  - name: AGENT_TOOL_UID
+    value: "1001"
+  - name: AGENT_TOOL_GID
+    value: "1001"
+```
+
+### Init container
+
+This example assumes default IDs (`pi=1000`, `pi-tools=1001`) and the shipped
+volume names/mount paths:
 
 ```yaml
 initContainers:
@@ -389,6 +429,8 @@ Do not use `fsGroup` to make the sensitive volumes broadly group-readable; the
 sandbox relies on `.pi-forge` and protected Pi config files staying unreadable
 by `AGENT_TOOL_UID:GID`.
 
+## OpenShift
+
 OpenShift `restricted-v2` random UID does not support this mode. Use `anyuid`
 for a simple deployment, or a custom SCC that allows:
 
@@ -399,6 +441,28 @@ for a simple deployment, or a custom SCC that allows:
 
 Keep SCC RoleBindings in namespace/security bootstrap, not in the
 DeploymentConfig.
+
+Example RoleBinding for `anyuid`:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pi-forge-anyuid
+  namespace: pi-forge
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
+subjects:
+  - kind: ServiceAccount
+    name: pi-forge
+    namespace: pi-forge
+```
+
+Use the Kubernetes initContainer permission commands above, plus the OpenShift
+SCC binding. If you build a custom SCC, it needs UID 0 plus `SETUID`/`SETGID`;
+it does not need privileged mode.
 
 ## LDAP bind password files
 
