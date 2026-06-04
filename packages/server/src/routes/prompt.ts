@@ -409,7 +409,10 @@ export const promptRoutes: FastifyPluginAsync = async (fastify) => {
           202: {
             type: "object",
             required: ["accepted"],
-            properties: { accepted: { type: "boolean", const: true } },
+            properties: {
+              accepted: { type: "boolean", const: true },
+              sessionName: { type: "string" },
+            },
           },
           400: errorSchema,
           404: errorSchema,
@@ -498,7 +501,7 @@ export const promptRoutes: FastifyPluginAsync = async (fastify) => {
       // extra LLM call), best-effort, and uses the user's typed text
       // rather than expanded @file blocks / attachment bodies so large
       // context blobs do not dominate the tab title.
-      maybeNameSessionFromFirstPrompt(live, titleSourceText);
+      const generatedSessionName = maybeNameSessionFromFirstPrompt(live, titleSourceText);
 
       // No app-level composed-prompt cap: per-file size limits
       // already prevent runaway memory pressure during multipart
@@ -596,7 +599,13 @@ export const promptRoutes: FastifyPluginAsync = async (fastify) => {
         );
         synthesizeFailureEvent(err);
       }
-      return reply.code(202).send({ accepted: true });
+      return reply
+        .code(202)
+        .send(
+          generatedSessionName !== undefined
+            ? { accepted: true, sessionName: generatedSessionName }
+            : { accepted: true },
+        );
     },
   );
 };

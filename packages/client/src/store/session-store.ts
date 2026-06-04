@@ -673,7 +673,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     try {
       const opts: Parameters<typeof api.prompt>[2] = {};
       if (attachments !== undefined && attachments.length > 0) opts.attachments = attachments;
-      await api.prompt(sessionId, text, opts);
+      const res = await api.prompt(sessionId, text, opts);
+      if (res.sessionName !== undefined) {
+        set((s) => renameSessionInLists(s, sessionId, res.sessionName));
+        postCrossTab({ type: "session_renamed", sessionId, name: res.sessionName });
+      }
     } catch (err) {
       // Roll back the optimistic append on failure. Revoke any blob
       // URLs the optimistic message owns BEFORE we drop the
@@ -777,7 +781,10 @@ function applyEvent(
     // back online with fresh server state. Active-tool also resets:
     // tool execution events fire fresh after a reconnect; an old badge
     // would otherwise stick around indefinitely.
+    const hasSnapshotName = Object.prototype.hasOwnProperty.call(event, "name");
+    const snapshotName = typeof event.name === "string" ? event.name : undefined;
     set((s) => ({
+      ...(hasSnapshotName ? renameSessionInLists(s, sessionId, snapshotName) : {}),
       messagesBySession: {
         ...s.messagesBySession,
         [sessionId]: event.messages ?? [],

@@ -115,6 +115,11 @@ const SESSION_LIST_CHANGED_PADDING_LINE = `: session-list-changed ${"_".repeat(
   SESSION_LIST_CHANGED_PADDING_BYTES - 24,
 )}\n\n`;
 
+const SESSION_RENAMED_PADDING_BYTES = 2048;
+const SESSION_RENAMED_PADDING_LINE = `: session-renamed ${"_".repeat(
+  SESSION_RENAMED_PADDING_BYTES - 20,
+)}\n\n`;
+
 /**
  * One-shot snapshot event sent immediately on SSE connect so the browser can
  * hydrate full session state without a separate HTTP round-trip.
@@ -125,6 +130,7 @@ export interface SnapshotEvent {
   projectId: string;
   messages: AgentMessage[];
   isStreaming: boolean;
+  name?: string;
 }
 
 /**
@@ -174,6 +180,9 @@ const ALLOWED_EVENT_TYPES = new Set<string>([
   // out-of-band relative to the user's current sidebar list: pi-subagents'
   // `subagent` and orchestration's `orchestrate_spawn_worker`.
   "session_list_changed",
+  // Forge-native per-session rename event. Used for deterministic first-
+  // prompt names and manual/cross-tab-compatible sidebar updates.
+  "session_renamed",
 ]);
 
 export function isAllowedEvent(event: { type: string }): boolean {
@@ -357,13 +366,15 @@ export function serializeSSE(event: { type: string; [k: string]: unknown }): str
  * (and tests) can assert the same shape the bridge sends on connect.
  */
 export function buildSnapshot(live: LiveSession): SnapshotEvent {
-  return {
+  const snapshot: SnapshotEvent = {
     type: "snapshot",
     sessionId: live.sessionId,
     projectId: live.projectId,
     messages: live.session.messages,
     isStreaming: live.session.isStreaming,
   };
+  if (live.session.sessionName !== undefined) snapshot.name = live.session.sessionName;
+  return snapshot;
 }
 
 /**
@@ -483,6 +494,9 @@ export function createSSEClient(reply: FastifyReply, live: LiveSession): SSEClie
       }
       if (event.type === "session_list_changed") {
         writeRaw(SESSION_LIST_CHANGED_PADDING_LINE);
+      }
+      if (event.type === "session_renamed") {
+        writeRaw(SESSION_RENAMED_PADDING_LINE);
       }
     };
 

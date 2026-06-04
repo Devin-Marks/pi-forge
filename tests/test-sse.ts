@@ -44,6 +44,7 @@ function assert(label: string, ok: boolean, detail?: string): void {
 interface TestSession {
   setSessionName: (n: string) => void;
   sessionId: string;
+  sessionName?: string;
   prompt: (text: string) => Promise<void>;
   subscribe: (l: (e: unknown) => void) => () => void;
   sessionManager: { appendMessage: (msg: unknown) => string };
@@ -69,6 +70,7 @@ interface TestBridge {
     projectId: string;
     messages: unknown[];
     isStreaming: boolean;
+    name?: string;
   };
 }
 
@@ -110,6 +112,10 @@ async function main(): Promise<void> {
     bridge.isAllowedEvent({ type: "session_list_changed" }),
   );
   assert(
+    "isAllowedEvent('session_renamed') === true",
+    bridge.isAllowedEvent({ type: "session_renamed" }),
+  );
+  assert(
     "isAllowedEvent('session_info_changed') === false (filtered)",
     !bridge.isAllowedEvent({ type: "session_info_changed" }),
   );
@@ -141,6 +147,7 @@ async function main(): Promise<void> {
     assert("snapshot.projectId matches", snap.projectId === projectId);
     assert("snapshot.messages is an array", Array.isArray(snap.messages));
     assert("snapshot.isStreaming === false on idle session", snap.isStreaming === false);
+    assert("snapshot carries current session name", snap.name === live.session.sessionName);
 
     // 4. End-to-end SSE: open the stream and parse the first frame.
     const ctrl = new AbortController();
@@ -268,7 +275,33 @@ async function main(): Promise<void> {
       `type=${listChanged.type}`,
     );
 
-    // 9. Unknown sessionId → 404.
+    // 9. Session rename events must also pass the bridge filter so
+    // generated first-prompt titles repaint the visible sidebar/tab
+    // immediately instead of waiting for a manual list refresh.
+    remainingClient?.send({
+      type: "session_renamed",
+      sessionId: live.sessionId,
+      projectId,
+      name: "Auto Title",
+    });
+    const renamed: { type: string; name?: unknown } = await Promise.race([
+      (async (): Promise<{ type: string; name?: unknown }> => {
+        while (true) {
+          const evt = await readUntilEvent();
+          if (evt.type === "session_renamed") return evt;
+        }
+      })(),
+      new Promise<{ type: string; name?: unknown }>((resolve) =>
+        setTimeout(() => resolve({ type: "__timeout__" }), 1000),
+      ),
+    ]);
+    assert(
+      "session_renamed is delivered over SSE",
+      renamed.type === "session_renamed" && renamed.name === "Auto Title",
+      `type=${renamed.type}`,
+    );
+
+    // 10. Unknown sessionId → 404.
     const res404 = await fetch(
       `${listenAddr}/api/v1/sessions/00000000-0000-0000-0000-000000000000/stream`,
       { headers: { Accept: "text/event-stream" } },
@@ -285,7 +318,7 @@ async function main(): Promise<void> {
       // expected
     }
 
-    // 10. Optional: live prompt with PI_TEST_LIVE_PROMPT=1.
+    // 11. Optional: live prompt with PI_TEST_LIVE_PROMPT=1.
     if (process.env.PI_TEST_LIVE_PROMPT === "1") {
       console.log("\n[test-sse] PI_TEST_LIVE_PROMPT=1 — running live prompt");
       const promptSession = await registry.createSession(projectId, workspacePath);
