@@ -152,6 +152,69 @@ docker compose down
 docker compose up -d --build
 ```
 
+## Docker one-shot volume init container
+
+If pi-forge cannot start because a named volume has regular-mode ownership
+(for example `/home/pi/.pi-forge` is `1000:1000 0700` while sandbox mode keeps
+the server as root with limited capabilities), run a one-shot helper container
+before starting pi-forge.
+
+This example assumes the compose file uses named volumes called
+`docker_pi-config` and `docker_forge-data` and the default sandbox UID/GID
+`1001:1001`:
+
+```bash
+cd docker
+docker compose down
+
+# Optional: seed the named pi config volume from the host before locking it down.
+docker run --rm \
+  -v "$HOME/.pi/agent":/src:ro \
+  -v docker_pi-config:/home/pi/.pi/agent \
+  debian:bookworm-slim sh -lc 'cp -a /src/. /home/pi/.pi/agent/'
+
+# Permission the volumes for sandbox mode.
+docker run --rm \
+  -v docker_pi-config:/home/pi/.pi/agent \
+  -v docker_forge-data:/home/pi/.pi-forge \
+  debian:bookworm-slim sh -lc '
+set -eux
+
+# Forge data: server-only.
+chown -R root:root /home/pi/.pi-forge
+chmod 0700 /home/pi/.pi-forge
+find /home/pi/.pi-forge -type d -exec chmod 0700 {} +
+find /home/pi/.pi-forge -type f -exec chmod 0600 {} +
+
+# Pi config: pi-tools can traverse/read non-secret resources.
+chown -R root:1001 /home/pi/.pi/agent
+chmod 0750 /home/pi/.pi/agent
+find /home/pi/.pi/agent -type d -exec chmod 0750 {} +
+find /home/pi/.pi/agent -type f -exec chmod 0640 {} +
+
+# Pi config secrets: server-only.
+chown root:root \
+  /home/pi/.pi/agent/auth.json \
+  /home/pi/.pi/agent/models.json \
+  /home/pi/.pi/agent/settings.json 2>/dev/null || true
+chmod 0600 \
+  /home/pi/.pi/agent/auth.json \
+  /home/pi/.pi/agent/models.json \
+  /home/pi/.pi/agent/settings.json 2>/dev/null || true
+
+stat -c "%u:%g %a %n" /home/pi/.pi/agent /home/pi/.pi-forge
+'
+
+docker compose up -d --build
+```
+
+If you use different volume names, inspect them first:
+
+```bash
+docker compose config --volumes
+docker volume ls | grep -E 'pi-config|forge-data'
+```
+
 ## Docker Desktop / OrbStack / macOS note
 
 On macOS file-sharing layers, bind-mount ownership can be virtualized. A host
@@ -230,9 +293,24 @@ security_opt:
 
 No privileged mode or host PID is required.
 
+On OrbStack / Docker Desktop, id-mapped volumes may appear as `1000:1000 0700`
+inside the pi-forge image even after a helper container chowns them to
+`root:root`. If the root server cannot write `/home/pi/.pi-forge` in sandbox
+mode, add `DAC_OVERRIDE` for local testing:
+
+```yaml
+cap_add:
+  - SETUID
+  - SETGID
+  - DAC_OVERRIDE # local OrbStack/Docker Desktop workaround only
+```
+
+Keep production/native-Linux deployments to `SETUID` and `SETGID` when the
+mounts can be permissioned normally.
+
 ## Kubernetes / OpenShift requirements
 
-Vanilla Kubernetes example:
+Vanilla Kubernetes container security context example:
 
 ```yaml
 securityContext:
@@ -243,6 +321,73 @@ securityContext:
     drop: ["ALL"]
     add: ["SETUID", "SETGID"]
 ```
+
+A Kubernetes initContainer should set the PVC permissions before the pi-forge
+container starts. This example assumes default IDs (`pi=1000`, `pi-tools=1001`)
+and the shipped volume names/mount paths:
+
+```yaml
+initContainers:
+  - name: sandbox-volume-permissions
+    image: busybox:1.36
+    command:
+      - sh
+      - -lc
+      - |
+        set -eux
+
+        # Workspace: writable by pi-tools.
+        mkdir -p /workspace
+        chown -R 1001:1001 /workspace
+        chmod -R u+rwX,g+rwX,o-rwx /workspace
+
+        # Forge data: server-only.
+        mkdir -p /home/pi/.pi-forge
+        chown -R 0:0 /home/pi/.pi-forge
+        chmod 0700 /home/pi/.pi-forge
+        find /home/pi/.pi-forge -type d -exec chmod 0700 {} +
+        find /home/pi/.pi-forge -type f -exec chmod 0600 {} +
+
+        # Pi config: pi-tools can traverse/read non-secret resources.
+        mkdir -p /home/pi/.pi/agent
+        chown 0:1001 /home/pi/.pi
+        chmod 0750 /home/pi/.pi
+        chown -R 0:1001 /home/pi/.pi/agent
+        chmod 0750 /home/pi/.pi/agent
+        find /home/pi/.pi/agent -type d -exec chmod 0750 {} +
+        find /home/pi/.pi/agent -type f -exec chmod 0640 {} +
+
+        # Pi config secrets: server-only.
+        chown 0:0 \
+          /home/pi/.pi/agent/auth.json \
+          /home/pi/.pi/agent/models.json \
+          /home/pi/.pi/agent/settings.json 2>/dev/null || true
+        chmod 0600 \
+          /home/pi/.pi/agent/auth.json \
+          /home/pi/.pi/agent/models.json \
+          /home/pi/.pi/agent/settings.json 2>/dev/null || true
+    securityContext:
+      runAsUser: 0
+      runAsGroup: 0
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+        add: ["CHOWN", "FOWNER"]
+      readOnlyRootFilesystem: true
+      seccompProfile:
+        type: RuntimeDefault
+    volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+      - name: pi-config
+        mountPath: /home/pi/.pi/agent
+      - name: pi-forge-data
+        mountPath: /home/pi/.pi-forge
+```
+
+Do not use `fsGroup` to make the sensitive volumes broadly group-readable; the
+sandbox relies on `.pi-forge` and protected Pi config files staying unreadable
+by `AGENT_TOOL_UID:GID`.
 
 OpenShift `restricted-v2` random UID does not support this mode. Use `anyuid`
 for a simple deployment, or a custom SCC that allows:
