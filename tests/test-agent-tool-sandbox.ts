@@ -25,19 +25,24 @@ function assert(label: string, ok: boolean, detail?: string): void {
 
 const tmp = mkdtempSync(resolve(tmpdir(), "pi-agent-tool-sandbox-"));
 const workspace = resolve(tmp, "workspace");
+const project = resolve(workspace, "project-a");
+const shared = resolve(workspace, "shared");
 const piConfig = resolve(tmp, "pi-config");
 const forgeData = resolve(tmp, "forge-data");
 const outside = resolve(tmp, "outside");
 mkdirSync(workspace, { recursive: true });
+mkdirSync(project, { recursive: true });
+mkdirSync(shared, { recursive: true });
 mkdirSync(piConfig, { recursive: true });
 mkdirSync(forgeData, { recursive: true });
 mkdirSync(outside, { recursive: true });
-writeFileSync(resolve(workspace, "hello.txt"), "hello workspace\n");
+writeFileSync(resolve(project, "hello.txt"), "hello workspace\n");
+writeFileSync(resolve(shared, "shared.txt"), "hello shared workspace\n");
 writeFileSync(resolve(outside, "secret.txt"), "outside secret\n");
 writeFileSync(resolve(piConfig, "profile.json"), "profile ok\n");
 writeFileSync(resolve(piConfig, "auth.json"), "secret auth\n");
 writeFileSync(resolve(forgeData, "jwt-secret"), "secret jwt\n");
-symlinkSync(resolve(outside, "secret.txt"), resolve(workspace, "escape-link"));
+symlinkSync(resolve(outside, "secret.txt"), resolve(project, "escape-link"));
 
 process.env.NODE_ENV = "test";
 process.env.HOME = tmp;
@@ -120,7 +125,7 @@ try {
 
   function allowed(label: string, requested: string): void {
     try {
-      resolveAgentToolPath(workspace, requested);
+      resolveAgentToolPath(project, requested);
       assert(label, true);
     } catch (err) {
       assert(label, false, (err as Error).message);
@@ -128,7 +133,7 @@ try {
   }
   function denied(label: string, requested: string): void {
     try {
-      resolveAgentToolPath(workspace, requested);
+      resolveAgentToolPath(project, requested);
       assert(label, false, "allowed unexpectedly");
     } catch (err) {
       assert(
@@ -140,20 +145,21 @@ try {
   }
 
   console.log("\npath policy");
-  allowed("relative workspace allowed", "hello.txt");
-  allowed("absolute workspace allowed", resolve(workspace, "hello.txt"));
+  allowed("relative project path allowed", "hello.txt");
+  allowed("absolute project path allowed", resolve(project, "hello.txt"));
+  allowed("absolute sibling under WORKSPACE_PATH allowed", resolve(shared, "shared.txt"));
   allowed("allowed pi config non-secret file allowed", resolve(piConfig, "profile.json"));
   denied("auth.json rejected", resolve(piConfig, "auth.json"));
   denied("models.json rejected", resolve(piConfig, "models.json"));
   denied("settings.json rejected", resolve(piConfig, "settings.json"));
   denied("outside absolute rejected", resolve(outside, "secret.txt"));
-  denied("../ escape rejected", "../outside/secret.txt");
+  denied("../ escape rejected", "../../outside/secret.txt");
   denied("symlink escape rejected", "escape-link");
   denied("/proc/self/environ rejected", "/proc/self/environ");
   denied("FORGE_DATA_DIR rejected", resolve(forgeData, "jwt-secret"));
 
   console.log("\ntool overrides");
-  const tools = new Map(createSandboxedToolDefinitions(workspace).map((tool) => [tool.name, tool]));
+  const tools = new Map(createSandboxedToolDefinitions(project).map((tool) => [tool.name, tool]));
   const read = tools.get("read")!;
   const write = tools.get("write")!;
   const ls = tools.get("ls")!;
@@ -208,24 +214,21 @@ try {
   );
 
   console.log("\n@file expansion");
-  const expandedWorkspace = await expandFileReferences("see @hello.txt", workspace);
+  const expandedWorkspace = await expandFileReferences("see @hello.txt", project);
   assert("workspace expands", expandedWorkspace.includes("hello workspace"));
   const expandedPi = await expandFileReferences(
     `see @${resolve(piConfig, "profile.json")}`,
-    workspace,
+    project,
   );
   assert("allowed pi config non-secret expands", expandedPi.includes("profile ok"));
-  const deniedAuth = await expandFileReferences(
-    `see @${resolve(piConfig, "auth.json")}`,
-    workspace,
-  );
+  const deniedAuth = await expandFileReferences(`see @${resolve(piConfig, "auth.json")}`, project);
   assert("protected pi config rejected", deniedAuth.includes("not included"));
   const deniedOutside = await expandFileReferences(
     `see @${resolve(outside, "secret.txt")}`,
-    workspace,
+    project,
   );
   assert("outside rejected", deniedOutside.includes("not included"));
-  const deniedSymlink = await expandFileReferences("see @escape-link", workspace);
+  const deniedSymlink = await expandFileReferences("see @escape-link", project);
   assert("symlink escape rejected", deniedSymlink.includes("not included"));
 } finally {
   rmSync(tmp, { recursive: true, force: true });

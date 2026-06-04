@@ -46,7 +46,9 @@ These are facts about the pi SDK that are easy to get wrong:
   pi-forge custom tool definitions that override the SDK built-in
   read/grep/find/ls/edit/write/bash tools. Keep all create/resume/fork/tool-refresh
   `createAgentSession()` paths using the same sandbox override helper so live and
-  cold sessions have identical tool behavior.
+  cold sessions have identical tool behavior. Sandbox mode also filters
+  `pi-subagents` packages/extensions out of session settings/resource discovery;
+  do not re-enable that extension in sandbox mode without a separate security review.
 
 ---
 

@@ -41,6 +41,7 @@ When enabled:
 The sandbox is intended to protect server-side secrets from model/user tool
 surfaces:
 
+- model file tools can read the configured workspace root (`WORKSPACE_PATH`), not only the active project subfolder
 - model file tools cannot read outside allowed roots
 - model file tools cannot read protected Pi config files:
   - `${PI_CONFIG_DIR}/auth.json`
@@ -65,7 +66,8 @@ This mode does **not** protect:
 - anything readable by `AGENT_TOOL_UID:GID` at the filesystem layer
 
 The model and user shell surfaces are intentionally allowed to read and write
-the workspace.
+the entire configured workspace root (`WORKSPACE_PATH`, `/workspace` in the
+Docker image), including sibling project folders.
 
 ## Required mount permissions
 
@@ -463,6 +465,17 @@ subjects:
 Use the Kubernetes initContainer permission commands above, plus the OpenShift
 SCC binding. If you build a custom SCC, it needs UID 0 plus `SETUID`/`SETGID`;
 it does not need privileged mode.
+
+## pi-subagents package disabled in sandbox mode
+
+The `pi-subagents` package/extension is disabled while
+`AGENT_TOOL_SANDBOX_ENABLED=true`. The package shells out to the `pi` CLI and
+manages child sessions outside pi-forge's normal in-process tool override path,
+which makes its security boundary harder to reason about in this mode.
+
+Built-in pi-forge orchestration tools remain separate from `pi-subagents`; if
+you use them with sandbox mode, validate their worker behavior under your
+mount/UID policy.
 
 ## LDAP bind password files
 

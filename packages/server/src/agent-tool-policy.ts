@@ -61,7 +61,7 @@ export function resolveAgentToolPath(workspacePath: string, requestedPath: strin
   if (requestedPath.trim() === "") {
     throw new AgentToolPathDeniedError("empty path is not allowed");
   }
-  const workspaceReal = realpathExistingOrParent(resolve(workspacePath));
+  const workspaceReal = realpathExistingOrParent(resolve(config.workspacePath));
   const piConfigReal = realpathExistingOrParent(resolve(config.piConfigDir));
   const forgeDataReal = realpathExistingOrParent(resolve(config.forgeDataDir));
   const baseResolved = isAbsolute(requestedPath)

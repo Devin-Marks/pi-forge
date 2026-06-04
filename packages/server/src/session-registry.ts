@@ -6,6 +6,7 @@ import {
   createAgentSession,
   SessionManager,
   SettingsManager,
+  type PackageSource,
   type SessionInfo,
 } from "@earendil-works/pi-coding-agent";
 import { buildForgeResourceLoader } from "./agent-resource-loader.js";
@@ -1930,6 +1931,26 @@ export async function disposeAllSessions(): Promise<void> {
  * patterns to the user skills dir and project patterns to the project
  * skills dir; injecting into one would only filter half the discovery.
  */
+function isPiSubagentsPackageSource(source: string): boolean {
+  return source.includes("pi-subagents");
+}
+
+function packageSourceValue(pkg: PackageSource): string {
+  return typeof pkg === "string" ? pkg : pkg.source;
+}
+
+function filterSandboxDisabledPackages(packages: PackageSource[] | undefined): PackageSource[] {
+  const current = packages ?? [];
+  if (!config.agentToolSandbox.enabled) return current;
+  return current.filter((pkg) => !isPiSubagentsPackageSource(packageSourceValue(pkg)));
+}
+
+function filterSandboxDisabledExtensions(extensions: string[] | undefined): string[] {
+  const current = extensions ?? [];
+  if (!config.agentToolSandbox.enabled) return current;
+  return current.filter((ext) => !isPiSubagentsPackageSource(ext));
+}
+
 async function buildSessionSettingsManager(
   workspacePath: string,
   projectId: string,
@@ -1939,7 +1960,9 @@ async function buildSessionSettingsManager(
     effectiveSkillsForProject(projectId),
     effectivePromptsForProject(projectId),
   ]);
-  if (skillPatterns.length === 0 && promptPatterns.length === 0) return sm;
+  const shouldPatch =
+    skillPatterns.length > 0 || promptPatterns.length > 0 || config.agentToolSandbox.enabled;
+  if (!shouldPatch) return sm;
   const origGlobal = sm.getGlobalSettings.bind(sm);
   const origProject = sm.getProjectSettings.bind(sm);
   const mergeSkills = (existing: string[] | undefined): string[] =>
@@ -1950,12 +1973,17 @@ async function buildSessionSettingsManager(
     promptPatterns.length === 0
       ? (existing ?? [])
       : Array.from(new Set([...(existing ?? []), ...promptPatterns]));
+  const applySandboxPackageFilters = <T extends ReturnType<typeof origGlobal>>(s: T): T => ({
+    ...s,
+    packages: filterSandboxDisabledPackages(s.packages),
+    extensions: filterSandboxDisabledExtensions(s.extensions),
+  });
   sm.getGlobalSettings = (): ReturnType<typeof origGlobal> => {
-    const s = origGlobal();
+    const s = applySandboxPackageFilters(origGlobal());
     return { ...s, skills: mergeSkills(s.skills), prompts: mergePrompts(s.prompts) };
   };
   sm.getProjectSettings = (): ReturnType<typeof origProject> => {
-    const s = origProject();
+    const s = applySandboxPackageFilters(origProject());
     return { ...s, skills: mergeSkills(s.skills), prompts: mergePrompts(s.prompts) };
   };
   return sm;
