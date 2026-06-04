@@ -24,7 +24,10 @@ function guard(workspacePath: string, absolutePath: string): string {
   return resolveAgentToolPath(workspacePath, absolutePath);
 }
 
-export function createSandboxedToolDefinitions(workspacePath: string): ToolDefinition[] {
+export function createSandboxedToolDefinitions(
+  workspacePath: string,
+  toolEnv: Record<string, string> = {},
+): ToolDefinition[] {
   const readOps: ReadOperations = {
     readFile: async (absolutePath) => readFile(guard(workspacePath, absolutePath)),
     access: async (absolutePath) => access(guard(workspacePath, absolutePath)),
@@ -107,7 +110,7 @@ export function createSandboxedToolDefinitions(workspacePath: string): ToolDefin
     createEditToolDefinition(workspacePath, { operations: editOps }),
     createWriteToolDefinition(workspacePath, { operations: writeOps }),
     createBashToolDefinition(workspacePath, {
-      operations: createForgeBashOperations(workspacePath),
+      operations: createForgeBashOperations(workspacePath, toolEnv),
     }),
   ] as unknown as ToolDefinition[];
 }

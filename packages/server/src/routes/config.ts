@@ -19,6 +19,7 @@ import {
   writeModelsJson,
   type ModelsJson,
 } from "../config-manager.js";
+import { config } from "../config.js";
 import { buildExportTar, importConfigFromBuffer, MAX_IMPORT_BYTES } from "../config-export.js";
 import {
   buildSkillsExportTar,
@@ -44,6 +45,11 @@ import {
   type ToolOverrideState,
 } from "../tool-overrides.js";
 import { getProject } from "../project-manager.js";
+import {
+  readSandboxSettings,
+  validateSandboxToolEnv,
+  writeSandboxSettings,
+} from "../sandbox-settings.js";
 import { errorSchema } from "./_schemas.js";
 
 const modelsJsonSchema = {
@@ -71,6 +77,27 @@ const settingsSchema = {
     defaultThinkingLevel: { type: ["string", "null"] },
     skills: { type: ["array", "null"], items: { type: "string" } },
     enableSkillCommands: { type: ["boolean", "null"] },
+  },
+} as const;
+
+const sandboxSettingsSchema = {
+  type: "object",
+  required: ["enabled", "toolEnv"],
+  additionalProperties: false,
+  properties: {
+    enabled: { type: "boolean" },
+    uid: { type: "integer" },
+    gid: { type: "integer" },
+    toolEnv: { type: "object", additionalProperties: { type: "string" } },
+  },
+} as const;
+
+const sandboxSettingsBodySchema = {
+  type: "object",
+  required: ["toolEnv"],
+  additionalProperties: false,
+  properties: {
+    toolEnv: { type: "object", additionalProperties: { type: "string" } },
   },
 } as const;
 
@@ -321,6 +348,67 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
     async (req, reply) => {
       try {
         return await updateSettings(req.body);
+      } catch (err) {
+        return internalError(reply, err);
+      }
+    },
+  );
+
+  // ---------------------- sandbox settings ----------------------
+  fastify.get(
+    "/config/sandbox",
+    {
+      schema: {
+        description:
+          "Read sandbox mode status and the persisted environment variables injected into agent tool calls.",
+        tags: ["config"],
+        response: { 200: sandboxSettingsSchema, 500: errorSchema },
+      },
+    },
+    async (_req, reply) => {
+      try {
+        const settings = await readSandboxSettings();
+        return {
+          enabled: config.agentToolSandbox.enabled,
+          uid: config.agentToolSandbox.uid,
+          gid: config.agentToolSandbox.gid,
+          toolEnv: settings.toolEnv,
+        };
+      } catch (err) {
+        return internalError(reply, err);
+      }
+    },
+  );
+
+  fastify.put<{ Body: { toolEnv: Record<string, string> } }>(
+    "/config/sandbox",
+    {
+      schema: {
+        description:
+          "Replace the persisted environment variables injected into future agent tool calls. Sandbox enablement and UID/GID remain deploy-time configuration.",
+        tags: ["config"],
+        body: sandboxSettingsBodySchema,
+        response: { 200: sandboxSettingsSchema, 400: errorSchema, 500: errorSchema },
+      },
+    },
+    async (req, reply) => {
+      let toolEnv: Record<string, string>;
+      try {
+        toolEnv = validateSandboxToolEnv(req.body.toolEnv);
+      } catch (err) {
+        return reply.code(400).send({
+          error: "invalid_sandbox_settings",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+      try {
+        const settings = await writeSandboxSettings({ toolEnv });
+        return {
+          enabled: config.agentToolSandbox.enabled,
+          uid: config.agentToolSandbox.uid,
+          gid: config.agentToolSandbox.gid,
+          toolEnv: settings.toolEnv,
+        };
       } catch (err) {
         return internalError(reply, err);
       }

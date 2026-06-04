@@ -10,6 +10,7 @@ import {
   type ProvidersListing,
   type PromptSummary,
   type SkillDiagnostic,
+  type SandboxSettingsResponse,
   type SkillSummary,
   type ToolListing,
 } from "../lib/api-client";
@@ -28,6 +29,7 @@ type Tab =
   | "agent"
   | "mcp"
   | "tools"
+  | "sandbox"
   | "skills"
   | "prompts"
   | "systemPrompt"
@@ -88,6 +90,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
             "prompts",
             "systemPrompt",
             "tools",
+            "sandbox",
             "quickActions",
             "appearance",
             "backup",
@@ -98,6 +101,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
             "agent",
             "mcp",
             "tools",
+            "sandbox",
             "skills",
             "prompts",
             "systemPrompt",
@@ -170,21 +174,23 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
                         ? "MCP"
                         : t === "tools"
                           ? "Tools"
-                          : t === "skills"
-                            ? "Skills"
-                            : t === "prompts"
-                              ? "Prompts"
-                              : t === "systemPrompt"
-                                ? "System Prompt"
-                                : t === "quickActions"
-                                  ? "Quick Actions"
-                                  : t === "webhooks"
-                                    ? "Webhooks"
-                                    : t === "appearance"
-                                      ? "Appearance"
-                                      : t === "backup"
-                                        ? "Backup"
-                                        : "General"}
+                          : t === "sandbox"
+                            ? "Sandbox"
+                            : t === "skills"
+                              ? "Skills"
+                              : t === "prompts"
+                                ? "Prompts"
+                                : t === "systemPrompt"
+                                  ? "System Prompt"
+                                  : t === "quickActions"
+                                    ? "Quick Actions"
+                                    : t === "webhooks"
+                                      ? "Webhooks"
+                                      : t === "appearance"
+                                        ? "Appearance"
+                                        : t === "backup"
+                                          ? "Backup"
+                                          : "General"}
                 </button>
               ))}
             </div>
@@ -233,6 +239,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           {tab === "agent" && <AgentTab onError={setError} />}
           {tab === "mcp" && <McpTab onError={setError} />}
           {tab === "tools" && <ToolsTab onError={setError} />}
+          {tab === "sandbox" && <SandboxTab onError={setError} />}
           {tab === "skills" && <SkillsTab onError={setError} />}
           {tab === "prompts" && <PromptsTab onError={setError} />}
           {tab === "systemPrompt" && <SystemPromptTab onError={setError} />}
@@ -1453,6 +1460,147 @@ function AddOverrideDropdown({
         Cancel
       </button>
     </div>
+  );
+}
+
+// ---------------- Sandbox tab ----------------
+
+function envToText(toolEnv: Record<string, string>): string {
+  return Object.entries(toolEnv)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
+}
+
+function parseEnvText(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [idx, rawLine] of text.split(/\r?\n/).entries()) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) throw new Error(`Line ${idx + 1}: expected NAME=value`);
+    const name = line.slice(0, eq).trim();
+    const value = line.slice(eq + 1);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      throw new Error(`Line ${idx + 1}: invalid environment variable name`);
+    }
+    out[name] = value;
+  }
+  return out;
+}
+
+function SandboxTab({ onError }: { onError: (msg: string | undefined) => void }) {
+  const [settings, setSettings] = useState<SandboxSettingsResponse | undefined>(undefined);
+  const [envText, setEnvText] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api
+      .getSandboxSettings()
+      .then((res) => {
+        if (cancelled) return;
+        setSettings(res);
+        setEnvText(envToText(res.toolEnv));
+        onError(undefined);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) onError(errorCode(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onError]);
+
+  async function submit(e: FormEvent): Promise<void> {
+    e.preventDefault();
+    setSaved(false);
+    let parsed: Record<string, string>;
+    try {
+      parsed = parseEnvText(envText);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await api.updateSandboxSettings(parsed);
+      setSettings(res);
+      setEnvText(envToText(res.toolEnv));
+      onError(undefined);
+      setSaved(true);
+    } catch (err) {
+      onError(errorCode(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-4">
+      <div>
+        <h2 className="text-sm font-semibold text-neutral-100">Sandbox mode</h2>
+        <p className="mt-1 text-xs text-neutral-400">
+          Configure environment variables injected into future agent tool calls. Sandbox enablement
+          and UID/GID are deploy-time settings; changes here take effect for new or refreshed
+          sessions.
+        </p>
+      </div>
+
+      <div className="rounded border border-neutral-800 bg-neutral-950 p-3 text-xs text-neutral-300">
+        {loading ? (
+          <span className="text-neutral-500">Loading sandbox settings…</span>
+        ) : settings?.enabled ? (
+          <span>
+            Enabled{settings.uid !== undefined ? ` · uid ${settings.uid}` : ""}
+            {settings.gid !== undefined ? ` · gid ${settings.gid}` : ""}
+          </span>
+        ) : (
+          <span className="text-amber-300">
+            Sandbox tool overrides are disabled. Saved variables are persisted, but only injected
+            into forge-managed tool shells; full filesystem sandboxing requires
+            AGENT_TOOL_SANDBOX_ENABLED=true.
+          </span>
+        )}
+      </div>
+
+      <label className="block">
+        <span className="text-xs font-medium text-neutral-300">Tool environment</span>
+        <textarea
+          value={envText}
+          onChange={(e) => {
+            setEnvText(e.target.value);
+            setSaved(false);
+          }}
+          rows={12}
+          spellCheck={false}
+          placeholder={"HTTP_PROXY=http://proxy.internal:8080\nNO_COLOR=1"}
+          className="mt-2 w-full rounded border border-neutral-800 bg-neutral-950 px-3 py-2 font-mono text-xs text-neutral-100 outline-none focus:border-neutral-600"
+        />
+      </label>
+      <p className="text-xs text-neutral-500">
+        Use one <code>NAME=value</code> entry per line. Blank lines and <code># comments</code> are
+        ignored. Values are stored in pi-forge data, so avoid secrets unless that storage is
+        protected.
+      </p>
+
+      <div className="flex items-center gap-3">
+        <button
+          type="submit"
+          disabled={loading || saving}
+          className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+        >
+          {saving ? "Saving…" : "Save sandbox env"}
+        </button>
+        {saved && <span className="text-xs text-green-400">Saved</span>}
+      </div>
+    </form>
   );
 }
 
