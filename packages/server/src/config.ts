@@ -476,6 +476,13 @@ export const config = Object.freeze({
    * close becomes a hard kill); use that deliberately or not at all.
    */
   terminalIdleReapMs: readInt("PTY_IDLE_REAP_MS", 10 * 60 * 1000),
+  /**
+   * Cadence for WebSocket ping frames on the integrated terminal.
+   * These pings keep otherwise-idle terminals alive through common
+   * reverse-proxy idle read timeouts without sending visible bytes
+   * into xterm.js. Keep comfortably below nginx's 60 s default.
+   */
+  terminalWsKeepaliveMs: readInt("TERMINAL_WS_KEEPALIVE_MS", 30 * 1000),
 } as const);
 
 export function authEnabled(): boolean {

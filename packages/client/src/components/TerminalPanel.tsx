@@ -35,6 +35,21 @@ interface Live {
 const live = new Map<string, Live>();
 
 /**
+ * xterm.js captures keyboard input through an off-screen textarea.
+ * Mobile browsers can still apply autocomplete/autocorrect to that
+ * textarea unless we explicitly opt out, which corrupts terminal
+ * input (for example, command names rewritten or capitalized).
+ */
+function disableBrowserTextAssist(host: HTMLElement): void {
+  const input = host.querySelector("textarea");
+  if (input === null) return;
+  input.setAttribute("autocomplete", "off");
+  input.setAttribute("autocorrect", "off");
+  input.setAttribute("autocapitalize", "none");
+  input.setAttribute("spellcheck", "false");
+}
+
+/**
  * Mirrors the SSE backoff in `streamSSE`: 1→2→4→8→16→30s then steady
  * at 30. The cap matches the SSE client so behavior is consistent
  * across the two transport channels.
@@ -214,6 +229,7 @@ function TerminalHost({
         } else {
           existing.term.open(host);
         }
+        disableBrowserTextAssist(host);
         // visibility:hidden (not display:none) is used for tab
         // switching, so `host` has real layout dimensions on every
         // mount — fit always returns correct cols/rows.
@@ -295,6 +311,7 @@ function TerminalHost({
     term.loadAddon(fit);
     term.loadAddon(links);
     term.open(host);
+    disableBrowserTextAssist(host);
     // Hosts use `visibility: hidden` (not `display: none`) for tab
     // switching — see render block — so every host has real layout
     // dimensions even when not the active tab. fit() therefore

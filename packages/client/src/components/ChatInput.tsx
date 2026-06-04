@@ -2021,6 +2021,10 @@ export function ChatInput({ sessionId }: Props) {
               ref={textareaRef}
               value={text}
               onChange={(e) => handleTextChange(e.target.value)}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="none"
+              spellCheck={false}
               onKeyDown={onKeyDown}
               onBlur={() => {
                 // Close on blur — but only on the next tick so a
@@ -2296,6 +2300,10 @@ function ModelPicker({
               setQuery(e.target.value);
               setActiveIdx(0);
             }}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
             onKeyDown={onKeyDown}
             placeholder="Search provider or model…"
             className="w-full border-b border-neutral-800 bg-transparent px-3 py-2 text-xs text-neutral-100 outline-none"

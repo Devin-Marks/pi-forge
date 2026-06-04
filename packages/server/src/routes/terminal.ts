@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import type { WebSocket } from "ws";
 import { extractBearer, verifyApiKey, verifyToken } from "../auth.js";
-import { authEnabled } from "../config.js";
+import { authEnabled, config } from "../config.js";
 import { getProject } from "../project-manager.js";
 import { attachSink, findPtyByTabId, killPty, spawnPty } from "../pty-manager.js";
 
@@ -323,19 +323,24 @@ export const terminalRoutes: FastifyPluginAsync = async (fastify) => {
       // wasn't generating output would fall over with no diagnostic,
       // forcing the client into its reconnect loop. SSE has its own
       // heartbeat (see sse-bridge.ts:HEARTBEAT_CADENCE_MS); the
-      // terminal WS had nothing equivalent until now. 30s comfortably
-      // under the common proxy default; RFC-standard ping/pong is
-      // not exposed to xterm, so the user sees nothing.
-      const keepAliveTimer = setInterval(() => {
-        if (socket.readyState === socket.OPEN) {
-          try {
-            socket.ping();
-          } catch {
-            // Socket about to close — ignore, the close handler
-            // clears the timer below.
-          }
-        }
-      }, 30_000);
+      // terminal WS had nothing equivalent until now. The default
+      // 30s cadence is comfortably under the common proxy default;
+      // RFC-standard ping/pong is not exposed to xterm, so the user
+      // sees nothing.
+      const keepAliveTimer =
+        config.terminalWsKeepaliveMs > 0
+          ? setInterval(() => {
+              if (socket.readyState === socket.OPEN) {
+                try {
+                  socket.ping();
+                } catch {
+                  // Socket about to close — ignore, the close handler
+                  // clears the timer below.
+                }
+              }
+            }, config.terminalWsKeepaliveMs)
+          : undefined;
+      keepAliveTimer?.unref();
 
       // The shell really exiting (user typed `exit`, kill -9, etc.)
       // is a terminal-state event distinct from a transient WS
@@ -352,7 +357,7 @@ export const terminalRoutes: FastifyPluginAsync = async (fastify) => {
       const cleanup = (reason: string, killOnClose = false): void => {
         if (disposed) return;
         disposed = true;
-        clearInterval(keepAliveTimer);
+        if (keepAliveTimer !== undefined) clearInterval(keepAliveTimer);
         detach();
         exitDisposable.dispose();
         if (killOnClose) {
@@ -405,7 +410,7 @@ export const terminalRoutes: FastifyPluginAsync = async (fastify) => {
       socket.on("close", (_code: number, reason: Buffer) => {
         cleanup("ws_close", reason.toString("utf8") === "tab_closed");
       });
-      socket.on("error", (err) => {
+      socket.on("error", (err: unknown) => {
         log.warn({ err, ptyId: managed.ptyId }, "terminal websocket error");
         cleanup("ws_error");
       });
