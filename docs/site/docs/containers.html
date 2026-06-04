@@ -129,11 +129,14 @@ preserves legacy path/env expectations.</li>
 <code>1001:1001</code>) is the restricted identity used when
 <code>AGENT_TOOL_SANDBOX_ENABLED=true</code>.</li>
 </ul>
-<p>By default (<code>AGENT_TOOL_SANDBOX_ENABLED=false</code>), the entrypoint drops
-the server to the legacy <code>pi</code> user. In sandbox mode, the server remains
-root. This is deliberate: the identity sandbox needs the server to call
-<code>setuid</code> / <code>setgid</code> for child tools while keeping server-owned config,
-forge data, and mounted secrets unreadable by <code>pi-tools</code>.</p>
+<p>By default (<code>AGENT_TOOL_SANDBOX_ENABLED=false</code>), compose starts the
+server as the legacy <code>pi</code> user directly and drops all Linux
+capabilities. The entrypoint only falls back to <code>gosu pi</code> for ad-hoc
+<code>docker run</code> invocations that still start as root. In sandbox mode,
+the server remains root. This is deliberate: the identity sandbox needs
+the server to call <code>setuid</code> / <code>setgid</code> for child tools while keeping
+server-owned config, forge data, and mounted secrets unreadable by
+<code>pi-tools</code>.</p>
 <p>Sandbox mode has a stricter volume permission contract than the default
 container. Read <a href="./agent-tool-sandbox.md"><code>agent-tool-sandbox.md</code></a>
 before enabling it; the short version is:</p>
@@ -319,9 +322,11 @@ When <code>AGENT_TOOL_SANDBOX_ENABLED=true</code>, the server runs as root and m
 as <code>pi-tools</code> and file tools / <code>@file</code> references are path-scoped.
 Keep secrets out of <code>/workspace</code>; workspace content is intentionally
 readable by the agent.</li>
-<li><strong>Minimal capabilities.</strong> Compose drops all capabilities and adds back
-only <code>SETUID</code> / <code>SETGID</code>, which are required for the identity switch.
-No privileged mode or host PID is needed.</li>
+<li><strong>Minimal capabilities.</strong> Regular compose starts as <code>pi</code>, drops all
+capabilities, and does not need <code>SETUID</code> / <code>SETGID</code>. The optional
+<code>docker-compose.sandbox.yml</code> overlay starts as root and adds back
+only <code>SETUID</code> / <code>SETGID</code>, which are required for the sandbox identity
+switch. No privileged mode or host PID is needed.</li>
 <li><strong>Secret mounts.</strong> Mount Pi config, forge data, LDAP/UI secret files,
 and cloud credentials so they are readable by the root server but not
 by <code>pi-tools</code> (for example mode <code>0600</code> root-owned files or <code>0700</code>

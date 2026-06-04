@@ -1,9 +1,10 @@
 # Agent tool identity sandbox
 
-`AGENT_TOOL_SANDBOX_ENABLED=false` by default. In the Docker image, the default
-entrypoint drops the server to the legacy `pi` user. When sandbox mode is
-enabled, pi-forge keeps the HTTP server running as root and runs model/user
-tool surfaces as a restricted UID/GID (`pi-tools` in the Docker image).
+`AGENT_TOOL_SANDBOX_ENABLED=false` by default. In the Docker Compose setup,
+regular mode starts the server as the legacy `pi` user directly and drops all
+Linux capabilities. When sandbox mode is enabled with the sandbox compose
+overlay, pi-forge keeps the HTTP server running as root and runs model/user tool
+surfaces as a restricted UID/GID (`pi-tools` in the Docker image).
 
 This is an operator-controlled hardening mode. It is useful only when the
 container or pod mounts are permissioned carefully. Leave it disabled for
@@ -88,7 +89,7 @@ the container or pod**.
 
 | Path | Required sandbox posture |
 |---|---|
-| `/workspace` | Writable by `AGENT_TOOL_UID:GID`. Secrets in the workspace are readable by the agent. |
+| `/workspace` | Writable by `AGENT_TOOL_UID` and traversable/readable by the root server without `DAC_OVERRIDE`. Recommended: `AGENT_TOOL_UID:0` with group rwX (`1001:0` in the Docker examples). Secrets in the workspace are readable by the agent. |
 | `/home/pi/.pi` | Traversable by `AGENT_TOOL_UID:GID` so package skills and non-secret resources can be loaded. Recommended: `root:pi-tools` `0750`. |
 | `/home/pi/.pi/agent` | Traversable/readable by `AGENT_TOOL_UID:GID` for non-secret resources. Recommended: `root:pi-tools` `0750`. |
 | `/home/pi/.pi/agent/auth.json` | Not readable by `AGENT_TOOL_UID:GID`. Recommended: `root:root` `0600`. Also blocked by file-tool policy. |
@@ -122,13 +123,16 @@ volumes:
 ```
 
 Native Linux bind mounts normally preserve host numeric ownership in the
-container. With default sandbox IDs (`1001:1001`), run these commands on the
-**host** before starting the container:
+container. With default sandbox tool IDs (`1001:1001`; workspace group `0` for
+the root server), run these commands on the **host** before starting the
+container:
 
 ```bash
-# Workspace: writable by pi-tools.
+# Workspace: writable by pi-tools and accessible to the root server.
+# Group 0 matters because sandbox containers drop DAC_OVERRIDE, so root
+# cannot bypass mode bits on host bind mounts.
 sudo mkdir -p ./workspace
-sudo chown -R 1001:1001 ./workspace
+sudo chown -R 1001:0 ./workspace
 sudo chmod -R u+rwX,g+rwX,o-rwx ./workspace
 
 # Forge data: server-only.
@@ -160,24 +164,20 @@ AGENT_TOOL_UID=1001
 AGENT_TOOL_GID=1001
 ```
 
-Compose capabilities for native Linux should be:
-
-```yaml
-cap_drop:
-  - ALL
-cap_add:
-  - SETUID
-  - SETGID
-security_opt:
-  - no-new-privileges:true
-```
-
-Then rebuild/recreate:
+Start sandbox mode with the sandbox compose overlay. The base compose file runs
+regular mode as `pi` with no Linux capabilities; the overlay switches the server
+container to root and adds back only `SETUID` / `SETGID` for sandbox child
+processes:
 
 ```bash
 cd docker
-docker compose down
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
+```
+
+To stop it later, pass the same file set:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.sandbox.yml down
 ```
 
 ## Docker Compose: OrbStack / Docker Desktop / macOS
@@ -224,17 +224,14 @@ volumes:
 
 ### Compose capability changes
 
-Start with the native capability set:
+Start with the sandbox compose overlay:
 
-```yaml
-cap_drop:
-  - ALL
-cap_add:
-  - SETUID
-  - SETGID
-security_opt:
-  - no-new-privileges:true
+```bash
+docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
 ```
+
+The base compose file already drops all capabilities. The sandbox overlay adds
+back `SETUID` / `SETGID` and runs the server container as root.
 
 If OrbStack/Docker Desktop shows `.pi-forge` as `1000:1000 0700` inside the
 pi-forge container even after the helper volume init chowns it to `root:root`,
@@ -257,7 +254,7 @@ This example assumes the named volumes are `docker_pi-config` and
 
 ```bash
 cd docker
-docker compose down
+docker compose -f docker-compose.yml -f docker-compose.sandbox.yml down
 
 # Optional: seed the named pi config volume from the host before locking it down.
 docker run --rm \
@@ -306,18 +303,19 @@ AGENT_TOOL_UID=1001
 AGENT_TOOL_GID=1001
 ```
 
-Start pi-forge:
+Start pi-forge with the sandbox overlay:
 
 ```bash
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
 ```
 
 Verify the actual mounts and ownership inside pi-forge:
 
 ```bash
-docker compose run --rm pi-forge sh -lc '
+docker compose -f docker-compose.yml -f docker-compose.sandbox.yml run --rm pi-forge sh -lc '
 id
 stat -c "%u:%g %a %n" /workspace /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge
+# Expected /workspace owner/group is 1001:0 with owner+group rwX bits.
 touch /home/pi/.pi-forge/probe && rm /home/pi/.pi-forge/probe
 '
 ```
@@ -327,6 +325,7 @@ Then verify from the app terminal (which runs as `pi-tools`):
 ```bash
 id
 stat -c "%u:%g %a %n" /workspace /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge
+# Expected /workspace owner/group is 1001:0 with owner+group rwX bits.
 cat /home/pi/.pi-forge/jwt-secret
 cat /home/pi/.pi/agent/auth.json
 ```
@@ -384,9 +383,11 @@ initContainers:
       - |
         set -eux
 
-        # Workspace: writable by pi-tools.
+        # Workspace: writable by pi-tools and accessible to the root server.
+        # Group 0 matters because sandbox containers drop DAC_OVERRIDE, so root
+        # cannot bypass mode bits on PVCs.
         mkdir -p /workspace
-        chown -R 1001:1001 /workspace
+        chown -R 1001:0 /workspace
         chmod -R u+rwX,g+rwX,o-rwx /workspace
 
         # Forge data: server-only.

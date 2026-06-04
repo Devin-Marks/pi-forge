@@ -64,10 +64,11 @@
     <main class="docs-main">
       <h1>Agent Tool Sandbox</h1>
       <p class="docs-subtitle">Optional UID/GID split, path policy, mount permissions, and verification.</p>
-<p><code>AGENT_TOOL_SANDBOX_ENABLED=false</code> by default. In the Docker image, the default
-entrypoint drops the server to the legacy <code>pi</code> user. When sandbox mode is
-enabled, pi-forge keeps the HTTP server running as root and runs model/user
-tool surfaces as a restricted UID/GID (<code>pi-tools</code> in the Docker image).</p>
+<p><code>AGENT_TOOL_SANDBOX_ENABLED=false</code> by default. In the Docker Compose setup,
+regular mode starts the server as the legacy <code>pi</code> user directly and drops all
+Linux capabilities. When sandbox mode is enabled with the sandbox compose
+overlay, pi-forge keeps the HTTP server running as root and runs model/user tool
+surfaces as a restricted UID/GID (<code>pi-tools</code> in the Docker image).</p>
 <p>This is an operator-controlled hardening mode. It is useful only when the
 container or pod mounts are permissioned carefully. Leave it disabled for
 simple local installs or any deployment where the workspace, Pi config, forge
@@ -146,7 +147,7 @@ the container or pod</strong>.</p>
 </thead>
 <tbody><tr>
 <td><code>/workspace</code></td>
-<td>Writable by <code>AGENT_TOOL_UID:GID</code>. Secrets in the workspace are readable by the agent.</td>
+<td>Writable by <code>AGENT_TOOL_UID</code> and traversable/readable by the root server without <code>DAC_OVERRIDE</code>. Recommended: <code>AGENT_TOOL_UID:0</code> with group rwX (<code>1001:0</code> in the Docker examples). Secrets in the workspace are readable by the agent.</td>
 </tr>
 <tr>
 <td><code>/home/pi/.pi</code></td>
@@ -196,11 +197,14 @@ bind mounts from <code>docker/docker-compose.yml</code>:</p>
   - ${FORGE_DATA_HOST_PATH:-~/.pi-forge-docker}:/home/pi/.pi-forge
 </code></pre>
 <p>Native Linux bind mounts normally preserve host numeric ownership in the
-container. With default sandbox IDs (<code>1001:1001</code>), run these commands on the
-<strong>host</strong> before starting the container:</p>
-<pre><code class="language-bash"># Workspace: writable by pi-tools.
+container. With default sandbox tool IDs (<code>1001:1001</code>; workspace group <code>0</code> for
+the root server), run these commands on the <strong>host</strong> before starting the
+container:</p>
+<pre><code class="language-bash"># Workspace: writable by pi-tools and accessible to the root server.
+# Group 0 matters because sandbox containers drop DAC_OVERRIDE, so root
+# cannot bypass mode bits on host bind mounts.
 sudo mkdir -p ./workspace
-sudo chown -R 1001:1001 ./workspace
+sudo chown -R 1001:0 ./workspace
 sudo chmod -R u+rwX,g+rwX,o-rwx ./workspace
 
 # Forge data: server-only.
@@ -228,19 +232,15 @@ sudo chmod 0600 ~/.pi/agent/auth.json ~/.pi/agent/models.json ~/.pi/agent/settin
 AGENT_TOOL_UID=1001
 AGENT_TOOL_GID=1001
 </code></pre>
-<p>Compose capabilities for native Linux should be:</p>
-<pre><code class="language-yaml">cap_drop:
-  - ALL
-cap_add:
-  - SETUID
-  - SETGID
-security_opt:
-  - no-new-privileges:true
-</code></pre>
-<p>Then rebuild/recreate:</p>
+<p>Start sandbox mode with the sandbox compose overlay. The base compose file runs
+regular mode as <code>pi</code> with no Linux capabilities; the overlay switches the server
+container to root and adds back only <code>SETUID</code> / <code>SETGID</code> for sandbox child
+processes:</p>
 <pre><code class="language-bash">cd docker
-docker compose down
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
+</code></pre>
+<p>To stop it later, pass the same file set:</p>
+<pre><code class="language-bash">docker compose -f docker-compose.yml -f docker-compose.sandbox.yml down
 </code></pre>
 <h2>Docker Compose: OrbStack / Docker Desktop / macOS</h2>
 <p>Use this section for OrbStack or Docker Desktop on macOS. Host file sharing can
@@ -276,15 +276,11 @@ volumes:
     name: docker_forge-data
 </code></pre>
 <h3>Compose capability changes</h3>
-<p>Start with the native capability set:</p>
-<pre><code class="language-yaml">cap_drop:
-  - ALL
-cap_add:
-  - SETUID
-  - SETGID
-security_opt:
-  - no-new-privileges:true
+<p>Start with the sandbox compose overlay:</p>
+<pre><code class="language-bash">docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
 </code></pre>
+<p>The base compose file already drops all capabilities. The sandbox overlay adds
+back <code>SETUID</code> / <code>SETGID</code> and runs the server container as root.</p>
 <p>If OrbStack/Docker Desktop shows <code>.pi-forge</code> as <code>1000:1000 0700</code> inside the
 pi-forge container even after the helper volume init chowns it to <code>root:root</code>,
 add <code>DAC_OVERRIDE</code> for local testing:</p>
@@ -299,7 +295,7 @@ can be permissioned normally.</p>
 <p>This example assumes the named volumes are <code>docker_pi-config</code> and
 <code>docker_forge-data</code>, and the sandbox UID/GID is <code>1001:1001</code>:</p>
 <pre><code class="language-bash">cd docker
-docker compose down
+docker compose -f docker-compose.yml -f docker-compose.sandbox.yml down
 
 # Optional: seed the named pi config volume from the host before locking it down.
 docker run --rm \
@@ -344,19 +340,21 @@ stat -c &quot;%u:%g %a %n&quot; /home/pi/.pi/agent /home/pi/.pi-forge
 AGENT_TOOL_UID=1001
 AGENT_TOOL_GID=1001
 </code></pre>
-<p>Start pi-forge:</p>
-<pre><code class="language-bash">docker compose up -d --build
+<p>Start pi-forge with the sandbox overlay:</p>
+<pre><code class="language-bash">docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
 </code></pre>
 <p>Verify the actual mounts and ownership inside pi-forge:</p>
-<pre><code class="language-bash">docker compose run --rm pi-forge sh -lc &#39;
+<pre><code class="language-bash">docker compose -f docker-compose.yml -f docker-compose.sandbox.yml run --rm pi-forge sh -lc &#39;
 id
 stat -c &quot;%u:%g %a %n&quot; /workspace /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge
+# Expected /workspace owner/group is 1001:0 with owner+group rwX bits.
 touch /home/pi/.pi-forge/probe &amp;&amp; rm /home/pi/.pi-forge/probe
 &#39;
 </code></pre>
 <p>Then verify from the app terminal (which runs as <code>pi-tools</code>):</p>
 <pre><code class="language-bash">id
 stat -c &quot;%u:%g %a %n&quot; /workspace /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge
+# Expected /workspace owner/group is 1001:0 with owner+group rwX bits.
 cat /home/pi/.pi-forge/jwt-secret
 cat /home/pi/.pi/agent/auth.json
 </code></pre>
@@ -400,9 +398,11 @@ volume names/mount paths:</p>
       - |
         set -eux
 
-        # Workspace: writable by pi-tools.
+        # Workspace: writable by pi-tools and accessible to the root server.
+        # Group 0 matters because sandbox containers drop DAC_OVERRIDE, so root
+        # cannot bypass mode bits on PVCs.
         mkdir -p /workspace
-        chown -R 1001:1001 /workspace
+        chown -R 1001:0 /workspace
         chmod -R u+rwX,g+rwX,o-rwx /workspace
 
         # Forge data: server-only.

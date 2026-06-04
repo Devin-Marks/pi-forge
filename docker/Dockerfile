@@ -194,12 +194,21 @@ case "$(printf '%s' "${AGENT_TOOL_SANDBOX_ENABLED:-false}" | tr '[:upper:]' '[:l
     # Sandbox mode: keep the server as root so it can setuid/setgid
     # model/user tool children to AGENT_TOOL_UID:GID. Mount ownership is
     # an operator contract; see docs/agent-tool-sandbox.md.
+    if [ "$(id -u)" != "0" ]; then
+      echo "AGENT_TOOL_SANDBOX_ENABLED=true requires the container to run as root" >&2
+      exit 1
+    fi
     exec "$@"
     ;;
   *)
-    # Legacy/default mode: run the server as pi, matching historical
-    # container behavior and pi-owned image defaults.
-    exec gosu pi "$@"
+    # Legacy/default mode: run as whichever non-root user the runtime
+    # selected. Compose starts as pi directly so regular mode does not
+    # need SETUID/SETGID capabilities; the root fallback preserves
+    # compatibility for `docker run` invocations without --user.
+    if [ "$(id -u)" = "0" ]; then
+      exec gosu pi "$@"
+    fi
+    exec "$@"
     ;;
 esac
 EOF

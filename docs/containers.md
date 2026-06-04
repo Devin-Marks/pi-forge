@@ -50,11 +50,14 @@ The image creates two users:
   `1001:1001`) is the restricted identity used when
   `AGENT_TOOL_SANDBOX_ENABLED=true`.
 
-By default (`AGENT_TOOL_SANDBOX_ENABLED=false`), the entrypoint drops
-the server to the legacy `pi` user. In sandbox mode, the server remains
-root. This is deliberate: the identity sandbox needs the server to call
-`setuid` / `setgid` for child tools while keeping server-owned config,
-forge data, and mounted secrets unreadable by `pi-tools`.
+By default (`AGENT_TOOL_SANDBOX_ENABLED=false`), compose starts the
+server as the legacy `pi` user directly and drops all Linux
+capabilities. The entrypoint only falls back to `gosu pi` for ad-hoc
+`docker run` invocations that still start as root. In sandbox mode,
+the server remains root. This is deliberate: the identity sandbox needs
+the server to call `setuid` / `setgid` for child tools while keeping
+server-owned config, forge data, and mounted secrets unreadable by
+`pi-tools`.
 
 Sandbox mode has a stricter volume permission contract than the default
 container. Read [`agent-tool-sandbox.md`](./agent-tool-sandbox.md)
@@ -227,9 +230,11 @@ SSE-buffering and WebSocket-upgrade settings live in
   as `pi-tools` and file tools / `@file` references are path-scoped.
   Keep secrets out of `/workspace`; workspace content is intentionally
   readable by the agent.
-- **Minimal capabilities.** Compose drops all capabilities and adds back
-  only `SETUID` / `SETGID`, which are required for the identity switch.
-  No privileged mode or host PID is needed.
+- **Minimal capabilities.** Regular compose starts as `pi`, drops all
+  capabilities, and does not need `SETUID` / `SETGID`. The optional
+  `docker-compose.sandbox.yml` overlay starts as root and adds back
+  only `SETUID` / `SETGID`, which are required for the sandbox identity
+  switch. No privileged mode or host PID is needed.
 - **Secret mounts.** Mount Pi config, forge data, LDAP/UI secret files,
   and cloud credentials so they are readable by the root server but not
   by `pi-tools` (for example mode `0600` root-owned files or `0700`

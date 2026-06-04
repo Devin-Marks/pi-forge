@@ -19,6 +19,10 @@ services:
     image: pi-forge:latest
     container_name: ${CONTAINER_NAME:-pi-forge}
     restart: unless-stopped
+    # Regular/default mode runs the server as pi directly. This avoids
+    # requiring SETUID/SETGID capabilities just to have the entrypoint
+    # switch away from root. Sandbox mode uses docker-compose.sandbox.yml.
+    user: "${PUID:-1000}:${PGID:-1000}"
     ports:
       # Loopback only by default — drop the `127.0.0.1:` prefix to expose
       # to the LAN (and set UI_PASSWORD or API_KEY first; see SECURITY.md).
@@ -31,41 +35,41 @@ services:
       - ${FORGE_DATA_HOST_PATH:-~/.pi-forge-docker}:/home/pi/.pi-forge
     environment:
       # Container-internal paths — fixed.
-      - WORKSPACE_PATH=/workspace
-      - PI_CONFIG_DIR=/home/pi/.pi/agent
-      - FORGE_DATA_DIR=/home/pi/.pi-forge
-      - PORT=3000
+      WORKSPACE_PATH: /workspace
+      PI_CONFIG_DIR: /home/pi/.pi/agent
+      FORGE_DATA_DIR: /home/pi/.pi-forge
+      PORT: "3000"
       # Auth — read from .env. Both empty = auth disabled.
-      - UI_PASSWORD=${UI_PASSWORD:-}
-      - REQUIRE_PASSWORD_CHANGE=${REQUIRE_PASSWORD_CHANGE:-false}
-      - JWT_SECRET=${JWT_SECRET:-}
-      - API_KEY=${API_KEY:-}
+      UI_PASSWORD: ${UI_PASSWORD:-}
+      REQUIRE_PASSWORD_CHANGE: ${REQUIRE_PASSWORD_CHANGE:-false}
+      JWT_SECRET: ${JWT_SECRET:-}
+      API_KEY: ${API_KEY:-}
       # Logging + reverse-proxy hint.
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-      - TRUST_PROXY=${TRUST_PROXY:-false}
-      - CORS_ORIGIN=${CORS_ORIGIN:-}
-      - MINIMAL_UI=${MINIMAL_UI:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      MINIMAL_UI: ${MINIMAL_UI:-false}
       # Session orchestration — enabled by default. Hard-disabled under
       # MINIMAL_UI; set ORCHESTRATION_DISABLED=true to remove the surface.
       # ORCHESTRATION_ENABLED=false remains a compatibility disable switch.
       # See docs/orchestration.md.
-      - ORCHESTRATION_DISABLED=${ORCHESTRATION_DISABLED:-false}
-      - ORCHESTRATION_ENABLED=${ORCHESTRATION_ENABLED:-}
-      - ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR=${ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR:-8}
-      # Identity sandbox — disabled by default. When true, the root
-      # server drops model/user shell surfaces to pi-tools via SETUID/SETGID.
-      - AGENT_TOOL_SANDBOX_ENABLED=${AGENT_TOOL_SANDBOX_ENABLED:-false}
-      - AGENT_TOOL_UID=${AGENT_TOOL_UID:-1001}
-      - AGENT_TOOL_GID=${AGENT_TOOL_GID:-1001}
-    # Hardening (mirrors the k8s manifests). Not read-only because the
-    # agent's bash tool needs to write to /home/pi/.npm, /tmp, etc.
+      ORCHESTRATION_DISABLED: ${ORCHESTRATION_DISABLED:-false}
+      ORCHESTRATION_ENABLED: ${ORCHESTRATION_ENABLED:-}
+      ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR: ${ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR:-8}
+      # Identity sandbox — disabled by default. Use
+      # docker-compose.sandbox.yml when enabling it so the server runs
+      # as root with only the SETUID/SETGID capabilities needed to drop
+      # model/user shell surfaces to pi-tools.
+      AGENT_TOOL_SANDBOX_ENABLED: ${AGENT_TOOL_SANDBOX_ENABLED:-false}
+      AGENT_TOOL_UID: ${AGENT_TOOL_UID:-1001}
+      AGENT_TOOL_GID: ${AGENT_TOOL_GID:-1001}
+    # Hardening. Not read-only because the agent's bash tool needs to
+    # write to /home/pi/.npm, /tmp, etc. Regular mode does not need any
+    # Linux capabilities because the container starts as pi directly.
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    cap_add:
-      - SETUID
-      - SETGID
     pids_limit: 512
     mem_limit: 2g
     cpus: "1.0"
