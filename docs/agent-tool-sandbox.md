@@ -71,7 +71,9 @@ the workspace.
 
 Regular/non-sandbox mode keeps the historical simple contract: the server runs
 as `pi`, and mounted workspace/config/data paths should be writable by `pi`.
-Sandbox mode is different and requires the split below.
+Sandbox mode is different and requires the split below. The Docker image makes
+the image-owned parent `/home/pi/.pi` traversable by `pi-tools`; the mounted
+`/home/pi/.pi/agent` subtree still needs the permissions below.
 
 The permissions that matter are numeric UID/GID and mode bits **as seen inside
 the container or pod**.
@@ -103,7 +105,9 @@ volume ownership/modes.
 
 On native Linux bind mounts, host numeric ownership is normally what the
 container sees. With default Docker sandbox IDs (`1001:1001`), run this on the
-**host** before starting the container:
+**host** before starting the container. This works best on native Linux; for
+Docker Desktop / OrbStack / macOS, prefer the inside-container commands in the
+next section.
 
 ```bash
 # Workspace: writable by pi-tools.
@@ -117,8 +121,9 @@ sudo chown -R root:root ~/.pi-forge-docker
 sudo chmod -R u+rwX,go-rwx ~/.pi-forge-docker
 
 # Pi config: pi-tools can traverse/read non-secret resources.
-# IMPORTANT: include the parent ~/.pi directory, not only ~/.pi/agent,
-# otherwise pi-tools cannot traverse into the mounted agent dir.
+# If you bind-mount only ~/.pi/agent (the compose default), the image-owned
+# /home/pi/.pi parent is already traversable by pi-tools. If you bind-mount
+# the whole ~/.pi directory instead, set the parent permissions too:
 sudo chown root:1001 ~/.pi
 sudo chmod 0750 ~/.pi
 sudo chown -R root:1001 ~/.pi/agent
@@ -176,8 +181,12 @@ If the restricted terminal can read `.pi-forge`, the host bind mount cannot
 reliably test this isolation. Use Docker named volumes for sensitive mounts
 while testing on macOS/OrbStack.
 
-If host-side ownership changes are ignored or translated, apply the sandbox
-permissions from a root shell **inside the running container** instead:
+### Required when host ownership is translated: run inside the container
+
+If host-side ownership changes are ignored or translated (common with Docker
+Desktop / OrbStack / macOS), apply the sandbox permissions from a root shell
+**inside the running container** instead. These commands affect the container's
+view of the mounts, which is the view that matters for `pi-tools`:
 
 ```bash
 docker compose exec pi-forge sh -lc '

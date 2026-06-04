@@ -154,7 +154,8 @@ RUN apt-get update \
  && groupadd -g $PGID pi \
  && useradd -m -u $PUID -g $PGID -s /bin/bash pi \
  && groupadd -g $PTOOLS_GID pi-tools \
- && useradd -M -u $PTOOLS_UID -g $PTOOLS_GID -s /usr/sbin/nologin pi-tools
+ && useradd -M -u $PTOOLS_UID -g $PTOOLS_GID -s /usr/sbin/nologin pi-tools \
+ && usermod -aG pi-tools pi
 
 WORKDIR /app
 
@@ -178,10 +179,12 @@ COPY --from=builder --chown=pi:pi /app/packages/client/dist ./packages/client/di
 RUN mkdir -p /workspace /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local \
  && chown -R pi-tools:pi-tools /workspace \
  && chown root:root /home/pi \
- && chown -R pi:pi /home/pi/.pi /home/pi/.pi-forge /home/pi/.local \
+ && chown root:pi-tools /home/pi/.pi \
+ && chown -R pi:pi /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local \
  && chmod 0775 /workspace \
  && chmod 0755 /home/pi \
- && chmod 0700 /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local
+ && chmod 0750 /home/pi/.pi \
+ && chmod 0700 /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local
 
 RUN cat >/usr/local/bin/pi-forge-entrypoint <<'EOF'
 #!/bin/sh
