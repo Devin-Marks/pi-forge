@@ -99,9 +99,11 @@ permissions to the table above before relying on filesystem isolation. Switching
 an existing deployment between regular and sandbox mode may require changing
 volume ownership/modes.
 
-## Native Linux example
+## Native Linux host example
 
-With default Docker sandbox IDs (`1001:1001`):
+On native Linux bind mounts, host numeric ownership is normally what the
+container sees. With default Docker sandbox IDs (`1001:1001`), run this on the
+**host** before starting the container:
 
 ```bash
 # Workspace: writable by pi-tools.
@@ -115,8 +117,11 @@ sudo chown -R root:root ~/.pi-forge-docker
 sudo chmod -R u+rwX,go-rwx ~/.pi-forge-docker
 
 # Pi config: pi-tools can traverse/read non-secret resources.
+# IMPORTANT: include the parent ~/.pi directory, not only ~/.pi/agent,
+# otherwise pi-tools cannot traverse into the mounted agent dir.
+sudo chown root:1001 ~/.pi
+sudo chmod 0750 ~/.pi
 sudo chown -R root:1001 ~/.pi/agent
-sudo chmod 0750 ~/.pi ~/.pi/agent
 sudo find ~/.pi/agent -type d -exec chmod 0750 {} +
 sudo find ~/.pi/agent -type f -exec chmod 0640 {} +
 
@@ -169,6 +174,34 @@ cat /home/pi/.pi-forge/jwt-secret
 If the restricted terminal can read `.pi-forge`, the host bind mount cannot
 reliably test this isolation. Use Docker named volumes for sensitive mounts
 while testing on macOS/OrbStack.
+
+If host-side ownership changes are ignored or translated, apply the sandbox
+permissions from a root shell **inside the running container** instead:
+
+```bash
+docker compose exec pi-forge sh -lc '
+# Workspace: writable by pi-tools.
+chown -R pi-tools:pi-tools /workspace
+chmod -R u+rwX,g+rwX,o-rwx /workspace
+
+# Forge data: server-only.
+chown -R root:root /home/pi/.pi-forge
+chmod -R u+rwX,go-rwx /home/pi/.pi-forge
+
+# Pi config: pi-tools can traverse/read non-secret resources.
+chown root:pi-tools /home/pi/.pi
+chmod 0750 /home/pi/.pi
+chown -R root:pi-tools /home/pi/.pi/agent
+find /home/pi/.pi/agent -type d -exec chmod 0750 {} +
+find /home/pi/.pi/agent -type f -exec chmod 0640 {} +
+
+# Pi config secrets: server-only.
+chown root:root /home/pi/.pi/agent/auth.json /home/pi/.pi/agent/models.json /home/pi/.pi/agent/settings.json 2>/dev/null || true
+chmod 0600 /home/pi/.pi/agent/auth.json /home/pi/.pi/agent/models.json /home/pi/.pi/agent/settings.json 2>/dev/null || true
+
+stat -c "%U:%G %u:%g %a %n" /workspace /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge
+'
+```
 
 ## Docker Compose requirements
 
