@@ -75,6 +75,7 @@ async function main(): Promise<void> {
     sessionFile?: string;
     subscribe: (l: (e: unknown) => void) => () => void;
     sessionId: string;
+    sessionName?: string;
     prompt: (text: string) => Promise<void>;
     sessionManager: { appendMessage: (msg: unknown) => string };
   }
@@ -98,6 +99,7 @@ async function main(): Promise<void> {
     disposeSession: (id: string) => Promise<boolean>;
     resumeSession: (id: string, projectId: string, workspacePath: string) => Promise<TestLive>;
     discoverSessionsOnDisk: (projectId: string, workspacePath: string) => Promise<TestDiscovered[]>;
+    maybeNameSessionFromFirstPrompt: (live: TestLive, promptText: string) => string | undefined;
     sessionCount: () => number;
     disposeAllSessions: () => void;
   }
@@ -251,6 +253,62 @@ async function main(): Promise<void> {
       `got ${rediscovered[0]?.name}`,
     );
     await registry.disposeSession(resumed.sessionId);
+
+    // 6a. Automatic first-prompt naming: deterministic summary, SSE nudge,
+    // and persisted session_info entry once the session flushes to disk.
+    const titleSession = await registry.createSession(projectId, workspacePath);
+    try {
+      const titleEvents: { type: string; name?: string }[] = [];
+      const titleClient = {
+        id: "title-client",
+        send: (e: { type: string; name?: string }) => titleEvents.push(e),
+        close: () => undefined,
+      };
+      titleSession.clients.add(titleClient);
+      const title = registry.maybeNameSessionFromFirstPrompt(
+        titleSession,
+        "Please implement session tab title summaries for the browser UI",
+      );
+      assert(
+        "first prompt generated a session title",
+        title === "Implement Session Tab Title Summaries",
+      );
+      assert("SDK sessionName updated", titleSession.session.sessionName === title);
+      assert(
+        "automatic rename emitted session_renamed",
+        titleEvents.some((e) => e.type === "session_renamed" && e.name === title),
+      );
+      titleSession.session.sessionManager.appendMessage({
+        role: "assistant",
+        content: [{ type: "text", text: "title fixture", id: "stub-title" }],
+        api: "messages",
+        provider: "anthropic",
+        model: "test-fixture",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: Date.now(),
+      });
+      const titleDiscovered = await registry.discoverSessionsOnDisk(projectId, workspacePath);
+      assert(
+        "automatic title persists to discovery",
+        titleDiscovered.find((s) => s.sessionId === titleSession.sessionId)?.name === title,
+      );
+      titleSession.session.setSessionName("manual title");
+      assert(
+        "manual title is not overwritten",
+        registry.maybeNameSessionFromFirstPrompt(titleSession, "try to overwrite") === undefined &&
+          titleSession.session.sessionName === "manual title",
+      );
+    } finally {
+      await registry.disposeSession(titleSession.sessionId);
+    }
 
     // 6b. Multi-client fan-out: in a fresh session (so it doesn't disturb
     // the resume-name assertion above), inject two stub SSEClients and

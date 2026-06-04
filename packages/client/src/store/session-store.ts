@@ -429,19 +429,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // Propagate the new name into every project's session list so the
       // sidebar updates without a refetch. The summary's `name` is
       // undefined when cleared — mirror that into the unified shape.
-      set((s) => {
-        const byProject: Record<string, UnifiedSession[]> = {};
-        for (const [pid, list] of Object.entries(s.byProject)) {
-          byProject[pid] = list.map((u) => {
-            if (u.sessionId !== sessionId) return u;
-            const next: UnifiedSession = { ...u };
-            if (summary.name !== undefined) next.name = summary.name;
-            else delete next.name;
-            return next;
-          });
-        }
-        return { byProject };
-      });
+      set((s) => renameSessionInLists(s, sessionId, summary.name));
       // Cross-tab: other browser tabs reflect the rename in their
       // sidebar without a refetch.
       postCrossTab({ type: "session_renamed", sessionId, name: summary.name });
@@ -974,6 +962,14 @@ function applyEvent(
     return;
   }
 
+  if (event.type === "session_renamed") {
+    const renamedSessionId = typeof event.sessionId === "string" ? event.sessionId : sessionId;
+    const name = typeof event.name === "string" ? event.name : undefined;
+    set((s) => renameSessionInLists(s, renamedSessionId, name));
+    postCrossTab({ type: "session_renamed", sessionId: renamedSessionId, name });
+    return;
+  }
+
   if (event.type === "message_end" || event.type === "tool_result") {
     // Fallbacks for SDK variants that don't emit tool_execution_end (or
     // that finalize an assistant message containing a toolCall before
@@ -1278,6 +1274,24 @@ function scheduleMessagesRefetch(
  * input shapes are tool-specific; we try the common fields and fall
  * back to undefined (the badge then renders the tool name only).
  */
+function renameSessionInLists(
+  state: SessionState,
+  sessionId: string,
+  name: string | undefined,
+): Pick<SessionState, "byProject"> {
+  const byProject: Record<string, UnifiedSession[]> = {};
+  for (const [pid, list] of Object.entries(state.byProject)) {
+    byProject[pid] = list.map((u) => {
+      if (u.sessionId !== sessionId) return u;
+      const next: UnifiedSession = { ...u };
+      if (name !== undefined) next.name = name;
+      else delete next.name;
+      return next;
+    });
+  }
+  return { byProject };
+}
+
 function summarizeToolInput(name: string, input: Record<string, unknown>): string | undefined {
   const get = (k: string): string | undefined => {
     const v = input[k];
@@ -1374,19 +1388,7 @@ if (!globalThis.__piForgeSessionCrossTabRegistered) {
       return;
     }
     if (msg.type === "session_renamed") {
-      useSessionStore.setState((st) => {
-        const byProject: Record<string, UnifiedSession[]> = {};
-        for (const [pid, list] of Object.entries(st.byProject)) {
-          byProject[pid] = list.map((u) => {
-            if (u.sessionId !== msg.sessionId) return u;
-            const next: UnifiedSession = { ...u };
-            if (msg.name !== undefined) next.name = msg.name;
-            else delete next.name;
-            return next;
-          });
-        }
-        return { byProject };
-      });
+      useSessionStore.setState((st) => renameSessionInLists(st, msg.sessionId, msg.name));
       return;
     }
   });
