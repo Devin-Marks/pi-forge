@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Tool Sandbox — pi-forge</title>
+  <meta name="description" content="Optional UID/GID split, path policy, mount permissions, and verification.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='1' y='1' width='30' height='30' rx='7' fill='%230d0d10'/><path d='M12 13 H20 M14 13 V21 M18 13 V21' stroke='%23e6e7eb' stroke-width='1.6' stroke-linecap='round' fill='none'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="../index.html" class="logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="#0d0d10"/>
+  <path d="M9 11 L6 16 L9 21" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M23 11 L26 16 L23 21" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M12 13 H20 M14 13 V21 M18 13 V21" stroke="#e6e7eb" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
+        pi-forge
+      </a>
+      <nav class="nav-links" id="navLinks">
+        <a href="../index.html#features">Features</a>
+        <a href="../index.html#quickstart">Quick Start</a>
+        <a href="architecture.html">Docs</a>
+        <a href="https://github.com/Devin-Marks/pi-forge" class="nav-cta">GitHub</a>
+      </nav>
+      <button class="mobile-toggle" id="mobileToggle" aria-label="Toggle menu">&#9776;</button>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+    <aside class="docs-sidebar" id="docsSidebar">
+      <div class="sidebar-section">
+        <h4>Documentation</h4>
+        <a href="architecture.html">Architecture</a>
+        <a href="configuration.html">Configuration</a>
+        <a href="containers.html">Containers</a>
+        <a href="agent-tool-sandbox.html" class="active">Agent Tool Sandbox</a>
+        <a href="deployment.html">Deployment</a>
+        <a href="mobile.html">Mobile</a>
+        <a href="api.html">API Examples</a>
+        <a href="mcp.html">MCP Servers</a>
+        <a href="webhooks.html">Webhooks</a>
+        <a href="orchestration.html">Session Orchestration</a>
+        <a href="processes.html">Background Processes</a>
+        <a href="todo.html">Todo Tool</a>
+        <a href="ask-user-question.html">Ask User Question</a>
+        <a href="quick-actions.html">Quick Actions</a>
+        <a href="sse-events.html">SSE Events</a>
+      </div>
+      <div class="sidebar-section">
+        <h4>Project</h4>
+        <a href="https://github.com/Devin-Marks/pi-forge">GitHub</a>
+        <a href="https://github.com/Devin-Marks/pi-forge/blob/main/CHANGELOG.md">Changelog</a>
+        <a href="https://github.com/Devin-Marks/pi-forge/blob/main/SECURITY.md">Security</a>
+      </div>
+    </aside>
+
+    <main class="docs-main">
+      <h1>Agent Tool Sandbox</h1>
+      <p class="docs-subtitle">Optional UID/GID split, path policy, mount permissions, and verification.</p>
+<p><code>AGENT_TOOL_SANDBOX_ENABLED=false</code> by default. In the Docker image, the default
+entrypoint drops the server to the legacy <code>pi</code> user. When sandbox mode is
+enabled, pi-forge keeps the HTTP server running as root and runs model/user
+tool surfaces as a restricted UID/GID (<code>pi-tools</code> in the Docker image).</p>
+<p>This is an operator-controlled hardening mode. It is useful only when the
+container or pod mounts are permissioned carefully. Leave it disabled for
+simple local installs or any deployment where the workspace, Pi config, forge
+data, and secret mounts cannot be owned/mode-bit split as described below.</p>
+<h2>What changes when enabled</h2>
+<p>Set:</p>
+<pre><code class="language-txt">AGENT_TOOL_SANDBOX_ENABLED=true
+AGENT_TOOL_UID=&lt;numeric uid&gt;
+AGENT_TOOL_GID=&lt;numeric gid&gt;
+</code></pre>
+<p>In the Docker image defaults, <code>pi-tools</code> is:</p>
+<pre><code class="language-txt">AGENT_TOOL_UID=1001
+AGENT_TOOL_GID=1001
+</code></pre>
+<p>When enabled:</p>
+<ul>
+<li>agent/model file tools are path-scoped</li>
+<li><code>@file</code> expansion is path-scoped</li>
+<li>agent <code>bash</code> runs as <code>AGENT_TOOL_UID:GID</code></li>
+<li>process-tool commands run as <code>AGENT_TOOL_UID:GID</code></li>
+<li>integrated terminals run as <code>AGENT_TOOL_UID:GID</code></li>
+<li>quick-action command chips run as <code>AGENT_TOOL_UID:GID</code></li>
+<li>chat <code>!</code> / <code>!!</code> exec commands run as <code>AGENT_TOOL_UID:GID</code></li>
+<li>shell/process/terminal env is scrubbed</li>
+</ul>
+<h2>What is protected</h2>
+<p>The sandbox is intended to protect server-side secrets from model/user tool
+surfaces:</p>
+<ul>
+<li>model file tools can read the configured workspace root (<code>WORKSPACE_PATH</code>), not only the active project subfolder</li>
+<li>model file tools cannot read outside allowed roots</li>
+<li>model file tools cannot read protected Pi config files, even if <code>PI_CONFIG_DIR</code> is accidentally mounted inside <code>WORKSPACE_PATH</code>:<ul>
+<li><code>${PI_CONFIG_DIR}/auth.json</code></li>
+<li><code>${PI_CONFIG_DIR}/models.json</code></li>
+<li><code>${PI_CONFIG_DIR}/settings.json</code></li>
+</ul>
+</li>
+<li>model file tools cannot read <code>${FORGE_DATA_DIR}</code></li>
+<li>model file tools reject <code>/proc</code>, <code>/etc</code>, <code>/run/secrets</code>, and
+<code>/var/run/secrets</code></li>
+<li>model file tools reject traversal and symlink escapes</li>
+<li>bash/process/terminal children do not inherit server/provider env secrets</li>
+<li>with correct UID separation, <code>/proc/&lt;server-pid&gt;/environ</code> is not readable by
+tool children</li>
+</ul>
+<h2>What is not protected</h2>
+<p>This mode does <strong>not</strong> protect:</p>
+<ul>
+<li>secrets placed in <code>/workspace</code></li>
+<li>a compromised pi-forge server process</li>
+<li>host/container/pod misconfiguration</li>
+<li>third-party extensions or tools that bypass pi-forge&#39;s policy hooks</li>
+<li>anything readable by <code>AGENT_TOOL_UID:GID</code> at the filesystem layer</li>
+</ul>
+<p>The model and user shell surfaces are intentionally allowed to read and write
+the entire configured workspace root (<code>WORKSPACE_PATH</code>, <code>/workspace</code> in the
+Docker image), including sibling project folders. Unlike model file tools,
+<code>bash</code>, process-tool commands, integrated terminals, quick actions, and chat
+exec commands are not path-policy scoped; after they drop to
+<code>AGENT_TOOL_UID:GID</code>, access to <code>PI_CONFIG_DIR</code>, <code>FORGE_DATA_DIR</code>, and any
+other path is controlled by Unix ownership and mode bits.</p>
+<h2>Required mount permissions</h2>
+<p>Regular/non-sandbox mode keeps the historical simple contract: the server runs
+as <code>pi</code>, and mounted workspace/config/data paths should be writable by <code>pi</code>.
+Sandbox mode is different and requires the split below. The Docker image makes
+the image-owned parent <code>/home/pi/.pi</code> traversable by <code>pi-tools</code>; the mounted
+<code>/home/pi/.pi/agent</code> subtree still needs the permissions below.</p>
+<p>The permissions that matter are numeric UID/GID and mode bits <strong>as seen inside
+the container or pod</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Required sandbox posture</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/workspace</code></td>
+<td>Writable by <code>AGENT_TOOL_UID:GID</code>. Secrets in the workspace are readable by the agent.</td>
+</tr>
+<tr>
+<td><code>/home/pi/.pi</code></td>
+<td>Traversable by <code>AGENT_TOOL_UID:GID</code> so package skills and non-secret resources can be loaded. Recommended: <code>root:pi-tools</code> <code>0750</code>.</td>
+</tr>
+<tr>
+<td><code>/home/pi/.pi/agent</code></td>
+<td>Traversable/readable by <code>AGENT_TOOL_UID:GID</code> for non-secret resources. Recommended: <code>root:pi-tools</code> <code>0750</code>.</td>
+</tr>
+<tr>
+<td><code>/home/pi/.pi/agent/auth.json</code></td>
+<td>Not readable by <code>AGENT_TOOL_UID:GID</code>. Recommended: <code>root:root</code> <code>0600</code>. Also blocked by file-tool policy.</td>
+</tr>
+<tr>
+<td><code>/home/pi/.pi/agent/models.json</code></td>
+<td>Not readable by <code>AGENT_TOOL_UID:GID</code>. Recommended: <code>root:root</code> <code>0600</code>. Also blocked by file-tool policy.</td>
+</tr>
+<tr>
+<td><code>/home/pi/.pi/agent/settings.json</code></td>
+<td>Not readable by <code>AGENT_TOOL_UID:GID</code>. Recommended: <code>root:root</code> <code>0600</code>. Also blocked by file-tool policy.</td>
+</tr>
+<tr>
+<td><code>/home/pi/.pi-forge</code></td>
+<td>Not readable by <code>AGENT_TOOL_UID:GID</code>. Recommended: <code>root:root</code> <code>0700</code>.</td>
+</tr>
+<tr>
+<td>mounted secret dirs/files</td>
+<td>Not readable by <code>AGENT_TOOL_UID:GID</code>; prefer root-owned <code>0700</code> dirs and <code>0600</code> files.</td>
+</tr>
+</tbody></table>
+<p>Why <code>.pi</code> is partially readable: pi package skills and other non-secret pi
+resources may live under the Pi config/home tree. The sandbox blocks the known
+secret Pi config files by policy and filesystem mode, while leaving non-secret
+resources loadable.</p>
+<p>The Docker image&#39;s built-in directory ownership remains optimized for regular
+mode (<code>pi</code> owns <code>/home/pi/.pi/agent</code> and <code>/home/pi/.pi-forge</code>). Enabling sandbox
+with bind mounts or persistent volumes is an explicit operator step: adjust the
+mount permissions to the table above before relying on filesystem isolation.
+Switching an existing deployment between regular and sandbox mode may require
+changing volume ownership/modes.</p>
+<h2>Docker Compose: native Linux bind mounts</h2>
+<p>Use this section for regular Docker Engine on Linux. You can keep the default
+bind mounts from <code>docker/docker-compose.yml</code>:</p>
+<pre><code class="language-yaml">volumes:
+  - ${WORKSPACE_HOST_PATH:-../workspace}:/workspace
+  - ${PI_CONFIG_HOST_PATH:-~/.pi/agent}:/home/pi/.pi/agent
+  - ${FORGE_DATA_HOST_PATH:-~/.pi-forge-docker}:/home/pi/.pi-forge
+</code></pre>
+<p>Native Linux bind mounts normally preserve host numeric ownership in the
+container. With default sandbox IDs (<code>1001:1001</code>), run these commands on the
+<strong>host</strong> before starting the container:</p>
+<pre><code class="language-bash"># Workspace: writable by pi-tools.
+sudo mkdir -p ./workspace
+sudo chown -R 1001:1001 ./workspace
+sudo chmod -R u+rwX,g+rwX,o-rwx ./workspace
+
+# Forge data: server-only.
+sudo mkdir -p ~/.pi-forge-docker
+sudo chown -R root:root ~/.pi-forge-docker
+sudo chmod -R u+rwX,go-rwx ~/.pi-forge-docker
+
+# Pi config: pi-tools can traverse/read non-secret resources.
+# The image-owned /home/pi/.pi parent is already traversable by pi-tools when
+# only ~/.pi/agent is mounted. If you mount the whole ~/.pi directory, set the
+# parent permissions too.
+sudo chown root:1001 ~/.pi
+sudo chmod 0750 ~/.pi
+sudo chown -R root:1001 ~/.pi/agent
+sudo chmod 0750 ~/.pi/agent
+sudo find ~/.pi/agent -type d -exec chmod 0750 {} +
+sudo find ~/.pi/agent -type f -exec chmod 0640 {} +
+
+# Pi config secrets: server-only.
+sudo chown root:root ~/.pi/agent/auth.json ~/.pi/agent/models.json ~/.pi/agent/settings.json 2&gt;/dev/null || true
+sudo chmod 0600 ~/.pi/agent/auth.json ~/.pi/agent/models.json ~/.pi/agent/settings.json 2&gt;/dev/null || true
+</code></pre>
+<p>Set sandbox env in <code>docker/.env</code>:</p>
+<pre><code class="language-txt">AGENT_TOOL_SANDBOX_ENABLED=true
+AGENT_TOOL_UID=1001
+AGENT_TOOL_GID=1001
+</code></pre>
+<p>Compose capabilities for native Linux should be:</p>
+<pre><code class="language-yaml">cap_drop:
+  - ALL
+cap_add:
+  - SETUID
+  - SETGID
+security_opt:
+  - no-new-privileges:true
+</code></pre>
+<p>Then rebuild/recreate:</p>
+<pre><code class="language-bash">cd docker
+docker compose down
+docker compose up -d --build
+</code></pre>
+<h2>Docker Compose: OrbStack / Docker Desktop / macOS</h2>
+<p>Use this section for OrbStack or Docker Desktop on macOS. Host file sharing can
+translate ownership differently depending on the container and the accessing
+UID, so host-side <code>chown</code> may not produce stable results inside pi-forge.</p>
+<p>Recommended differences from native Linux:</p>
+<ol>
+<li>Keep <code>/workspace</code> as a host bind mount if you want to edit code from macOS.</li>
+<li>Use Docker named volumes for <code>/home/pi/.pi/agent</code> and <code>/home/pi/.pi-forge</code>.</li>
+<li>Initialize those named volumes with a one-shot helper container.</li>
+<li>Add <code>DAC_OVERRIDE</code> only for local OrbStack/Docker Desktop testing if the root
+server cannot write the id-mapped <code>.pi-forge</code> volume.</li>
+</ol>
+<h3>Compose volume changes</h3>
+<p>Change the service volumes from host binds for Pi config / forge data to named
+volumes:</p>
+<pre><code class="language-yaml">services:
+  pi-forge:
+    volumes:
+      - ${WORKSPACE_HOST_PATH:-../workspace}:/workspace
+      - pi-config:/home/pi/.pi/agent
+      - forge-data:/home/pi/.pi-forge
+
+volumes:
+  pi-config:
+  forge-data:
+</code></pre>
+<p>If you want stable names for helper commands:</p>
+<pre><code class="language-yaml">volumes:
+  pi-config:
+    name: docker_pi-config
+  forge-data:
+    name: docker_forge-data
+</code></pre>
+<h3>Compose capability changes</h3>
+<p>Start with the native capability set:</p>
+<pre><code class="language-yaml">cap_drop:
+  - ALL
+cap_add:
+  - SETUID
+  - SETGID
+security_opt:
+  - no-new-privileges:true
+</code></pre>
+<p>If OrbStack/Docker Desktop shows <code>.pi-forge</code> as <code>1000:1000 0700</code> inside the
+pi-forge container even after the helper volume init chowns it to <code>root:root</code>,
+add <code>DAC_OVERRIDE</code> for local testing:</p>
+<pre><code class="language-yaml">cap_add:
+  - SETUID
+  - SETGID
+  - DAC_OVERRIDE # local OrbStack/Docker Desktop workaround only
+</code></pre>
+<p>Keep production/native-Linux deployments to <code>SETUID</code> and <code>SETGID</code> when mounts
+can be permissioned normally.</p>
+<h3>One-shot volume init commands</h3>
+<p>This example assumes the named volumes are <code>docker_pi-config</code> and
+<code>docker_forge-data</code>, and the sandbox UID/GID is <code>1001:1001</code>:</p>
+<pre><code class="language-bash">cd docker
+docker compose down
+
+# Optional: seed the named pi config volume from the host before locking it down.
+docker run --rm \
+  -v &quot;$HOME/.pi/agent&quot;:/src:ro \
+  -v docker_pi-config:/home/pi/.pi/agent \
+  debian:bookworm-slim sh -lc &#39;cp -a /src/. /home/pi/.pi/agent/&#39;
+
+# Permission the named volumes for sandbox mode.
+docker run --rm \
+  -v docker_pi-config:/home/pi/.pi/agent \
+  -v docker_forge-data:/home/pi/.pi-forge \
+  debian:bookworm-slim sh -lc &#39;
+set -eux
+
+# Forge data: server-only.
+chown -R root:root /home/pi/.pi-forge
+chmod 0700 /home/pi/.pi-forge
+find /home/pi/.pi-forge -type d -exec chmod 0700 {} +
+find /home/pi/.pi-forge -type f -exec chmod 0600 {} +
+
+# Pi config: pi-tools can traverse/read non-secret resources.
+chown -R root:1001 /home/pi/.pi/agent
+chmod 0750 /home/pi/.pi/agent
+find /home/pi/.pi/agent -type d -exec chmod 0750 {} +
+find /home/pi/.pi/agent -type f -exec chmod 0640 {} +
+
+# Pi config secrets: server-only.
+chown root:root \
+  /home/pi/.pi/agent/auth.json \
+  /home/pi/.pi/agent/models.json \
+  /home/pi/.pi/agent/settings.json 2&gt;/dev/null || true
+chmod 0600 \
+  /home/pi/.pi/agent/auth.json \
+  /home/pi/.pi/agent/models.json \
+  /home/pi/.pi/agent/settings.json 2&gt;/dev/null || true
+
+stat -c &quot;%u:%g %a %n&quot; /home/pi/.pi/agent /home/pi/.pi-forge
+&#39;
+</code></pre>
+<p>Set sandbox env in <code>docker/.env</code>:</p>
+<pre><code class="language-txt">AGENT_TOOL_SANDBOX_ENABLED=true
+AGENT_TOOL_UID=1001
+AGENT_TOOL_GID=1001
+</code></pre>
+<p>Start pi-forge:</p>
+<pre><code class="language-bash">docker compose up -d --build
+</code></pre>
+<p>Verify the actual mounts and ownership inside pi-forge:</p>
+<pre><code class="language-bash">docker compose run --rm pi-forge sh -lc &#39;
+id
+stat -c &quot;%u:%g %a %n&quot; /workspace /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge
+touch /home/pi/.pi-forge/probe &amp;&amp; rm /home/pi/.pi-forge/probe
+&#39;
+</code></pre>
+<p>Then verify from the app terminal (which runs as <code>pi-tools</code>):</p>
+<pre><code class="language-bash">id
+stat -c &quot;%u:%g %a %n&quot; /workspace /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge
+cat /home/pi/.pi-forge/jwt-secret
+cat /home/pi/.pi/agent/auth.json
+</code></pre>
+<p>Expected: <code>id</code> shows <code>pi-tools</code>; workspace writes work; <code>.pi/agent</code> traversal
+works; <code>.pi-forge</code> and protected config files are permission denied.</p>
+<h2>Kubernetes</h2>
+<p>Use this section for vanilla Kubernetes. You do <strong>not</strong> need Docker named
+volumes. Use PVCs and an initContainer to set the ownership/modes before the
+pi-forge app container starts.</p>
+<h3>App container security context</h3>
+<p>The app container must start as UID 0 so the server can drop tool children to
+<code>AGENT_TOOL_UID:GID</code>:</p>
+<pre><code class="language-yaml">securityContext:
+  runAsUser: 0
+  runAsGroup: 0
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [&quot;ALL&quot;]
+    add: [&quot;SETUID&quot;, &quot;SETGID&quot;]
+  seccompProfile:
+    type: RuntimeDefault
+</code></pre>
+<h3>Required env</h3>
+<pre><code class="language-yaml">env:
+  - name: AGENT_TOOL_SANDBOX_ENABLED
+    value: &quot;true&quot;
+  - name: AGENT_TOOL_UID
+    value: &quot;1001&quot;
+  - name: AGENT_TOOL_GID
+    value: &quot;1001&quot;
+</code></pre>
+<h3>Init container</h3>
+<p>This example assumes default IDs (<code>pi=1000</code>, <code>pi-tools=1001</code>) and the shipped
+volume names/mount paths:</p>
+<pre><code class="language-yaml">initContainers:
+  - name: sandbox-volume-permissions
+    image: busybox:1.36
+    command:
+      - sh
+      - -lc
+      - |
+        set -eux
+
+        # Workspace: writable by pi-tools.
+        mkdir -p /workspace
+        chown -R 1001:1001 /workspace
+        chmod -R u+rwX,g+rwX,o-rwx /workspace
+
+        # Forge data: server-only.
+        mkdir -p /home/pi/.pi-forge
+        chown -R 0:0 /home/pi/.pi-forge
+        chmod 0700 /home/pi/.pi-forge
+        find /home/pi/.pi-forge -type d -exec chmod 0700 {} +
+        find /home/pi/.pi-forge -type f -exec chmod 0600 {} +
+
+        # Pi config: pi-tools can traverse/read non-secret resources.
+        mkdir -p /home/pi/.pi/agent
+        chown 0:1001 /home/pi/.pi
+        chmod 0750 /home/pi/.pi
+        chown -R 0:1001 /home/pi/.pi/agent
+        chmod 0750 /home/pi/.pi/agent
+        find /home/pi/.pi/agent -type d -exec chmod 0750 {} +
+        find /home/pi/.pi/agent -type f -exec chmod 0640 {} +
+
+        # Pi config secrets: server-only.
+        chown 0:0 \
+          /home/pi/.pi/agent/auth.json \
+          /home/pi/.pi/agent/models.json \
+          /home/pi/.pi/agent/settings.json 2&gt;/dev/null || true
+        chmod 0600 \
+          /home/pi/.pi/agent/auth.json \
+          /home/pi/.pi/agent/models.json \
+          /home/pi/.pi/agent/settings.json 2&gt;/dev/null || true
+    securityContext:
+      runAsUser: 0
+      runAsGroup: 0
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [&quot;ALL&quot;]
+        add: [&quot;CHOWN&quot;, &quot;FOWNER&quot;]
+      readOnlyRootFilesystem: true
+      seccompProfile:
+        type: RuntimeDefault
+    volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+      - name: pi-config
+        mountPath: /home/pi/.pi/agent
+      - name: pi-forge-data
+        mountPath: /home/pi/.pi-forge
+</code></pre>
+<p>Do not use <code>fsGroup</code> to make the sensitive volumes broadly group-readable; the
+sandbox relies on <code>.pi-forge</code> and protected Pi config files staying unreadable
+by <code>AGENT_TOOL_UID:GID</code>.</p>
+<h2>OpenShift</h2>
+<p>OpenShift <code>restricted-v2</code> random UID does not support this mode. Use <code>anyuid</code>
+for a simple deployment, or a custom SCC that allows:</p>
+<ul>
+<li>UID 0 for the server container</li>
+<li><code>SETUID</code></li>
+<li><code>SETGID</code></li>
+<li>no privileged mode</li>
+</ul>
+<p>Keep SCC RoleBindings in namespace/security bootstrap, not in the
+DeploymentConfig.</p>
+<p>Example RoleBinding for <code>anyuid</code>:</p>
+<pre><code class="language-yaml">apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pi-forge-anyuid
+  namespace: pi-forge
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
+subjects:
+  - kind: ServiceAccount
+    name: pi-forge
+    namespace: pi-forge
+</code></pre>
+<p>Use the Kubernetes initContainer permission commands above, plus the OpenShift
+SCC binding. If you build a custom SCC, it needs UID 0 plus <code>SETUID</code>/<code>SETGID</code>;
+it does not need privileged mode.</p>
+<h2>pi-subagents package disabled in sandbox mode</h2>
+<p>The <code>pi-subagents</code> package/extension is disabled while
+<code>AGENT_TOOL_SANDBOX_ENABLED=true</code>. The package shells out to the <code>pi</code> CLI and
+manages child sessions outside pi-forge&#39;s normal in-process tool override path,
+which makes its security boundary harder to reason about in this mode.</p>
+<p>Built-in pi-forge orchestration tools remain separate from <code>pi-subagents</code>; if
+you use them with sandbox mode, validate their worker behavior under your
+mount/UID policy.</p>
+<h2>LDAP bind password files</h2>
+<p>When sandbox mode is enabled, pi-forge rejects:</p>
+<ul>
+<li><code>LDAP_BIND_PASSWORD_FILE</code></li>
+<li>CLI <code>--ldap-bind-password @/path</code></li>
+<li>env-style <code>LDAP_BIND_PASSWORD=@/path</code></li>
+</ul>
+<p>Use a literal environment value or an external secret broker instead. Tool
+children receive a scrubbed env and do not inherit the LDAP bind password.</p>
+<h2>Suggested verification prompts</h2>
+<p>Ask the model:</p>
+<pre><code class="language-txt">Use your file tools, not bash, to test sandbox file access.
+Try to read /workspace/sandbox-test.txt, list /workspace, read
+/home/pi/.pi/agent/auth.json, /home/pi/.pi/agent/models.json,
+/home/pi/.pi/agent/settings.json, /home/pi/.pi-forge/jwt-secret,
+/proc/self/environ, /etc/passwd, and /run/secrets/anything.
+Report which succeeded and which failed.
+</code></pre>
+<p>Expected: workspace succeeds; protected config, forge data, <code>/proc</code>, <code>/etc</code>,
+and secret mounts are denied.</p>
+<p>Ask the model:</p>
+<pre><code class="language-txt">Use bash to run: id; env | sort; echo ok &gt; /workspace/bash-sandbox-test.txt;
+cat /workspace/bash-sandbox-test.txt; cat /home/pi/.pi-forge/jwt-secret;
+cat /home/pi/.pi/agent/auth.json; cat /proc/1/environ.
+Report the output and explain what was protected.
+</code></pre>
+<p>Expected: <code>id</code> shows the restricted UID/GID, env is scrubbed, workspace write
+works, and server secrets fail with permission denied.</p>
+
+    </main>
+  </div>
+
+  <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">&#9776;</button>
+
+  <script>
+    document.getElementById('mobileToggle').addEventListener('click', () => {
+      document.getElementById('navLinks').classList.toggle('open');
+    });
+    document.getElementById('sidebarToggle').addEventListener('click', () => {
+      document.getElementById('docsSidebar').classList.toggle('open');
+    });
+  </script>
+</body>
+</html>

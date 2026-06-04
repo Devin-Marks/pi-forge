@@ -32,6 +32,36 @@ function firstSegment(rel: string): string {
   return rel.split(/[\\/]/)[0] ?? "";
 }
 
+function piConfigRelativePath(
+  baseResolved: string,
+  resolvedReal: string,
+  piConfigReal: string,
+): string | undefined {
+  const candidate = pathWithin(baseResolved, piConfigReal) ? baseResolved : resolvedReal;
+  const rel = relative(piConfigReal, candidate).split(sep).join("/");
+  if (rel === "" || rel.startsWith("../")) return undefined;
+  return rel;
+}
+
+function assertPiConfigPathAllowed(
+  baseResolved: string,
+  resolvedReal: string,
+  piConfigReal: string,
+): boolean {
+  if (!pathWithin(baseResolved, piConfigReal) && !pathWithin(resolvedReal, piConfigReal)) {
+    return false;
+  }
+
+  for (const candidate of [baseResolved, resolvedReal]) {
+    if (!pathWithin(candidate, piConfigReal)) continue;
+    const rel = relative(piConfigReal, candidate).split(sep).join("/");
+    if (!rel.includes("/") && PROTECTED_PI_CONFIG_FILES.has(rel)) {
+      throw new AgentToolPathDeniedError(`${rel} is protected pi config`);
+    }
+  }
+  return true;
+}
+
 function denyIfSensitiveAbsolute(abs: string, workspaceReal: string, piConfigReal: string): void {
   for (const prefix of DENIED_PREFIXES) {
     if (abs === prefix || abs.startsWith(`${prefix}/`)) {
@@ -75,15 +105,14 @@ export function resolveAgentToolPath(workspacePath: string, requestedPath: strin
     throw new AgentToolPathDeniedError(`${baseResolved} is inside FORGE_DATA_DIR`);
   }
 
+  const isPiConfigPath = assertPiConfigPathAllowed(baseResolved, resolvedReal, piConfigReal);
+
   if (pathWithin(resolvedReal, workspaceReal)) return baseResolved;
 
-  if (pathWithin(resolvedReal, piConfigReal)) {
-    const rel = relative(piConfigReal, baseResolved).split(sep).join("/");
-    if (rel === "" || rel.startsWith("../")) {
+  if (isPiConfigPath) {
+    const rel = piConfigRelativePath(baseResolved, resolvedReal, piConfigReal);
+    if (rel === undefined) {
       throw new AgentToolPathDeniedError(`${baseResolved} is outside PI_CONFIG_DIR`);
-    }
-    if (!rel.includes("/") && PROTECTED_PI_CONFIG_FILES.has(rel)) {
-      throw new AgentToolPathDeniedError(`${rel} is protected pi config`);
     }
     return baseResolved;
   }

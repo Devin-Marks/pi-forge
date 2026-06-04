@@ -40,6 +40,7 @@
         <a href="architecture.html">Architecture</a>
         <a href="configuration.html">Configuration</a>
         <a href="containers.html">Containers</a>
+        <a href="agent-tool-sandbox.html">Agent Tool Sandbox</a>
         <a href="deployment.html">Deployment</a>
         <a href="mobile.html">Mobile</a>
         <a href="api.html">API Examples</a>
@@ -357,6 +358,16 @@ Settings → MCP)</li>
 <li><strong>neutral</strong> — master toggle off</li>
 </ul>
 <p>Hidden when no servers are configured and in <code>MINIMAL_UI</code> mode.</p>
+<p>The header summary and any Settings → MCP project status list already opened by
+this browser tab refresh automatically on the shared MCP ticker. Unchanged status
+payloads keep their existing UI state to avoid unnecessary churn.</p>
+<h2>Tool result truncation</h2>
+<p>Very large text results from MCP tools are capped before they enter the agent
+context. When truncation happens, the returned text starts with a concise
+<code>MCP_RESULT_TRUNCATED</code> warning that includes the omitted size and tells the model
+to retry with a smaller scope, narrower filter, or pagination. The visible payload
+then keeps the start and end of the original result with a marker where the middle
+was omitted.</p>
 <h2>Troubleshooting</h2>
 <p><strong>Status stuck in <code>error</code></strong> — Settings → MCP, expand the row, read
 <code>lastError</code>. Common causes:</p>

@@ -109,6 +109,10 @@ For source builds and a development setup see
   interrupt, and kill worker sessions in the same project. Worker
   events stream back into the supervisor's inbox; the supervisor's
   LLM wakes on activity and reacts.
+- **Optional tool sandbox** — opt-in deployment mode that runs agent/user
+  shell surfaces as a restricted UID/GID, scopes model file tools, and
+  keeps server-side config, forge data, and mounted secrets out of that
+  identity when mounts are permissioned for the split.
 - **Webhooks** — HTTPS POST deliveries on agent and session events
   (`agent_end`, `ask_user_question`, `process_alert`, `auto_retry_end`,
   `compaction_end`, `session_created`, `session_deleted`). Global or
@@ -147,6 +151,7 @@ The full feature grid (with categories and screenshots) is on the
 - [Docker image](./docs/containers.md) — image internals, volumes, env, troubleshooting
 - [Private-network deployment](./docs/deployment.md) — reverse proxy, auth, multi-deploy patterns
 - [Kubernetes / OpenShift](./kubernetes/DEPLOY.md) — manifests + walkthroughs
+- [Optional tool sandbox](./docs/agent-tool-sandbox.md) — UID/GID split, mount permissions, and verification prompts
 - [Security model](./SECURITY.md) — threat model + vulnerability reporting
 
 **Configure & extend**

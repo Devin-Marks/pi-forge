@@ -27,7 +27,7 @@ const tmp = mkdtempSync(resolve(tmpdir(), "pi-agent-tool-sandbox-"));
 const workspace = resolve(tmp, "workspace");
 const project = resolve(workspace, "project-a");
 const shared = resolve(workspace, "shared");
-const piConfig = resolve(tmp, "pi-config");
+const piConfig = resolve(workspace, ".pi", "agent");
 const forgeData = resolve(tmp, "forge-data");
 const outside = resolve(tmp, "outside");
 mkdirSync(workspace, { recursive: true });

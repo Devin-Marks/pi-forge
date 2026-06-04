@@ -6,7 +6,9 @@ enabled, pi-forge keeps the HTTP server running as root and runs model/user
 tool surfaces as a restricted UID/GID (`pi-tools` in the Docker image).
 
 This is an operator-controlled hardening mode. It is useful only when the
-container or pod mounts are permissioned carefully.
+container or pod mounts are permissioned carefully. Leave it disabled for
+simple local installs or any deployment where the workspace, Pi config, forge
+data, and secret mounts cannot be owned/mode-bit split as described below.
 
 ## What changes when enabled
 
@@ -43,7 +45,7 @@ surfaces:
 
 - model file tools can read the configured workspace root (`WORKSPACE_PATH`), not only the active project subfolder
 - model file tools cannot read outside allowed roots
-- model file tools cannot read protected Pi config files:
+- model file tools cannot read protected Pi config files, even if `PI_CONFIG_DIR` is accidentally mounted inside `WORKSPACE_PATH`:
   - `${PI_CONFIG_DIR}/auth.json`
   - `${PI_CONFIG_DIR}/models.json`
   - `${PI_CONFIG_DIR}/settings.json`
@@ -67,7 +69,11 @@ This mode does **not** protect:
 
 The model and user shell surfaces are intentionally allowed to read and write
 the entire configured workspace root (`WORKSPACE_PATH`, `/workspace` in the
-Docker image), including sibling project folders.
+Docker image), including sibling project folders. Unlike model file tools,
+`bash`, process-tool commands, integrated terminals, quick actions, and chat
+exec commands are not path-policy scoped; after they drop to
+`AGENT_TOOL_UID:GID`, access to `PI_CONFIG_DIR`, `FORGE_DATA_DIR`, and any
+other path is controlled by Unix ownership and mode bits.
 
 ## Required mount permissions
 
