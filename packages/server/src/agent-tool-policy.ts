@@ -91,11 +91,9 @@ export function resolveAgentToolPath(workspacePath: string, requestedPath: strin
   if (requestedPath.trim() === "") {
     throw new AgentToolPathDeniedError("empty path is not allowed");
   }
-  const workspaceReal = realpathExistingOrParent(resolve(workspacePath));
-  const piConfigResolved = resolve(config.piConfigDir);
-  const piConfigReal = realpathExistingOrParent(piConfigResolved);
-  const forgeDataResolved = resolve(config.forgeDataDir);
-  const forgeDataReal = realpathExistingOrParent(forgeDataResolved);
+  const workspaceReal = realpathExistingOrParent(resolve(config.workspacePath));
+  const piConfigReal = realpathExistingOrParent(resolve(config.piConfigDir));
+  const forgeDataReal = realpathExistingOrParent(resolve(config.forgeDataDir));
   const baseResolved = isAbsolute(requestedPath)
     ? resolve(requestedPath)
     : resolve(workspacePath, requestedPath);
@@ -103,20 +101,16 @@ export function resolveAgentToolPath(workspacePath: string, requestedPath: strin
 
   denyIfSensitiveAbsolute(baseResolved, workspaceReal, piConfigReal);
   denyIfSensitiveAbsolute(resolvedReal, workspaceReal, piConfigReal);
-  if (
-    pathWithin(baseResolved, forgeDataResolved) ||
-    pathWithin(baseResolved, forgeDataReal) ||
-    pathWithin(resolvedReal, forgeDataReal)
-  ) {
+  if (pathWithin(baseResolved, forgeDataReal) || pathWithin(resolvedReal, forgeDataReal)) {
     throw new AgentToolPathDeniedError(`${baseResolved} is inside FORGE_DATA_DIR`);
   }
 
-  const isPiConfigPath = assertPiConfigPathAllowed(baseResolved, resolvedReal, piConfigResolved);
+  const isPiConfigPath = assertPiConfigPathAllowed(baseResolved, resolvedReal, piConfigReal);
 
   if (pathWithin(resolvedReal, workspaceReal)) return baseResolved;
 
   if (isPiConfigPath) {
-    const rel = piConfigRelativePath(baseResolved, resolvedReal, piConfigResolved);
+    const rel = piConfigRelativePath(baseResolved, resolvedReal, piConfigReal);
     if (rel === undefined) {
       throw new AgentToolPathDeniedError(`${baseResolved} is outside PI_CONFIG_DIR`);
     }

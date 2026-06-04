@@ -1465,33 +1465,35 @@ function AddOverrideDropdown({
 
 // ---------------- Sandbox tab ----------------
 
-function envToText(toolEnv: Record<string, string>): string {
-  return Object.entries(toolEnv)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}=${v}`)
-    .join("\n");
+interface SandboxEnvRow {
+  id: string;
+  name: string;
+  value: string;
+  revealed: boolean;
 }
 
-function parseEnvText(text: string): Record<string, string> {
+function sandboxRowsFromEnv(toolEnv: Record<string, string>): SandboxEnvRow[] {
+  return Object.entries(toolEnv)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, value]) => ({ id: crypto.randomUUID(), name, value, revealed: false }));
+}
+
+function sandboxRowsToEnv(rows: readonly SandboxEnvRow[]): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [idx, rawLine] of text.split(/\r?\n/).entries()) {
-    const line = rawLine.trim();
-    if (line.length === 0 || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq <= 0) throw new Error(`Line ${idx + 1}: expected NAME=value`);
-    const name = line.slice(0, eq).trim();
-    const value = line.slice(eq + 1);
+  for (const [idx, row] of rows.entries()) {
+    const name = row.name.trim();
+    if (name.length === 0 && row.value.length === 0) continue;
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-      throw new Error(`Line ${idx + 1}: invalid environment variable name`);
+      throw new Error(`Row ${idx + 1}: invalid environment variable name`);
     }
-    out[name] = value;
+    out[name] = row.value;
   }
   return out;
 }
 
 function SandboxTab({ onError }: { onError: (msg: string | undefined) => void }) {
   const [settings, setSettings] = useState<SandboxSettingsResponse | undefined>(undefined);
-  const [envText, setEnvText] = useState("");
+  const [rows, setRows] = useState<SandboxEnvRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -1504,7 +1506,7 @@ function SandboxTab({ onError }: { onError: (msg: string | undefined) => void })
       .then((res) => {
         if (cancelled) return;
         setSettings(res);
-        setEnvText(envToText(res.toolEnv));
+        setRows(sandboxRowsFromEnv(res.toolEnv));
         onError(undefined);
       })
       .catch((err: unknown) => {
@@ -1523,7 +1525,7 @@ function SandboxTab({ onError }: { onError: (msg: string | undefined) => void })
     setSaved(false);
     let parsed: Record<string, string>;
     try {
-      parsed = parseEnvText(envText);
+      parsed = sandboxRowsToEnv(rows);
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
       return;
@@ -1532,7 +1534,7 @@ function SandboxTab({ onError }: { onError: (msg: string | undefined) => void })
     try {
       const res = await api.updateSandboxSettings(parsed);
       setSettings(res);
-      setEnvText(envToText(res.toolEnv));
+      setRows(sandboxRowsFromEnv(res.toolEnv));
       onError(undefined);
       setSaved(true);
     } catch (err) {
@@ -1570,24 +1572,88 @@ function SandboxTab({ onError }: { onError: (msg: string | undefined) => void })
         )}
       </div>
 
-      <label className="block">
-        <span className="text-xs font-medium text-neutral-300">Tool environment</span>
-        <textarea
-          value={envText}
-          onChange={(e) => {
-            setEnvText(e.target.value);
-            setSaved(false);
-          }}
-          rows={12}
-          spellCheck={false}
-          placeholder={"HTTP_PROXY=http://proxy.internal:8080\nNO_COLOR=1"}
-          className="mt-2 w-full rounded border border-neutral-800 bg-neutral-950 px-3 py-2 font-mono text-xs text-neutral-100 outline-none focus:border-neutral-600"
-        />
-      </label>
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-medium text-neutral-300">Tool environment</span>
+          <button
+            type="button"
+            onClick={() => {
+              setRows((current) => [
+                ...current,
+                { id: crypto.randomUUID(), name: "", value: "", revealed: false },
+              ]);
+              setSaved(false);
+            }}
+            className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:border-neutral-500"
+          >
+            Add variable
+          </button>
+        </div>
+        <div className="space-y-2">
+          {rows.length === 0 && (
+            <div className="rounded border border-dashed border-neutral-800 px-3 py-4 text-xs text-neutral-500">
+              No sandbox tool environment variables configured.
+            </div>
+          )}
+          {rows.map((row) => (
+            <div
+              key={row.id}
+              className="grid gap-2 rounded border border-neutral-800 p-2 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto_auto]"
+            >
+              <input
+                value={row.name}
+                onChange={(e) => {
+                  const name = e.target.value;
+                  setRows((current) => current.map((r) => (r.id === row.id ? { ...r, name } : r)));
+                  setSaved(false);
+                }}
+                placeholder="HTTP_PROXY"
+                spellCheck={false}
+                className="rounded border border-neutral-800 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-100 outline-none focus:border-neutral-600"
+                aria-label="Environment variable name"
+              />
+              <input
+                value={row.value}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setRows((current) => current.map((r) => (r.id === row.id ? { ...r, value } : r)));
+                  setSaved(false);
+                }}
+                type={row.revealed ? "text" : "password"}
+                placeholder="value"
+                spellCheck={false}
+                autoComplete="off"
+                className="rounded border border-neutral-800 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-100 outline-none focus:border-neutral-600"
+                aria-label="Environment variable value"
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  setRows((current) =>
+                    current.map((r) => (r.id === row.id ? { ...r, revealed: !r.revealed } : r)),
+                  )
+                }
+                className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:border-neutral-500"
+              >
+                {row.revealed ? "Hide" : "Reveal"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRows((current) => current.filter((r) => r.id !== row.id));
+                  setSaved(false);
+                }}
+                className="rounded border border-red-900/60 px-2 py-1 text-xs text-red-300 hover:border-red-700"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
       <p className="text-xs text-neutral-500">
-        Use one <code>NAME=value</code> entry per line. Blank lines and <code># comments</code> are
-        ignored. Values are stored in pi-forge data, so avoid secrets unless that storage is
-        protected.
+        Values are masked by default and only revealed per row. They are still stored in pi-forge
+        data and passed to tool processes, so avoid secrets unless that storage is protected.
       </p>
 
       <div className="flex items-center gap-3">

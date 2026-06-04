@@ -2,7 +2,8 @@
  * Sandbox settings regression coverage:
  * - persisted tool env validates and round-trips atomically-owned FORGE_DATA_DIR state
  * - bash/process tool shells receive configured env
- * - sandbox filesystem overrides include ls path-guard behavior, not only read/write/bash
+ * - sandbox filesystem overrides include ls without narrowing pre-existing workspace root access
+ * - Settings UI masks env values instead of rendering NAME=value plaintext
  */
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -10,6 +11,7 @@ import { tmpdir } from "node:os";
 
 const root = await mkdtemp(join(tmpdir(), "pi-forge-sandbox-test-"));
 const workspace = join(root, "workspace");
+const projectWorkspace = join(workspace, "project-a");
 process.env.WORKSPACE_PATH = workspace;
 process.env.FORGE_DATA_DIR = join(root, "data");
 process.env.PI_CONFIG_DIR = join(root, "pi");
@@ -53,8 +55,8 @@ try {
   assert("invalid env names rejected", rejected);
 
   console.log("tool env injection");
-  await mkdir(workspace, { recursive: true });
-  const bashOps = createForgeBashOperations(workspace, { PI_FORGE_SANDBOX_TEST: "bash-ok" });
+  await mkdir(projectWorkspace, { recursive: true });
+  const bashOps = createForgeBashOperations(projectWorkspace, { PI_FORGE_SANDBOX_TEST: "bash-ok" });
   let output = "";
   await bashOps.exec('printf %s "$PI_FORGE_SANDBOX_TEST"', workspace, {
     signal: undefined,
@@ -64,7 +66,7 @@ try {
   });
   assert("bash tool receives sandbox env", output === "bash-ok", output);
 
-  const processTool = createProcessTool("session-test", workspace, {
+  const processTool = createProcessTool("session-test", projectWorkspace, {
     PI_FORGE_SANDBOX_TEST: "process-ok",
   });
   const call = (params: Record<string, unknown>) =>
@@ -85,11 +87,14 @@ try {
   processManager.disposeSession("session-test");
 
   console.log("filesystem sandbox overrides");
-  await writeFile(join(workspace, "inside.txt"), "ok", "utf8");
-  const outside = join(root, "outside");
-  await mkdir(outside, { recursive: true });
-  await writeFile(join(outside, "outside.txt"), "no", "utf8");
-  const ls = createSandboxedToolDefinitions(workspace).find((tool) => tool.name === "ls");
+  await writeFile(join(projectWorkspace, "inside.txt"), "ok", "utf8");
+  const siblingUnderWorkspace = join(workspace, "project-b");
+  await mkdir(siblingUnderWorkspace, { recursive: true });
+  await writeFile(join(siblingUnderWorkspace, "sibling.txt"), "ok", "utf8");
+  const piDataDir = join(process.env.PI_CONFIG_DIR!, "sessions");
+  await mkdir(piDataDir, { recursive: true });
+  await writeFile(join(piDataDir, "session.jsonl"), "{}\n", "utf8");
+  const ls = createSandboxedToolDefinitions(projectWorkspace).find((tool) => tool.name === "ls");
   assert("sandbox override includes ls", ls !== undefined);
   const insideResult = await ls!.execute("ls-ok", { path: "." }, undefined, undefined, {});
   const insideText = JSON.stringify(insideResult);
@@ -98,23 +103,39 @@ try {
     insideText.includes("inside.txt"),
     insideText.slice(0, 200),
   );
-  let blockedText = "";
-  try {
-    const blockedResult = await ls!.execute(
-      "ls-block",
-      { path: outside },
-      undefined,
-      undefined,
-      {},
-    );
-    blockedText = JSON.stringify(blockedResult);
-  } catch (err) {
-    blockedText = err instanceof Error ? err.message : String(err);
-  }
+  const siblingResult = await ls!.execute(
+    "ls-sibling",
+    { path: siblingUnderWorkspace },
+    undefined,
+    undefined,
+    {},
+  );
+  const siblingText = JSON.stringify(siblingResult);
   assert(
-    "ls blocks outside workspace",
-    blockedText.includes("outside allowed roots") || blockedText.includes("not allowed"),
-    blockedText.slice(0, 300),
+    "ls preserves access to sibling paths under WORKSPACE_PATH",
+    siblingText.includes("sibling.txt"),
+    siblingText.slice(0, 300),
+  );
+  const piResult = await ls!.execute("ls-pi", { path: piDataDir }, undefined, undefined, {});
+  const piText = JSON.stringify(piResult);
+  assert(
+    "ls preserves access to allowed PI_CONFIG_DIR content",
+    piText.includes("session.jsonl"),
+    piText.slice(0, 300),
+  );
+
+  console.log("sandbox UI redaction");
+  const settingsPanelSource = await readFile(
+    join(process.cwd(), "packages/client/src/components/SettingsPanel.tsx"),
+    "utf8",
+  );
+  assert(
+    "sandbox UI uses masked inputs for values",
+    settingsPanelSource.includes('type={row.revealed ? "text" : "password"}'),
+  );
+  assert(
+    "sandbox UI avoids NAME=value plaintext textarea rendering",
+    !settingsPanelSource.includes("`${k}=${v}`"),
   );
 } finally {
   await rm(root, { recursive: true, force: true });
