@@ -197,9 +197,10 @@ function mapError(reply: FastifyReply, err: unknown): FastifyReply {
     // Git "rejected" / "non-fast-forward" / commit hook failures /
     // missing upstream are user-actionable, not server bugs. 400
     // with a sanitized message lets the client surface the hint
-    // verbatim. Network / auth failures during push are reported the
-    // same way — we don't try to enumerate every git failure mode.
-    return reply.code(400).send({ error: "git_failed", message: err.userMessage });
+    // verbatim. Auth failures get a stable error code so the UI can
+    // distinguish "configure credentials" from ordinary git failures
+    // without ever collecting or returning raw secrets.
+    return reply.code(400).send({ error: err.errorCode, message: err.userMessage });
   }
   reply.log.error({ err }, "unmapped git-runner error");
   return reply.code(500).send({ error: "internal_error" });
@@ -1159,8 +1160,8 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
           "plain `git push` against the configured upstream. `setUpstream: " +
           "true` adds `--set-upstream` so the remote/branch is recorded as " +
           "the tracking ref (required on first push of a new local branch). " +
-          "Returns 400 with git's stderr message on failure (no upstream set, " +
-          "auth refused, rejected non-fast-forward, etc.).",
+          "Returns 400 with a sanitized git failure message. Auth failures use " +
+          "error=git_auth_required with guidance to configure credentials outside pi-forge.",
         tags: ["git"],
         body: {
           type: "object",

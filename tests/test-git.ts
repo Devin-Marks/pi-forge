@@ -11,6 +11,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { mkdir, mkdtemp, rm, writeFile as fsWrite } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -93,6 +94,24 @@ async function jsend(
 
 async function git(cwd: string, args: string[]): Promise<void> {
   await execFileAsync("git", args, { cwd });
+}
+
+async function startAuthRequiredGitServer(): Promise<{ server: HttpServer; url: string }> {
+  const server = createHttpServer((_req, res) => {
+    res.writeHead(401, { "WWW-Authenticate": 'Basic realm="pi-forge-test"' });
+    res.end("authentication required");
+  });
+  await new Promise<void>((resolveFn, rejectFn) => {
+    server.once("error", rejectFn);
+    server.listen(0, "127.0.0.1", () => resolveFn());
+  });
+  const addr = server.address();
+  if (addr === null || typeof addr === "string") throw new Error("missing auth server port");
+  return { server, url: `http://127.0.0.1:${addr.port}/private.git` };
+}
+
+async function closeHttpServer(server: HttpServer): Promise<void> {
+  await new Promise<void>((resolveFn) => server.close(() => resolveFn()));
 }
 
 async function main(): Promise<void> {
@@ -506,6 +525,37 @@ async function main(): Promise<void> {
         typeof body.message === "string" && body.message.length > 0,
         `message: ${body.message ?? "(none)"}`,
       );
+    }
+
+    // ---- auth-required remote → stable, actionable error code/message ----
+    {
+      const { server: authServer, url } = await startAuthRequiredGitServer();
+      try {
+        await git(projectPath, ["remote", "add", "auth-http", url]);
+        const r = await jsend(
+          "POST",
+          `${base}/api/v1/git/fetch`,
+          { projectId: gitProjectId, remote: "auth-http" },
+          auth,
+        );
+        assert("fetch requiring auth → 400", r.status === 400);
+        const body = r.body as { error: string; message?: string };
+        assert("auth failure error code", body.error === "git_auth_required");
+        assert(
+          "auth failure message gives credential guidance",
+          typeof body.message === "string" &&
+            body.message.includes("Configure this remote's credentials") &&
+            body.message.includes("does not collect or store"),
+          `message: ${body.message ?? "(none)"}`,
+        );
+        assert(
+          "auth failure does not echo remote URL",
+          typeof body.message === "string" && !body.message.includes(url),
+          `message: ${body.message ?? "(none)"}`,
+        );
+      } finally {
+        await closeHttpServer(authServer);
+      }
     }
 
     // ---- push round-trip: set up a local bare repo as origin ----
