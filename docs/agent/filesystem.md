@@ -11,8 +11,8 @@ Read this when changing file browser behavior, file-manager operations, path val
    `../../../etc/passwd` style traversal.
 3. Max file read size: 5MB. Larger files return a truncation notice.
 4. `getTree()` skips: `node_modules`, `.git`, `dist`, `build`, `__pycache__`,
-   `.next`, `.nuxt`, `coverage`, `.vite`, `.turbo`, `.cache`. Default max depth: 6 levels;
-   `/files/tree?maxDepth=` is clamped to 1–32 and truncated directories return `truncated: true`.
+   `.next`, `.nuxt`, `coverage`, `.vite`, `.turbo`, `.cache`. Recursion is capped at
+   max depth 32; `/files/tree?maxDepth=` is clamped to 1–32.
 5. Delete operations on non-empty directories are rejected — return a helpful error
    asking the user to delete contents first. Do not implement recursive force-delete.
 

@@ -139,7 +139,7 @@ const TREE_SKIP_DIRS = new Set([
  */
 export const SEARCH_SKIP_DIRS: ReadonlySet<string> = TREE_SKIP_DIRS;
 
-const DEFAULT_TREE_DEPTH = 6;
+const DEFAULT_TREE_DEPTH = 32;
 
 /* ----------------------------- guards ----------------------------- */
 
