@@ -15,6 +15,36 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-06-04
+
+### Added
+
+- **Optional agent tool sandbox.** Container and deployed pi-forge instances can
+  opt in to running model/user tool surfaces as a restricted UID/GID while the
+  server keeps the privileges needed to manage pi-forge state. The sandbox adds
+  path policy checks for model file tools, runs shell-like surfaces with scrubbed
+  environments, disables pi-subagents while sandboxed, and documents Docker,
+  Kubernetes, OpenShift, and mount-permission setup.
+- **Git remote insecure TLS persistence.** The Git pane can explicitly mark a
+  remote as ignoring SSL/TLS verification, and clone-time insecure TLS choices
+  are persisted as repository-local, URL-scoped git config for future
+  fetch/pull/push operations.
+- **Tool input/output copy affordances.** Chat tool call inputs and outputs now
+  expose compact copy buttons without changing the existing native details
+  marker style.
+
+### Changed
+
+- **Chat and session pane polish.** Chat auto-scroll now stops following more
+  conservatively when the user scrolls upward, project session rows have subtle
+  separators, and double-click rename selects the displayed session label.
+
+### Fixed
+
+- **MCP tool calls recover from stale server sessions.** When an MCP server
+  restarts and rejects the cached session id with a session-not-found JSON-RPC
+  error, pi-forge reconnects the MCP transport once and retries the tool call.
+
 ## [1.3.7] — 2026-06-03
 
 ### Added
