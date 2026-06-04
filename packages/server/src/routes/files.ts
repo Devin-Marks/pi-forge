@@ -309,8 +309,8 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
           "Recursive directory tree for the project. Skips noisy folders " +
           "(node_modules, .git, dist, build, __pycache__, .next, .nuxt, " +
           "coverage, .vite, .turbo, .cache). Default max depth 6 — deeper " +
-          "directories are returned with `truncated: true` so the UI can " +
-          "lazy-fetch them on demand.",
+          "directories are returned with `truncated: true`; callers may " +
+          "request a clamped `maxDepth` between 1 and 32.",
         tags: ["files"],
         querystring: {
           type: "object",

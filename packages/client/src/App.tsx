@@ -240,33 +240,23 @@ export function App() {
   const sessionProcesses = useProcessesStore((s) => selectProcesses(s, activeSessionId));
   const runningProcessCount = countRunning(sessionProcesses);
 
-  // Refresh the file tree on every agent_end the active project hears,
-  // since the agent commonly writes/edits files mid-turn. The session
-  // store bumps `agentEndCountBySession[id]` exactly once per agent_end,
-  // so this effect fires once per turn — no false positives from
-  // benign array-replacement refetches that would trip a length proxy.
-  const agentEndCount = useSessionStore((s) =>
-    activeSessionId !== undefined ? (s.agentEndCountBySession[activeSessionId] ?? 0) : 0,
-  );
-  const isStreaming = useSessionStore((s) =>
-    activeSessionId !== undefined ? (s.streamingBySession[activeSessionId] ?? false) : false,
+  // Refresh the file tree/editor tabs when the session store observes
+  // workspace mutations. `write` tool completions bump this immediately
+  // mid-turn; `agent_end` bumps it only for turns with no write calls so
+  // bash/MCP-side mutations still reconcile without double-loading after
+  // normal write-tool turns.
+  const fileRefreshCount = useSessionStore((s) =>
+    activeSessionId !== undefined ? (s.fileRefreshCountBySession[activeSessionId] ?? 0) : 0,
   );
   const loadFileTree = useFileStore((s) => s.loadTree);
   const restoreTabs = useFileStore((s) => s.restoreTabs);
   const refreshOpenFiles = useFileStore((s) => s.refreshOpenFiles);
-  // After every agent turn, reconcile the file browser tree AND the
-  // open editor tabs against on-disk state. Decoupled from
-  // tool-result inspection: this fires once per `agent_end` and
-  // catches every kind of change — built-in edit/write tools, MCP
-  // tools, terminal commands the agent shelled out to, git ops, etc.
-  // Refresh helper handles per-tab reconciliation (silent reload
-  // for clean buffers, externally-changed banner for dirty ones).
   useEffect(() => {
-    if (active === undefined || isStreaming) return;
+    if (active === undefined || fileRefreshCount === 0) return;
     void loadFileTree(active.id);
     void refreshOpenFiles(active.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active?.id, isStreaming, agentEndCount]);
+  }, [active?.id, fileRefreshCount]);
 
   // Re-open the editor tabs persisted for this project. No-op if any
   // tabs are already open, so a project hot-switch doesn't fight a

@@ -117,6 +117,15 @@ function flattenTree(node: TreeNode): string[] {
   return out;
 }
 
+function findTreeNode(node: TreeNode, path: string): TreeNode | undefined {
+  if (node.path.replaceAll("\\", "/") === path) return node;
+  for (const child of node.children ?? []) {
+    const found = findTreeNode(child, path);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
 async function main(): Promise<void> {
   const workspacePath = await mkdtemp(join(tmpdir(), "pi-forge-ws-"));
   const configDir = await mkdtemp(join(tmpdir(), "pi-forge-cfg-"));
@@ -126,11 +135,14 @@ async function main(): Promise<void> {
   // Seed a project tree with the noisy dirs the route should skip.
   await mkdir(join(projectPath, "src"), { recursive: true });
   await mkdir(join(projectPath, "src", "deep"), { recursive: true });
+  const tooDeepDir = join(projectPath, "d1", "d2", "d3", "d4", "d5", "d6", "d7");
+  await mkdir(tooDeepDir, { recursive: true });
   await mkdir(join(projectPath, "node_modules", "fake-pkg"), { recursive: true });
   await mkdir(join(projectPath, ".git", "objects"), { recursive: true });
   await mkdir(join(projectPath, "dist"), { recursive: true });
   await fsWrite(join(projectPath, "src", "index.ts"), "export const x = 1;\n", "utf8");
   await fsWrite(join(projectPath, "src", "deep", "nested.txt"), "deep content\n", "utf8");
+  await fsWrite(join(tooDeepDir, "leaf.txt"), "too deep\n", "utf8");
   await symlink(join("src", "index.ts"), join(projectPath, "linked-index.ts"));
   await fsWrite(join(projectPath, "node_modules", "fake-pkg", "index.js"), "module.exports={};\n");
   await fsWrite(join(projectPath, ".git", "HEAD"), "ref: refs/heads/main\n");
@@ -212,7 +224,23 @@ async function main(): Promise<void> {
       );
       assert("tree EXCLUDES .git", !paths.some((p) => p.startsWith("directory:.git")));
       assert("tree EXCLUDES dist", !paths.some((p) => p.startsWith("directory:dist")));
+      const d6 = findTreeNode(tree, "d1/d2/d3/d4/d5/d6");
+      assert("tree default depth truncates level 6 directory", d6?.truncated === true);
+      assert(
+        "tree default depth excludes level 7 leaf",
+        !paths.includes("file:d1/d2/d3/d4/d5/d6/d7/leaf.txt"),
+      );
       assert("tree project_not_found → 404", true); // sanity: covered below
+    }
+    {
+      const r = await jget(
+        `${base}/api/v1/files/tree?projectId=${encodeURIComponent(projectId)}&maxDepth=2`,
+        auth,
+      );
+      assert("GET /files/tree?maxDepth=2 → 200", r.status === 200);
+      const tree = r.body as TreeNode;
+      const deep = findTreeNode(tree, "src/deep");
+      assert("tree honors maxDepth query", deep?.truncated === true);
     }
     {
       const r = await jget(

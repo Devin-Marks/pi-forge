@@ -195,6 +195,10 @@ function removeSessionFromState(current: SessionState, sessionId: string): Parti
   delete nextActiveTool[sessionId];
   const nextAgentEndCount = { ...current.agentEndCountBySession };
   delete nextAgentEndCount[sessionId];
+  const nextFileRefreshCount = { ...current.fileRefreshCountBySession };
+  delete nextFileRefreshCount[sessionId];
+  const nextTurnWriteCount = { ...current.turnWriteCountBySession };
+  delete nextTurnWriteCount[sessionId];
   const nextQueued = { ...current.queuedBySession };
   delete nextQueued[sessionId];
   const byProject: Record<string, UnifiedSession[]> = {};
@@ -208,6 +212,8 @@ function removeSessionFromState(current: SessionState, sessionId: string): Parti
     streamingTextBySession: nextStreamingText,
     activeToolBySession: nextActiveTool,
     agentEndCountBySession: nextAgentEndCount,
+    fileRefreshCountBySession: nextFileRefreshCount,
+    turnWriteCountBySession: nextTurnWriteCount,
     queuedBySession: nextQueued,
     byProject,
     activeSessionId: current.activeSessionId === sessionId ? undefined : current.activeSessionId,
@@ -266,6 +272,16 @@ interface SessionState {
    * too. Cheap to compare; no allocations.
    */
   agentEndCountBySession: Record<string, number>;
+  /**
+   * Per-session monotonic counter for refreshing file browser/editor
+   * state. Incremented immediately when a `write` tool finishes so the
+   * file pane reflects agent-created files mid-turn. If a turn has no
+   * write calls, `agent_end` increments this counter as a catch-all for
+   * other possible workspace mutations (bash, MCP tools, etc.).
+   */
+  fileRefreshCountBySession: Record<string, number>;
+  /** Number of write tool completions observed in the current turn. */
+  turnWriteCountBySession: Record<string, number>;
   /**
    * Per-session monotonic counter incremented on every
    * `compaction_end` event. Mirrors `agentEndCountBySession` for
@@ -359,6 +375,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   streamingTextBySession: {},
   activeToolBySession: {},
   agentEndCountBySession: {},
+  fileRefreshCountBySession: {},
+  turnWriteCountBySession: {},
   compactionEndCountBySession: {},
   queuedBySession: {},
   pendingScrollByMessageIndex: {},
@@ -823,6 +841,7 @@ function applyEvent(
       streamingBySession: { ...s.streamingBySession, [sessionId]: true },
       streamingTextBySession: { ...s.streamingTextBySession, [sessionId]: "" },
       bannerBySession: { ...s.bannerBySession, [sessionId]: undefined },
+      turnWriteCountBySession: { ...s.turnWriteCountBySession, [sessionId]: 0 },
     }));
     return;
   }
@@ -872,6 +891,13 @@ function applyEvent(
               ...s.agentEndCountBySession,
               [sessionId]: (s.agentEndCountBySession[sessionId] ?? 0) + 1,
             },
+            fileRefreshCountBySession:
+              (s.turnWriteCountBySession[sessionId] ?? 0) === 0
+                ? {
+                    ...s.fileRefreshCountBySession,
+                    [sessionId]: (s.fileRefreshCountBySession[sessionId] ?? 0) + 1,
+                  }
+                : s.fileRefreshCountBySession,
           };
         });
       })
@@ -899,6 +925,13 @@ function applyEvent(
             ...s.agentEndCountBySession,
             [sessionId]: (s.agentEndCountBySession[sessionId] ?? 0) + 1,
           },
+          fileRefreshCountBySession:
+            (s.turnWriteCountBySession[sessionId] ?? 0) === 0
+              ? {
+                  ...s.fileRefreshCountBySession,
+                  [sessionId]: (s.fileRefreshCountBySession[sessionId] ?? 0) + 1,
+                }
+              : s.fileRefreshCountBySession,
         }));
       });
     return;
@@ -951,8 +984,21 @@ function applyEvent(
   }
 
   if (event.type === "tool_execution_end") {
+    const isWrite = isToolEventNamed(event, "write");
     set((s) => ({
       activeToolBySession: { ...s.activeToolBySession, [sessionId]: undefined },
+      ...(isWrite
+        ? {
+            fileRefreshCountBySession: {
+              ...s.fileRefreshCountBySession,
+              [sessionId]: (s.fileRefreshCountBySession[sessionId] ?? 0) + 1,
+            },
+            turnWriteCountBySession: {
+              ...s.turnWriteCountBySession,
+              [sessionId]: (s.turnWriteCountBySession[sessionId] ?? 0) + 1,
+            },
+          }
+        : {}),
     }));
     // Refetch so the toolResult message (and any updated assistant
     // bubble) shows up before the next tool fires. Without this the
@@ -1271,6 +1317,11 @@ function scheduleMessagesRefetch(
       refetchState.delete(sessionId);
     }
   });
+}
+
+/** True when an SSE tool event identifies a particular tool by name. */
+function isToolEventNamed(event: IncomingEvent, name: string): boolean {
+  return typeof event.toolName === "string" && event.toolName === name;
 }
 
 /**
