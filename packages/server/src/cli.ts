@@ -447,6 +447,14 @@ const FLAGS: readonly FlagDef[] = [
     defaultText: "600000 (10m)",
   },
   {
+    name: "terminal-ws-keepalive-ms",
+    env: "TERMINAL_WS_KEEPALIVE_MS",
+    type: "number",
+    group: "terminal",
+    desc: "WebSocket ping cadence for idle integrated terminals (ms; 0 disables)",
+    defaultText: "30000 (30s)",
+  },
+  {
     name: "terminal-passthrough-env",
     env: "TERMINAL_PASSTHROUGH_ENV",
     type: "list",

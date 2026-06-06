@@ -88,6 +88,8 @@ interface OpenedSocket {
   ws: WebSocket;
   /** All output bytes received so far, joined as text. */
   output: string;
+  /** Number of RFC WebSocket ping frames received from the server. */
+  pings: number;
   /** Whether the close event has fired. */
   closed: boolean;
   closeCode?: number;
@@ -111,7 +113,7 @@ function openTerminal(
     if (query.tabId !== undefined) qs.set("tabId", query.tabId);
     const url = `${base.replace(/^http/, "ws")}/api/v1/terminal?${qs.toString()}`;
     const ws = new WebSocket(url);
-    const state: OpenedSocket = { ws, output: "", closed: false };
+    const state: OpenedSocket = { ws, output: "", pings: 0, closed: false };
     let opened = false;
     ws.on("open", () => {
       opened = true;
@@ -119,6 +121,9 @@ function openTerminal(
     });
     ws.on("message", (data: WebSocket.RawData) => {
       state.output += typeof data === "string" ? data : data.toString();
+    });
+    ws.on("ping", () => {
+      state.pings += 1;
     });
     ws.on("close", (code, reason) => {
       state.closed = true;
@@ -148,6 +153,15 @@ async function waitForOutput(
   while (Date.now() < deadline) {
     if (state.output.includes(needle)) return true;
     await new Promise((r) => setTimeout(r, 50));
+  }
+  return false;
+}
+
+async function waitForPing(state: OpenedSocket, timeoutMs = 2_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (state.pings > 0) return true;
+    await new Promise((r) => setTimeout(r, 25));
   }
   return false;
 }
@@ -241,6 +255,9 @@ async function main(): Promise<void> {
       // the test budget instead of waiting the 10-minute production
       // default. 200 ms is comfortably above any timer-scheduling jitter.
       PTY_IDLE_REAP_MS: String(REAP_MS),
+      // Fast keepalive cadence so the idle-WS ping mitigation is
+      // observable in this integration test without a 30s wait.
+      TERMINAL_WS_KEEPALIVE_MS: "100",
       // Predictable PS1 so the prompt doesn't drown the test output.
       PS1: "$ ",
     },
@@ -334,6 +351,13 @@ async function main(): Promise<void> {
       // assert no error closes the socket.
       await new Promise((r) => setTimeout(r, 100));
       assert("socket still open after resize", term.ws.readyState === WebSocket.OPEN);
+
+      // ---- Idle WebSocket keepalive ----
+      // The PTY is idle here: no input and no shell output required.
+      // A server ping proves idle terminals now send transport-level
+      // bytes that reset common proxy read timers without writing
+      // anything visible into xterm.
+      assert("idle terminal receives WebSocket ping keepalive", await waitForPing(term));
 
       // ---- Env allowlist: secrets dropped, harmless vars passed through ----
       // The pi-forge server process has API_KEY set (we passed it
