@@ -39,6 +39,7 @@ import { createOrchestrationTools, ORCHESTRATION_TOOL_NAMES } from "./orchestrat
 import { bridgeWorkerAgentEvent } from "./orchestration/event-bridge.js";
 import { notifySupervisorDisposed, notifySupervisorIdle } from "./orchestration/inbox.js";
 import { archiveSessionFiles } from "./session-archive.js";
+import { generateSessionTitleFromPrompt, isGenericSessionName } from "./session-title.js";
 import { getExternalSubagentStatusForSession } from "./subagents-external.js";
 
 /**
@@ -758,6 +759,45 @@ export function listSessions(projectId?: string): LiveSession[] {
 export function touchSession(sessionId: string): void {
   const live = registry.get(sessionId);
   if (live !== undefined) live.lastActivityAt = new Date();
+}
+
+export function maybeNameSessionFromFirstPrompt(
+  live: LiveSession,
+  promptText: string,
+): string | undefined {
+  if (!isGenericSessionName(live.session.sessionName)) return undefined;
+  if (live.session.messages.some((message) => message.role === "user")) return undefined;
+
+  const title = generateSessionTitleFromPrompt(promptText);
+  if (title === undefined) return undefined;
+
+  try {
+    live.session.setSessionName(title);
+  } catch (err) {
+    logAgentEvent("warn", {
+      msg: "failed to set automatic session name",
+      sessionId: live.sessionId,
+      projectId: live.projectId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
+  }
+
+  live.lastActivityAt = new Date();
+  const event = {
+    type: "session_renamed" as const,
+    sessionId: live.sessionId,
+    projectId: live.projectId,
+    name: title,
+  };
+  for (const client of live.clients) {
+    try {
+      client.send(event);
+    } catch {
+      live.clients.delete(client);
+    }
+  }
+  return title;
 }
 
 /**

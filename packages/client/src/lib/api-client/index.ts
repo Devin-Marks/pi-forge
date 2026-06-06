@@ -322,9 +322,16 @@ function vSessionSummary(value: unknown, status: number): SessionSummary {
   return out;
 }
 
-function vAccepted(value: unknown, status: number): { accepted: true } {
+export interface AcceptedResponse {
+  accepted: true;
+  sessionName?: string;
+}
+
+function vAccepted(value: unknown, status: number): AcceptedResponse {
   if (!isObject(value) || value.accepted !== true) fail(status, "expected { accepted: true }");
-  return { accepted: true };
+  const out: AcceptedResponse = { accepted: true };
+  if (typeof value.sessionName === "string") out.sessionName = value.sessionName;
+  return out;
 }
 
 function vSkillSummary(s: unknown, status: number): SkillSummary {
