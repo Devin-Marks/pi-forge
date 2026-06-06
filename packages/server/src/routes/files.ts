@@ -308,9 +308,8 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
         description:
           "Recursive directory tree for the project. Skips noisy folders " +
           "(node_modules, .git, dist, build, __pycache__, .next, .nuxt, " +
-          "coverage, .vite, .turbo, .cache). Default max depth 6 — deeper " +
-          "directories are returned with `truncated: true` so the UI can " +
-          "lazy-fetch them on demand.",
+          "coverage, .vite, .turbo, .cache). Recursion is capped at " +
+          "max depth 32 to avoid unbounded filesystem walks.",
         tags: ["files"],
         querystring: {
           type: "object",
@@ -327,10 +326,10 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
       const project = await resolveProject(req.query.projectId, reply);
       if (project === undefined) return reply;
       try {
-        // Clamp client-supplied maxDepth to a sane window. The schema
-        // already gates on `^[0-9]+$`, so parseInt is safe; we cap at
-        // 32 because anything past that is either a misconfiguration
-        // or someone trying to force a deep recursion DoS.
+        // Clamp client-supplied maxDepth to the same hard cap used by
+        // the default tree load so callers cannot force unbounded
+        // recursion. The schema already gates on `^[0-9]+$`, so
+        // parseInt is safe.
         let maxDepth: number | undefined;
         if (req.query.maxDepth !== undefined) {
           const n = Number.parseInt(req.query.maxDepth, 10);
