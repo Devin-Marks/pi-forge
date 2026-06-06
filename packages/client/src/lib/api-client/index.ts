@@ -25,6 +25,7 @@ import {
   type BrowseEntry,
   type BrowseResponse,
   type HealthResponse,
+  type SandboxSettingsResponse,
   type UiConfigResponse,
   type UnifiedSession,
   type SessionSummary,
@@ -157,6 +158,21 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
     passwordAuthEnabled,
     orchestrationEnabled,
   };
+}
+
+function vSandboxSettings(value: unknown, status: number): SandboxSettingsResponse {
+  if (!isObject(value) || typeof value.enabled !== "boolean" || !isObject(value.toolEnv)) {
+    fail(status, "expected SandboxSettingsResponse");
+  }
+  const toolEnv: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value.toolEnv)) {
+    if (typeof v !== "string") fail(status, "toolEnv values must be strings");
+    toolEnv[k] = v;
+  }
+  const out: SandboxSettingsResponse = { enabled: value.enabled, toolEnv };
+  if (typeof value.uid === "number") out.uid = value.uid;
+  if (typeof value.gid === "number") out.gid = value.gid;
+  return out;
 }
 
 function vHealth(value: unknown, status: number): HealthResponse {
@@ -1865,6 +1881,12 @@ export const api = {
   getSettings: () => request("/api/v1/config/settings", vSettings),
   updateSettings: (patch: Record<string, unknown>) =>
     request("/api/v1/config/settings", vSettings, { method: "PUT", body: patch }),
+  getSandboxSettings: () => request("/api/v1/config/sandbox", vSandboxSettings),
+  updateSandboxSettings: (toolEnv: Record<string, string>) =>
+    request("/api/v1/config/sandbox", vSandboxSettings, {
+      method: "PUT",
+      body: { toolEnv },
+    }),
   getAuthSummary: () => request("/api/v1/config/auth", vAuthSummary),
   setApiKey: (provider: string, apiKey: string) =>
     request(

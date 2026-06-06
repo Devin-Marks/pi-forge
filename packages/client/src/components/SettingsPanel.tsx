@@ -10,6 +10,7 @@ import {
   type ProvidersListing,
   type PromptSummary,
   type SkillDiagnostic,
+  type SandboxSettingsResponse,
   type SkillSummary,
   type ToolListing,
 } from "../lib/api-client";
@@ -28,6 +29,7 @@ type Tab =
   | "agent"
   | "mcp"
   | "tools"
+  | "sandbox"
   | "skills"
   | "prompts"
   | "systemPrompt"
@@ -88,6 +90,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
             "prompts",
             "systemPrompt",
             "tools",
+            "sandbox",
             "quickActions",
             "appearance",
             "backup",
@@ -98,6 +101,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
             "agent",
             "mcp",
             "tools",
+            "sandbox",
             "skills",
             "prompts",
             "systemPrompt",
@@ -170,21 +174,23 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
                         ? "MCP"
                         : t === "tools"
                           ? "Tools"
-                          : t === "skills"
-                            ? "Skills"
-                            : t === "prompts"
-                              ? "Prompts"
-                              : t === "systemPrompt"
-                                ? "System Prompt"
-                                : t === "quickActions"
-                                  ? "Quick Actions"
-                                  : t === "webhooks"
-                                    ? "Webhooks"
-                                    : t === "appearance"
-                                      ? "Appearance"
-                                      : t === "backup"
-                                        ? "Backup"
-                                        : "General"}
+                          : t === "sandbox"
+                            ? "Sandbox"
+                            : t === "skills"
+                              ? "Skills"
+                              : t === "prompts"
+                                ? "Prompts"
+                                : t === "systemPrompt"
+                                  ? "System Prompt"
+                                  : t === "quickActions"
+                                    ? "Quick Actions"
+                                    : t === "webhooks"
+                                      ? "Webhooks"
+                                      : t === "appearance"
+                                        ? "Appearance"
+                                        : t === "backup"
+                                          ? "Backup"
+                                          : "General"}
                 </button>
               ))}
             </div>
@@ -233,6 +239,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           {tab === "agent" && <AgentTab onError={setError} />}
           {tab === "mcp" && <McpTab onError={setError} />}
           {tab === "tools" && <ToolsTab onError={setError} />}
+          {tab === "sandbox" && <SandboxTab onError={setError} />}
           {tab === "skills" && <SkillsTab onError={setError} />}
           {tab === "prompts" && <PromptsTab onError={setError} />}
           {tab === "systemPrompt" && <SystemPromptTab onError={setError} />}
@@ -1453,6 +1460,213 @@ function AddOverrideDropdown({
         Cancel
       </button>
     </div>
+  );
+}
+
+// ---------------- Sandbox tab ----------------
+
+interface SandboxEnvRow {
+  id: string;
+  name: string;
+  value: string;
+  revealed: boolean;
+}
+
+function sandboxRowsFromEnv(toolEnv: Record<string, string>): SandboxEnvRow[] {
+  return Object.entries(toolEnv)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, value]) => ({ id: crypto.randomUUID(), name, value, revealed: false }));
+}
+
+function sandboxRowsToEnv(rows: readonly SandboxEnvRow[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [idx, row] of rows.entries()) {
+    const name = row.name.trim();
+    if (name.length === 0 && row.value.length === 0) continue;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      throw new Error(`Row ${idx + 1}: invalid environment variable name`);
+    }
+    out[name] = row.value;
+  }
+  return out;
+}
+
+function SandboxTab({ onError }: { onError: (msg: string | undefined) => void }) {
+  const [settings, setSettings] = useState<SandboxSettingsResponse | undefined>(undefined);
+  const [rows, setRows] = useState<SandboxEnvRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api
+      .getSandboxSettings()
+      .then((res) => {
+        if (cancelled) return;
+        setSettings(res);
+        setRows(sandboxRowsFromEnv(res.toolEnv));
+        onError(undefined);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) onError(errorCode(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onError]);
+
+  async function submit(e: FormEvent): Promise<void> {
+    e.preventDefault();
+    setSaved(false);
+    let parsed: Record<string, string>;
+    try {
+      parsed = sandboxRowsToEnv(rows);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await api.updateSandboxSettings(parsed);
+      setSettings(res);
+      setRows(sandboxRowsFromEnv(res.toolEnv));
+      onError(undefined);
+      setSaved(true);
+    } catch (err) {
+      onError(errorCode(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-4">
+      <div>
+        <h2 className="text-sm font-semibold text-neutral-100">Sandbox mode</h2>
+        <p className="mt-1 text-xs text-neutral-400">
+          Configure environment variables injected into future agent tool calls. Sandbox enablement
+          and UID/GID are deploy-time settings; changes here take effect for new or refreshed
+          sessions.
+        </p>
+      </div>
+
+      <div className="rounded border border-neutral-800 bg-neutral-950 p-3 text-xs text-neutral-300">
+        {loading ? (
+          <span className="text-neutral-500">Loading sandbox settings…</span>
+        ) : settings?.enabled ? (
+          <span>
+            Enabled{settings.uid !== undefined ? ` · uid ${settings.uid}` : ""}
+            {settings.gid !== undefined ? ` · gid ${settings.gid}` : ""}
+          </span>
+        ) : (
+          <span className="text-amber-300">
+            Sandbox tool overrides are disabled. Saved variables are persisted, but only injected
+            into forge-managed tool shells; full filesystem sandboxing requires
+            AGENT_TOOL_SANDBOX_ENABLED=true.
+          </span>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-medium text-neutral-300">Tool environment</span>
+          <button
+            type="button"
+            onClick={() => {
+              setRows((current) => [
+                ...current,
+                { id: crypto.randomUUID(), name: "", value: "", revealed: false },
+              ]);
+              setSaved(false);
+            }}
+            className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:border-neutral-500"
+          >
+            Add variable
+          </button>
+        </div>
+        <div className="space-y-2">
+          {rows.length === 0 && (
+            <div className="rounded border border-dashed border-neutral-800 px-3 py-4 text-xs text-neutral-500">
+              No sandbox tool environment variables configured.
+            </div>
+          )}
+          {rows.map((row) => (
+            <div
+              key={row.id}
+              className="grid gap-2 rounded border border-neutral-800 p-2 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto_auto]"
+            >
+              <input
+                value={row.name}
+                onChange={(e) => {
+                  const name = e.target.value;
+                  setRows((current) => current.map((r) => (r.id === row.id ? { ...r, name } : r)));
+                  setSaved(false);
+                }}
+                placeholder="HTTP_PROXY"
+                spellCheck={false}
+                className="rounded border border-neutral-800 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-100 outline-none focus:border-neutral-600"
+                aria-label="Environment variable name"
+              />
+              <input
+                value={row.value}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setRows((current) => current.map((r) => (r.id === row.id ? { ...r, value } : r)));
+                  setSaved(false);
+                }}
+                type={row.revealed ? "text" : "password"}
+                placeholder="value"
+                spellCheck={false}
+                autoComplete="off"
+                className="rounded border border-neutral-800 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-100 outline-none focus:border-neutral-600"
+                aria-label="Environment variable value"
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  setRows((current) =>
+                    current.map((r) => (r.id === row.id ? { ...r, revealed: !r.revealed } : r)),
+                  )
+                }
+                className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:border-neutral-500"
+              >
+                {row.revealed ? "Hide" : "Reveal"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRows((current) => current.filter((r) => r.id !== row.id));
+                  setSaved(false);
+                }}
+                className="rounded border border-red-900/60 px-2 py-1 text-xs text-red-300 hover:border-red-700"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+      <p className="text-xs text-neutral-500">
+        Values are masked by default and only revealed per row. They are still stored in pi-forge
+        data and passed to tool processes, so avoid secrets unless that storage is protected.
+      </p>
+
+      <div className="flex items-center gap-3">
+        <button
+          type="submit"
+          disabled={loading || saving}
+          className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+        >
+          {saving ? "Saving…" : "Save sandbox env"}
+        </button>
+        {saved && <span className="text-xs text-green-400">Saved</span>}
+      </div>
+    </form>
   );
 }
 

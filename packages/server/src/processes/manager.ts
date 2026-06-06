@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { sandboxSpawnIdentity } from "../agent-bash-operations.js";
 import { config } from "../config.js";
 import { scrubbedEnv } from "../pty-manager.js";
+import { mergeToolEnv } from "../sandbox-settings.js";
 import { LogChannel, processLogDir } from "./log-store.js";
 import { buildMatchEvent, compileWatches, evaluateWatches, type CompiledWatch } from "./watches.js";
 import {
@@ -105,7 +106,7 @@ class ProcessManagerRegistry {
     // secrets leak to the child.
     const child = spawn("/bin/sh", ["-c", command], {
       cwd,
-      env: scrubbedEnv(),
+      env: mergeToolEnv(scrubbedEnv(), opts.toolEnv ?? {}),
       stdio: ["pipe", "pipe", "pipe"],
       ...sandboxSpawnIdentity(),
       // Put each managed command in its own process group. The

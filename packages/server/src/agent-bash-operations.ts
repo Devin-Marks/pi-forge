@@ -2,19 +2,23 @@ import { spawn } from "node:child_process";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import { config } from "./config.js";
 import { scrubbedEnv } from "./pty-manager.js";
+import { mergeToolEnv } from "./sandbox-settings.js";
 
 export function sandboxSpawnIdentity(): { uid?: number; gid?: number } {
   if (!config.agentToolSandbox.enabled) return {};
   return { uid: config.agentToolSandbox.uid!, gid: config.agentToolSandbox.gid! };
 }
 
-export function createForgeBashOperations(workspacePath: string): BashOperations {
+export function createForgeBashOperations(
+  workspacePath: string,
+  toolEnv: Record<string, string> = {},
+): BashOperations {
   return {
     exec: (command, _cwd, options) => {
       return new Promise<{ exitCode: number | null }>((resolve, reject) => {
         const proc = spawn("/bin/sh", ["-c", command], {
           cwd: workspacePath,
-          env: scrubbedEnv(),
+          env: mergeToolEnv(scrubbedEnv(), toolEnv),
           stdio: ["ignore", "pipe", "pipe"],
           ...sandboxSpawnIdentity(),
         });

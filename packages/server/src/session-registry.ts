@@ -41,6 +41,7 @@ import { notifySupervisorDisposed, notifySupervisorIdle } from "./orchestration/
 import { archiveSessionFiles } from "./session-archive.js";
 import { generateSessionTitleFromPrompt, isGenericSessionName } from "./session-title.js";
 import { getExternalSubagentStatusForSession } from "./subagents-external.js";
+import { readSandboxSettings } from "./sandbox-settings.js";
 
 /**
  * Minimal SSE client contract used by the registry to fan out events.
@@ -631,9 +632,10 @@ async function resolveOrchestrationTools(sessionId: string): Promise<ToolDefinit
 function applyAgentToolSandbox(
   workspacePath: string,
   customTools: readonly ToolDefinition[],
+  toolEnv: Record<string, string>,
 ): ToolDefinition[] {
   if (!config.agentToolSandbox.enabled) return [...customTools];
-  return [...customTools, ...createSandboxedToolDefinitions(workspacePath)];
+  return [...customTools, ...createSandboxedToolDefinitions(workspacePath, toolEnv)];
 }
 
 export async function createSession(
@@ -654,9 +656,10 @@ export async function createSession(
   // create() onward — read it BEFORE createAgentSession so the
   // forge-native ask_user_question tool can bind to the right
   // session in its execute() closure.
+  const toolEnv = (await readSandboxSettings()).toolEnv;
   const askTool = createAskUserQuestionTool(sessionManager.getSessionId());
   const todoTool = createTodoTool(sessionManager.getSessionId(), sessionManager);
-  const processTool = createProcessTool(sessionManager.getSessionId(), workspacePath);
+  const processTool = createProcessTool(sessionManager.getSessionId(), workspacePath, toolEnv);
   const orchestrationTools = await resolveOrchestrationTools(sessionManager.getSessionId());
   const customTools: ToolDefinition[] = [
     ...mcpTools,
@@ -665,7 +668,7 @@ export async function createSession(
     processTool,
     ...orchestrationTools,
   ];
-  const effectiveCustomTools = applyAgentToolSandbox(workspacePath, customTools);
+  const effectiveCustomTools = applyAgentToolSandbox(workspacePath, customTools, toolEnv);
   const settingsManager = await buildSessionSettingsManager(workspacePath, projectId);
   const resourceLoader = await buildForgeResourceLoader(
     workspacePath,
@@ -986,9 +989,10 @@ export async function resumeSession(
     const childSessionDir = match.parentSessionId !== undefined ? join(match.path, "..") : dir;
     const sessionManager = SessionManager.open(match.path, childSessionDir, workspacePath);
     const mcpTools = await resolveMcpCustomTools(projectId, workspacePath);
+    const toolEnv = (await readSandboxSettings()).toolEnv;
     const askTool = createAskUserQuestionTool(sessionManager.getSessionId());
     const todoTool = createTodoTool(sessionManager.getSessionId(), sessionManager);
-    const processTool = createProcessTool(sessionManager.getSessionId(), workspacePath);
+    const processTool = createProcessTool(sessionManager.getSessionId(), workspacePath, toolEnv);
     const orchestrationTools = await resolveOrchestrationTools(sessionManager.getSessionId());
     const customTools: ToolDefinition[] = [
       ...mcpTools,
@@ -997,7 +1001,7 @@ export async function resumeSession(
       processTool,
       ...orchestrationTools,
     ];
-    const effectiveCustomTools = applyAgentToolSandbox(workspacePath, customTools);
+    const effectiveCustomTools = applyAgentToolSandbox(workspacePath, customTools, toolEnv);
     // Resumed session — refresh the todo cache from the branch so
     // the UI panel sees the persisted state on first SSE connect,
     // not an empty list.
@@ -1660,9 +1664,14 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
   const dir = sessionDirFor(source.projectId);
   const sessionManager = SessionManager.open(newPath, dir, source.workspacePath);
   const mcpTools = await resolveMcpCustomTools(source.projectId, source.workspacePath);
+  const toolEnv = (await readSandboxSettings()).toolEnv;
   const askTool = createAskUserQuestionTool(sessionManager.getSessionId());
   const todoTool = createTodoTool(sessionManager.getSessionId(), sessionManager);
-  const processTool = createProcessTool(sessionManager.getSessionId(), source.workspacePath);
+  const processTool = createProcessTool(
+    sessionManager.getSessionId(),
+    source.workspacePath,
+    toolEnv,
+  );
   const orchestrationTools = await resolveOrchestrationTools(sessionManager.getSessionId());
   const customTools: ToolDefinition[] = [
     ...mcpTools,
@@ -1671,7 +1680,7 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
     processTool,
     ...orchestrationTools,
   ];
-  const effectiveCustomTools = applyAgentToolSandbox(source.workspacePath, customTools);
+  const effectiveCustomTools = applyAgentToolSandbox(source.workspacePath, customTools, toolEnv);
   // Forked session — replay the branch (which now belongs to the
   // fork) so the new session's todo cache reflects the inherited
   // state, not the parent's stale entry.
@@ -1750,11 +1759,13 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
       source.unsubscribe();
       const restoredManager = SessionManager.open(originalSourceFile, dir, source.workspacePath);
       const restoredMcpTools = await resolveMcpCustomTools(source.projectId, source.workspacePath);
+      const restoredToolEnv = (await readSandboxSettings()).toolEnv;
       const restoredAskTool = createAskUserQuestionTool(restoredManager.getSessionId());
       const restoredTodoTool = createTodoTool(restoredManager.getSessionId(), restoredManager);
       const restoredProcessTool = createProcessTool(
         restoredManager.getSessionId(),
         source.workspacePath,
+        restoredToolEnv,
       );
       const restoredOrchestrationTools = await resolveOrchestrationTools(
         restoredManager.getSessionId(),
@@ -1769,6 +1780,7 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
       const restoredEffectiveCustomTools = applyAgentToolSandbox(
         source.workspacePath,
         restoredCustomTools,
+        restoredToolEnv,
       );
       // Re-derive the original source's todo cache from the (now
       // un-mutated) source JSONL — the SDK's fork machinery left
@@ -1893,9 +1905,10 @@ export async function rebuildAgentSessionForTools(
   // file the SessionManager points at.
   const sessionManager = live.session.sessionManager;
   const mcpTools = await resolveMcpCustomTools(live.projectId, live.workspacePath);
+  const toolEnv = (await readSandboxSettings()).toolEnv;
   const askTool = createAskUserQuestionTool(sessionManager.getSessionId());
   const todoTool = createTodoTool(sessionManager.getSessionId(), sessionManager);
-  const processTool = createProcessTool(sessionManager.getSessionId(), live.workspacePath);
+  const processTool = createProcessTool(sessionManager.getSessionId(), live.workspacePath, toolEnv);
   const orchestrationTools = await resolveOrchestrationTools(sessionManager.getSessionId());
   const customTools: ToolDefinition[] = [
     ...mcpTools,
@@ -1904,7 +1917,7 @@ export async function rebuildAgentSessionForTools(
     processTool,
     ...orchestrationTools,
   ];
-  const effectiveCustomTools = applyAgentToolSandbox(live.workspacePath, customTools);
+  const effectiveCustomTools = applyAgentToolSandbox(live.workspacePath, customTools, toolEnv);
   const settingsManager = await buildSessionSettingsManager(live.workspacePath, live.projectId);
   const resourceLoader = await buildForgeResourceLoader(
     live.workspacePath,

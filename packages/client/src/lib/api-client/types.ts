@@ -258,6 +258,13 @@ export interface HealthResponse {
   activePtys: number;
 }
 
+export interface SandboxSettingsResponse {
+  enabled: boolean;
+  uid?: number;
+  gid?: number;
+  toolEnv: Record<string, string>;
+}
+
 export interface UiConfigResponse {
   /** Frontend "minimal" mode — see server config.minimalUi. */
   minimal: boolean;

@@ -152,7 +152,11 @@ function validateLogWatches(watches: LogWatch[] | undefined): string | null {
  * is independent; see `manager.ts` for the spawn/lifecycle code
  * and `docs/processes.md` for the cross-reference.
  */
-export function createProcessTool(sessionId: string, workspacePath: string): ToolDefinition {
+export function createProcessTool(
+  sessionId: string,
+  workspacePath: string,
+  toolEnv: Record<string, string> = {},
+): ToolDefinition {
   return {
     name: TOOL_NAME,
     label: TOOL_LABEL,
@@ -164,7 +168,7 @@ export function createProcessTool(sessionId: string, workspacePath: string): Too
       const p = params as ToolParams;
       switch (p.action) {
         case "start":
-          return executeStart(sessionId, workspacePath, p);
+          return executeStart(sessionId, workspacePath, p, toolEnv);
         case "list":
           return executeList(sessionId);
         case "output":
@@ -184,7 +188,12 @@ export function createProcessTool(sessionId: string, workspacePath: string): Too
   } satisfies ToolDefinition;
 }
 
-function executeStart(sessionId: string, workspacePath: string, p: ToolParams): ExecuteResult {
+function executeStart(
+  sessionId: string,
+  workspacePath: string,
+  p: ToolParams,
+  toolEnv: Record<string, string>,
+): ExecuteResult {
   // Defense in depth — the client also hides the tool under
   // MINIMAL_UI, but a stale tab or scripted caller could still
   // invoke it. Refuse at the tool boundary.
@@ -207,6 +216,7 @@ function executeStart(sessionId: string, workspacePath: string, p: ToolParams): 
     if (p.alertOnFailure !== undefined) startOpts.alertOnFailure = p.alertOnFailure;
     if (p.alertOnKill !== undefined) startOpts.alertOnKill = p.alertOnKill;
     if (p.logWatches !== undefined) startOpts.logWatches = p.logWatches;
+    startOpts.toolEnv = toolEnv;
     info = processManager.start(sessionId, p.name, p.command, workspacePath, startOpts);
   } catch (e) {
     return err("start", `Failed to start: ${e instanceof Error ? e.message : String(e)}`);

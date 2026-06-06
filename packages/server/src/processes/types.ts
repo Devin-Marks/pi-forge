@@ -82,6 +82,7 @@ export interface StartOptions {
   alertOnFailure?: boolean;
   alertOnKill?: boolean;
   logWatches?: LogWatch[];
+  toolEnv?: Record<string, string>;
 }
 
 /**
