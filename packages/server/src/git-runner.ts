@@ -39,14 +39,24 @@ export class GitNotInstalledError extends Error {
   }
 }
 
+export type GitCommandErrorCode = "git_failed" | "git_auth_required";
+
 export class GitCommandError extends Error {
   readonly exitCode: number | null;
+  /** Stable route error code for user-actionable git failures. */
+  readonly errorCode: GitCommandErrorCode;
   /** Sanitized first line of stderr — safe to surface to the user. */
   readonly userMessage: string;
-  constructor(exitCode: number | null, userMessage: string, fullMessage: string) {
+  constructor(
+    exitCode: number | null,
+    userMessage: string,
+    fullMessage: string,
+    errorCode: GitCommandErrorCode = "git_failed",
+  ) {
     super(fullMessage);
     this.name = "GitCommandError";
     this.exitCode = exitCode;
+    this.errorCode = errorCode;
     this.userMessage = userMessage;
   }
 }
@@ -191,9 +201,15 @@ async function runGit(cwd: string, args: string[]): Promise<RunResult> {
     };
     if (e.code === "ENOENT") throw new GitNotInstalledError();
     const stderr = (e.stderr ?? "").toString();
-    const userMessage = sanitizeStderr(stderr, cwd);
+    const authRequired = isGitAuthRequired(stderr);
+    const userMessage = authRequired ? gitAuthRequiredMessage() : sanitizeStderr(stderr, cwd);
     const exitCode = typeof e.code === "number" ? e.code : null;
-    throw new GitCommandError(exitCode, userMessage, stderr || (e.message ?? "git failed"));
+    throw new GitCommandError(
+      exitCode,
+      userMessage,
+      stderr || (e.message ?? "git failed"),
+      authRequired ? "git_auth_required" : "git_failed",
+    );
   }
 }
 
@@ -264,9 +280,28 @@ function sanitizeStderr(stderr: string, cwd?: string): string {
   if (cwd !== undefined && cwd.length > 0) {
     firstLine = firstLine.split(cwd).join("<project>");
   }
+  firstLine = redactCredentialUrls(firstLine);
   // Drop common "fatal: " / "error: " prefixes that confuse users.
   const stripped = firstLine.replace(/^(fatal|error|warning):\s*/i, "");
   return stripped.length > 200 ? stripped.slice(0, 197) + "…" : stripped;
+}
+
+function redactCredentialUrls(message: string): string {
+  return message.replace(/(https?:\/\/)([^\s/@:]+)(?::[^\s/@]*)?@/gi, "$1<credentials>@");
+}
+
+function isGitAuthRequired(stderr: string): boolean {
+  return /authentication failed|could not read (username|password).*terminal prompts disabled|terminal prompts disabled|permission denied \(publickey\)|permission denied .*publickey|authentication required|authorization failed|repository not found/i.test(
+    stderr,
+  );
+}
+
+function gitAuthRequiredMessage(): string {
+  return (
+    "Git authentication required. Configure this remote's credentials in the integrated " +
+    "terminal or system Git credential helper, then retry. pi-forge does not collect or store " +
+    "Git passwords or tokens."
+  );
 }
 
 /**
