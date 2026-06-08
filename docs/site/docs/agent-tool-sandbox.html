@@ -212,18 +212,32 @@ sudo mkdir -p ~/.pi-forge-docker
 sudo chown -R root:root ~/.pi-forge-docker
 sudo chmod -R u+rwX,go-rwx ~/.pi-forge-docker
 
-# Pi config: pi-tools can traverse/read non-secret resources.
+# Pi config parent: traversable by pi-tools so non-secret resources can load.
 # The image-owned /home/pi/.pi parent is already traversable by pi-tools when
 # only ~/.pi/agent is mounted. If you mount the whole ~/.pi directory, set the
 # parent permissions too.
 sudo chown root:1001 ~/.pi
 sudo chmod 0750 ~/.pi
-sudo chown -R root:1001 ~/.pi/agent
+sudo chown root:1001 ~/.pi/agent
 sudo chmod 0750 ~/.pi/agent
-sudo find ~/.pi/agent -type d -exec chmod 0750 {} +
-sudo find ~/.pi/agent -type f -exec chmod 0640 {} +
 
-# Pi config secrets: server-only.
+# Existing non-secret Pi resources: readable/traversable by pi-tools.
+# This is required for previously installed skills/packages that may still be
+# 1000:1000 from regular mode. Keep execute bits where they already exist.
+for path in \
+  ~/.pi/agent/skills \
+  ~/.pi/agent/npm \
+  ~/.pi/agent/git \
+  ~/.pi/agent/extensions \
+  ~/.pi/agent/prompts \
+  ~/.pi/agent/themes; do
+  [ -e &quot;$path&quot; ] || continue
+  sudo chown -R root:1001 &quot;$path&quot;
+  sudo chmod -R u+rwX,g+rX,o-rwx &quot;$path&quot;
+done
+
+# Pi config secrets/settings: server-only. Re-run this after broad permission
+# changes so pi-tools cannot read provider auth, model config, or settings.
 sudo chown root:root ~/.pi/agent/auth.json ~/.pi/agent/models.json ~/.pi/agent/settings.json 2&gt;/dev/null || true
 sudo chmod 0600 ~/.pi/agent/auth.json ~/.pi/agent/models.json ~/.pi/agent/settings.json 2&gt;/dev/null || true
 </code></pre>
@@ -317,12 +331,14 @@ find /home/pi/.pi-forge -type d -exec chmod 0700 {} +
 find /home/pi/.pi-forge -type f -exec chmod 0600 {} +
 
 # Pi config: pi-tools can traverse/read non-secret resources.
+# This includes existing skills, managed npm/git packages, extensions,
+# prompts, and themes copied into the named volume.
 chown -R root:1001 /home/pi/.pi/agent
+chmod -R u+rwX,g+rX,o-rwx /home/pi/.pi/agent
 chmod 0750 /home/pi/.pi/agent
-find /home/pi/.pi/agent -type d -exec chmod 0750 {} +
-find /home/pi/.pi/agent -type f -exec chmod 0640 {} +
 
-# Pi config secrets: server-only.
+# Pi config secrets/settings: server-only. Re-run this after broad permission
+# changes so pi-tools cannot read provider auth, model config, or settings.
 chown root:root \
   /home/pi/.pi/agent/auth.json \
   /home/pi/.pi/agent/models.json \
@@ -412,16 +428,33 @@ volume names/mount paths:</p>
         find /home/pi/.pi-forge -type d -exec chmod 0700 {} +
         find /home/pi/.pi-forge -type f -exec chmod 0600 {} +
 
-        # Pi config: pi-tools can traverse/read non-secret resources.
+        # Pi config parent: traversable by pi-tools so non-secret resources
+        # can load.
         mkdir -p /home/pi/.pi/agent
         chown 0:1001 /home/pi/.pi
         chmod 0750 /home/pi/.pi
-        chown -R 0:1001 /home/pi/.pi/agent
+        chown 0:1001 /home/pi/.pi/agent
         chmod 0750 /home/pi/.pi/agent
-        find /home/pi/.pi/agent -type d -exec chmod 0750 {} +
-        find /home/pi/.pi/agent -type f -exec chmod 0640 {} +
 
-        # Pi config secrets: server-only.
+        # Existing non-secret Pi resources: readable/traversable by pi-tools.
+        # This is required for previously installed skills/packages that may
+        # still be 1000:1000 from regular mode. Keep execute bits where they
+        # already exist.
+        for path in \
+          /home/pi/.pi/agent/skills \
+          /home/pi/.pi/agent/npm \
+          /home/pi/.pi/agent/git \
+          /home/pi/.pi/agent/extensions \
+          /home/pi/.pi/agent/prompts \
+          /home/pi/.pi/agent/themes; do
+          [ -e &quot;$path&quot; ] || continue
+          chown -R 0:1001 &quot;$path&quot;
+          chmod -R u+rwX,g+rX,o-rwx &quot;$path&quot;
+        done
+
+        # Pi config secrets/settings: server-only. Re-run this after resource
+        # permission changes so pi-tools cannot read provider auth, model
+        # config, or settings.
         chown 0:0 \
           /home/pi/.pi/agent/auth.json \
           /home/pi/.pi/agent/models.json \
@@ -497,6 +530,134 @@ mount/UID policy.</p>
 </ul>
 <p>Use a literal environment value or an external secret broker instead. Tool
 children receive a scrubbed env and do not inherit the LDAP bind password.</p>
+<h2>Access model quick reference</h2>
+<p>Default Docker image identities:</p>
+<table>
+<thead>
+<tr>
+<th>Surface</th>
+<th>Regular mode (<code>AGENT_TOOL_SANDBOX_ENABLED=false</code>)</th>
+<th>Sandbox mode (<code>AGENT_TOOL_SANDBOX_ENABLED=true</code>)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>pi-forge HTTP server and session registry</td>
+<td><code>pi</code> (<code>1000:1000</code> by default)</td>
+<td><code>root</code> (<code>0:0</code>)</td>
+</tr>
+<tr>
+<td>Model file tools (<code>read</code>, <code>write</code>, <code>grep</code>, <code>find</code>, <code>ls</code>, <code>edit</code>)</td>
+<td>SDK defaults as the server identity</td>
+<td>Server identity plus pi-forge path policy</td>
+</tr>
+<tr>
+<td>Agent <code>bash</code>, process tool commands, terminal, quick actions, chat exec</td>
+<td><code>pi</code> (<code>1000:1000</code> by default)</td>
+<td><code>pi-tools</code> (<code>1001:1001</code> by default)</td>
+</tr>
+</tbody></table>
+<p>Use this matrix when debugging <code>EACCES</code>. <code>rwx</code> means the identity should be able
+to create/update entries there; <code>r-x</code> means traversal/read only; <code>denied</code> means
+normal Unix mode bits should block the identity; <code>policy denied</code> means sandboxed
+model file tools reject the path even if the server process could read it.</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th><code>pi</code> regular server/tools</th>
+<th><code>root</code> sandbox server</th>
+<th><code>pi-tools</code> sandbox shell tools</th>
+<th>Sandbox model file tools</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/home/pi</code></td>
+<td><code>r-x</code>; home parent is not general scratch space</td>
+<td><code>rwx</code></td>
+<td><code>r-x</code></td>
+<td>usually not used directly</td>
+</tr>
+<tr>
+<td><code>/home/pi/.npm</code></td>
+<td><code>rwx</code>; npm logs/cache</td>
+<td><code>rwx</code></td>
+<td>denied unless explicitly permissioned</td>
+<td>outside allowed roots</td>
+</tr>
+<tr>
+<td><code>/home/pi/.local</code></td>
+<td><code>rwx</code>; user installs and Python user base</td>
+<td><code>rwx</code></td>
+<td>denied unless explicitly permissioned</td>
+<td>outside allowed roots</td>
+</tr>
+<tr>
+<td><code>/home/pi/.pi</code></td>
+<td><code>r-x</code>; parent for Pi config</td>
+<td><code>rwx</code></td>
+<td>deployment-dependent traversal only</td>
+<td>parent traversal only</td>
+</tr>
+<tr>
+<td><code>/home/pi/.pi/agent</code> (<code>PI_CONFIG_DIR</code>)</td>
+<td><code>rwx</code> for regular config writes</td>
+<td><code>rwx</code></td>
+<td>ideally denied by mode bits, except deliberate non-secret resources</td>
+<td>allowed for non-secret files only</td>
+</tr>
+<tr>
+<td><code>auth.json</code>, <code>models.json</code>, <code>settings.json</code></td>
+<td><code>rw</code></td>
+<td><code>rw</code></td>
+<td>denied by mode bits</td>
+<td>policy denied</td>
+</tr>
+<tr>
+<td><code>/home/pi/.pi-forge</code> (<code>FORGE_DATA_DIR</code>)</td>
+<td><code>rwx</code></td>
+<td><code>rwx</code></td>
+<td>denied by mode bits</td>
+<td>policy denied</td>
+</tr>
+<tr>
+<td><code>/workspace</code> (<code>WORKSPACE_PATH</code>)</td>
+<td>mount-dependent; should be writable by <code>pi</code> in regular mode</td>
+<td>mount-dependent; must be usable by the server for project/session setup</td>
+<td>mount-dependent; should be writable by <code>pi-tools</code> in sandbox mode</td>
+<td>allowed for the configured workspace root</td>
+</tr>
+<tr>
+<td><code>/tmp</code></td>
+<td><code>rwx</code></td>
+<td><code>rwx</code></td>
+<td><code>rwx</code></td>
+<td>outside allowed roots unless explicitly requested by a denied path</td>
+</tr>
+<tr>
+<td><code>/app</code></td>
+<td><code>r-x</code> app code</td>
+<td>root can write but should treat as image-owned/read-only</td>
+<td><code>r-x</code></td>
+<td>outside allowed roots</td>
+</tr>
+</tbody></table>
+<p>Do not rely on the model file-tool policy to protect secrets from shell tools.
+Shell-like surfaces (<code>bash</code>, process commands, terminals, quick actions, and
+chat exec) run as an OS identity and are protected by ownership/mode bits and a
+scrubbed environment, not by the file-tool path policy.</p>
+<p>If sandbox sessions start but skills or package extensions are missing, inspect
+existing resource ownership. Previously installed trees often remain
+<code>1000:1000</code> from regular mode. The relevant non-secret trees are usually:</p>
+<ul>
+<li><code>${PI_CONFIG_DIR}/skills</code></li>
+<li><code>${PI_CONFIG_DIR}/npm</code></li>
+<li><code>${PI_CONFIG_DIR}/git</code></li>
+<li><code>${PI_CONFIG_DIR}/extensions</code></li>
+<li><code>${PI_CONFIG_DIR}/prompts</code></li>
+<li><code>${PI_CONFIG_DIR}/themes</code></li>
+</ul>
+<p>Those directories must be traversable/readable by <code>AGENT_TOOL_GID</code> while
+<code>${PI_CONFIG_DIR}/auth.json</code>, <code>models.json</code>, and <code>settings.json</code> stay <code>0600</code>.</p>
 <h2>Suggested verification prompts</h2>
 <p>Ask the model:</p>
 <pre><code class="language-txt">Use your file tools, not bash, to test sandbox file access.
