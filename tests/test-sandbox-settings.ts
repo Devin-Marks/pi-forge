@@ -12,9 +12,10 @@ import { tmpdir } from "node:os";
 const root = await mkdtemp(join(tmpdir(), "pi-forge-sandbox-test-"));
 const workspace = join(root, "workspace");
 const projectWorkspace = join(workspace, "project-a");
+const piConfigDir = join(root, "pi");
 process.env.WORKSPACE_PATH = workspace;
 process.env.FORGE_DATA_DIR = join(root, "data");
-process.env.PI_CONFIG_DIR = join(root, "pi");
+process.env.PI_CONFIG_DIR = piConfigDir;
 process.env.SESSION_DIR = join(root, "sessions");
 process.env.SERVE_CLIENT = "false";
 process.env.AGENT_TOOL_SANDBOX_ENABLED = "false";
@@ -59,7 +60,6 @@ try {
   const bashOps = createForgeBashOperations(projectWorkspace, { PI_FORGE_SANDBOX_TEST: "bash-ok" });
   let output = "";
   await bashOps.exec('printf %s "$PI_FORGE_SANDBOX_TEST"', workspace, {
-    signal: undefined,
     onData: (chunk: Buffer) => {
       output += chunk.toString("utf8");
     },
@@ -69,8 +69,9 @@ try {
   const processTool = createProcessTool("session-test", projectWorkspace, {
     PI_FORGE_SANDBOX_TEST: "process-ok",
   });
+  const processToolContext = {} as Parameters<typeof processTool.execute>[4];
   const call = (params: Record<string, unknown>) =>
-    processTool.execute("call", params, undefined, undefined, {}) as Promise<{
+    processTool.execute("call", params, undefined, undefined, processToolContext) as Promise<{
       details: Record<string, unknown>;
     }>;
   const start = await call({
@@ -84,31 +85,35 @@ try {
   const out = await call({ action: "output", id: pid });
   const stdout = ((out.details.output as { stdout: string[] }).stdout ?? []).join("");
   assert("process tool receives sandbox env", stdout.includes("process-ok"), stdout);
-  processManager.disposeSession("session-test");
+  await processManager.disposeSession("session-test");
 
   console.log("filesystem sandbox overrides");
   await writeFile(join(projectWorkspace, "inside.txt"), "ok", "utf8");
   const siblingUnderWorkspace = join(workspace, "project-b");
   await mkdir(siblingUnderWorkspace, { recursive: true });
   await writeFile(join(siblingUnderWorkspace, "sibling.txt"), "ok", "utf8");
-  const piDataDir = join(process.env.PI_CONFIG_DIR!, "sessions");
+  const piDataDir = join(piConfigDir, "sessions");
   await mkdir(piDataDir, { recursive: true });
   await writeFile(join(piDataDir, "session.jsonl"), "{}\n", "utf8");
   const ls = createSandboxedToolDefinitions(projectWorkspace).find((tool) => tool.name === "ls");
   assert("sandbox override includes ls", ls !== undefined);
-  const insideResult = await ls!.execute("ls-ok", { path: "." }, undefined, undefined, {});
+  if (ls === undefined) {
+    throw new Error("ls sandbox override missing");
+  }
+  const lsContext = {} as Parameters<typeof ls.execute>[4];
+  const insideResult = await ls.execute("ls-ok", { path: "." }, undefined, undefined, lsContext);
   const insideText = JSON.stringify(insideResult);
   assert(
     "ls can list inside workspace",
     insideText.includes("inside.txt"),
     insideText.slice(0, 200),
   );
-  const siblingResult = await ls!.execute(
+  const siblingResult = await ls.execute(
     "ls-sibling",
     { path: siblingUnderWorkspace },
     undefined,
     undefined,
-    {},
+    lsContext,
   );
   const siblingText = JSON.stringify(siblingResult);
   assert(
@@ -116,7 +121,7 @@ try {
     siblingText.includes("sibling.txt"),
     siblingText.slice(0, 300),
   );
-  const piResult = await ls!.execute("ls-pi", { path: piDataDir }, undefined, undefined, {});
+  const piResult = await ls.execute("ls-pi", { path: piDataDir }, undefined, undefined, lsContext);
   const piText = JSON.stringify(piResult);
   assert(
     "ls preserves access to allowed PI_CONFIG_DIR content",
