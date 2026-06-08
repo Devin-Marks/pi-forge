@@ -15,6 +15,42 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.4.1] — 2026-06-08
+
+### Added
+
+- **Sandbox tool environment settings.** Settings now includes a Sandbox tab for
+  persisted tool environment variables, with masked values in the browser UI and
+  injection into forge-managed shell and process tool calls.
+- **Automatic session tab titles.** New sessions can derive a short,
+  deterministic title from the first prompt, persist it, and deliver live title
+  updates to open panes without an extra LLM call.
+
+### Changed
+
+- **File tree loading defaults to the full bounded depth.** The file browser now
+  defaults to the maximum supported tree depth of 32 while keeping recursion
+  bounded for safety.
+
+### Fixed
+
+- **Git auth failures are clearer and safer.** Pull/push/fetch failures that
+  require credentials are classified as auth-required errors with actionable
+  guidance instead of exposing confusing git stderr or hanging on prompts.
+- **Terminal idle connections are kept alive.** Terminal WebSockets now send a
+  configurable keepalive ping to reduce idle disconnects behind proxies, and
+  browser autocomplete is disabled for terminal and prompt text inputs.
+- **File panes refresh after write tools.** Completed agent `write` tool calls
+  refresh the file pane immediately while preserving the end-of-turn fallback.
+- **Orchestration can be enabled before the first prompt.** Per-session
+  orchestration tools now become available when a supervisor session is enabled
+  before any prompt is sent, without enabling orchestration globally.
+- **Sandbox settings CI checks pass.** The sandbox settings form and regression
+  tests were adjusted to satisfy typecheck, lint, and formatting checks.
+- **Compose sandbox capabilities are scoped correctly.** The regular compose
+  file no longer includes sandbox setuid/setgid capabilities; they remain in the
+  sandbox compose override.
+
 ## [1.4.0] — 2026-06-04
 
 ### Added
