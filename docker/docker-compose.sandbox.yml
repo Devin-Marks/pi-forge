@@ -1,0 +1,18 @@
+# Optional sandbox overlay.
+#
+# Use with the base compose file when AGENT_TOOL_SANDBOX_ENABLED=true:
+#   docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
+#
+# The base compose file starts as the pi user and drops all capabilities so
+# regular mode does not need SETUID/SETGID. Sandbox mode must start the server
+# as root and add back only SETUID/SETGID so pi-forge can spawn model/user tool
+# children as AGENT_TOOL_UID:AGENT_TOOL_GID.
+
+services:
+  pi-forge:
+    user: "0:0"
+    environment:
+      AGENT_TOOL_SANDBOX_ENABLED: ${AGENT_TOOL_SANDBOX_ENABLED:-true}
+    cap_add:
+      - SETUID
+      - SETGID

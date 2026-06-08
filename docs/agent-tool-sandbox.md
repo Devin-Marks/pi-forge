@@ -1,9 +1,10 @@
 # Agent tool identity sandbox
 
-`AGENT_TOOL_SANDBOX_ENABLED=false` by default. In the Docker image, the default
-entrypoint drops the server to the legacy `pi` user. When sandbox mode is
-enabled, pi-forge keeps the HTTP server running as root and runs model/user
-tool surfaces as a restricted UID/GID (`pi-tools` in the Docker image).
+`AGENT_TOOL_SANDBOX_ENABLED=false` by default. In the Docker Compose setup,
+regular mode starts the server as the legacy `pi` user directly and drops all
+Linux capabilities. When sandbox mode is enabled with the sandbox compose
+overlay, pi-forge keeps the HTTP server running as root and runs model/user tool
+surfaces as a restricted UID/GID (`pi-tools` in the Docker image).
 
 This is an operator-controlled hardening mode. It is useful only when the
 container or pod mounts are permissioned carefully. Leave it disabled for
@@ -88,7 +89,7 @@ the container or pod**.
 
 | Path | Required sandbox posture |
 |---|---|
-| `/workspace` | Writable by `AGENT_TOOL_UID:GID`. Secrets in the workspace are readable by the agent. |
+| `/workspace` | Writable by `AGENT_TOOL_UID` and traversable/readable by the root server without `DAC_OVERRIDE`. Recommended: `AGENT_TOOL_UID:0` with group rwX (`1001:0` in the Docker examples). Secrets in the workspace are readable by the agent. |
 | `/home/pi/.pi` | Traversable by `AGENT_TOOL_UID:GID` so package skills and non-secret resources can be loaded. Recommended: `root:pi-tools` `0750`. |
 | `/home/pi/.pi/agent` | Traversable/readable by `AGENT_TOOL_UID:GID` for non-secret resources. Recommended: `root:pi-tools` `0750`. |
 | `/home/pi/.pi/agent/auth.json` | Not readable by `AGENT_TOOL_UID:GID`. Recommended: `root:root` `0600`. Also blocked by file-tool policy. |
@@ -122,13 +123,16 @@ volumes:
 ```
 
 Native Linux bind mounts normally preserve host numeric ownership in the
-container. With default sandbox IDs (`1001:1001`), run these commands on the
-**host** before starting the container:
+container. With default sandbox tool IDs (`1001:1001`; workspace group `0` for
+the root server), run these commands on the **host** before starting the
+container:
 
 ```bash
-# Workspace: writable by pi-tools.
+# Workspace: writable by pi-tools and accessible to the root server.
+# Group 0 matters because sandbox containers drop DAC_OVERRIDE, so root
+# cannot bypass mode bits on host bind mounts.
 sudo mkdir -p ./workspace
-sudo chown -R 1001:1001 ./workspace
+sudo chown -R 1001:0 ./workspace
 sudo chmod -R u+rwX,g+rwX,o-rwx ./workspace
 
 # Forge data: server-only.
@@ -136,18 +140,32 @@ sudo mkdir -p ~/.pi-forge-docker
 sudo chown -R root:root ~/.pi-forge-docker
 sudo chmod -R u+rwX,go-rwx ~/.pi-forge-docker
 
-# Pi config: pi-tools can traverse/read non-secret resources.
+# Pi config parent: traversable by pi-tools so non-secret resources can load.
 # The image-owned /home/pi/.pi parent is already traversable by pi-tools when
 # only ~/.pi/agent is mounted. If you mount the whole ~/.pi directory, set the
 # parent permissions too.
 sudo chown root:1001 ~/.pi
 sudo chmod 0750 ~/.pi
-sudo chown -R root:1001 ~/.pi/agent
+sudo chown root:1001 ~/.pi/agent
 sudo chmod 0750 ~/.pi/agent
-sudo find ~/.pi/agent -type d -exec chmod 0750 {} +
-sudo find ~/.pi/agent -type f -exec chmod 0640 {} +
 
-# Pi config secrets: server-only.
+# Existing non-secret Pi resources: readable/traversable by pi-tools.
+# This is required for previously installed skills/packages that may still be
+# 1000:1000 from regular mode. Keep execute bits where they already exist.
+for path in \
+  ~/.pi/agent/skills \
+  ~/.pi/agent/npm \
+  ~/.pi/agent/git \
+  ~/.pi/agent/extensions \
+  ~/.pi/agent/prompts \
+  ~/.pi/agent/themes; do
+  [ -e "$path" ] || continue
+  sudo chown -R root:1001 "$path"
+  sudo chmod -R u+rwX,g+rX,o-rwx "$path"
+done
+
+# Pi config secrets/settings: server-only. Re-run this after broad permission
+# changes so pi-tools cannot read provider auth, model config, or settings.
 sudo chown root:root ~/.pi/agent/auth.json ~/.pi/agent/models.json ~/.pi/agent/settings.json 2>/dev/null || true
 sudo chmod 0600 ~/.pi/agent/auth.json ~/.pi/agent/models.json ~/.pi/agent/settings.json 2>/dev/null || true
 ```
@@ -160,24 +178,20 @@ AGENT_TOOL_UID=1001
 AGENT_TOOL_GID=1001
 ```
 
-Compose capabilities for native Linux should be:
-
-```yaml
-cap_drop:
-  - ALL
-cap_add:
-  - SETUID
-  - SETGID
-security_opt:
-  - no-new-privileges:true
-```
-
-Then rebuild/recreate:
+Start sandbox mode with the sandbox compose overlay. The base compose file runs
+regular mode as `pi` with no Linux capabilities; the overlay switches the server
+container to root and adds back only `SETUID` / `SETGID` for sandbox child
+processes:
 
 ```bash
 cd docker
-docker compose down
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
+```
+
+To stop it later, pass the same file set:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.sandbox.yml down
 ```
 
 ## Docker Compose: OrbStack / Docker Desktop / macOS
@@ -224,17 +238,14 @@ volumes:
 
 ### Compose capability changes
 
-Start with the native capability set:
+Start with the sandbox compose overlay:
 
-```yaml
-cap_drop:
-  - ALL
-cap_add:
-  - SETUID
-  - SETGID
-security_opt:
-  - no-new-privileges:true
+```bash
+docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
 ```
+
+The base compose file already drops all capabilities. The sandbox overlay adds
+back `SETUID` / `SETGID` and runs the server container as root.
 
 If OrbStack/Docker Desktop shows `.pi-forge` as `1000:1000 0700` inside the
 pi-forge container even after the helper volume init chowns it to `root:root`,
@@ -257,7 +268,7 @@ This example assumes the named volumes are `docker_pi-config` and
 
 ```bash
 cd docker
-docker compose down
+docker compose -f docker-compose.yml -f docker-compose.sandbox.yml down
 
 # Optional: seed the named pi config volume from the host before locking it down.
 docker run --rm \
@@ -279,12 +290,14 @@ find /home/pi/.pi-forge -type d -exec chmod 0700 {} +
 find /home/pi/.pi-forge -type f -exec chmod 0600 {} +
 
 # Pi config: pi-tools can traverse/read non-secret resources.
+# This includes existing skills, managed npm/git packages, extensions,
+# prompts, and themes copied into the named volume.
 chown -R root:1001 /home/pi/.pi/agent
+chmod -R u+rwX,g+rX,o-rwx /home/pi/.pi/agent
 chmod 0750 /home/pi/.pi/agent
-find /home/pi/.pi/agent -type d -exec chmod 0750 {} +
-find /home/pi/.pi/agent -type f -exec chmod 0640 {} +
 
-# Pi config secrets: server-only.
+# Pi config secrets/settings: server-only. Re-run this after broad permission
+# changes so pi-tools cannot read provider auth, model config, or settings.
 chown root:root \
   /home/pi/.pi/agent/auth.json \
   /home/pi/.pi/agent/models.json \
@@ -306,18 +319,19 @@ AGENT_TOOL_UID=1001
 AGENT_TOOL_GID=1001
 ```
 
-Start pi-forge:
+Start pi-forge with the sandbox overlay:
 
 ```bash
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
 ```
 
 Verify the actual mounts and ownership inside pi-forge:
 
 ```bash
-docker compose run --rm pi-forge sh -lc '
+docker compose -f docker-compose.yml -f docker-compose.sandbox.yml run --rm pi-forge sh -lc '
 id
 stat -c "%u:%g %a %n" /workspace /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge
+# Expected /workspace owner/group is 1001:0 with owner+group rwX bits.
 touch /home/pi/.pi-forge/probe && rm /home/pi/.pi-forge/probe
 '
 ```
@@ -327,6 +341,7 @@ Then verify from the app terminal (which runs as `pi-tools`):
 ```bash
 id
 stat -c "%u:%g %a %n" /workspace /home/pi/.pi /home/pi/.pi/agent /home/pi/.pi-forge
+# Expected /workspace owner/group is 1001:0 with owner+group rwX bits.
 cat /home/pi/.pi-forge/jwt-secret
 cat /home/pi/.pi/agent/auth.json
 ```
@@ -384,9 +399,11 @@ initContainers:
       - |
         set -eux
 
-        # Workspace: writable by pi-tools.
+        # Workspace: writable by pi-tools and accessible to the root server.
+        # Group 0 matters because sandbox containers drop DAC_OVERRIDE, so root
+        # cannot bypass mode bits on PVCs.
         mkdir -p /workspace
-        chown -R 1001:1001 /workspace
+        chown -R 1001:0 /workspace
         chmod -R u+rwX,g+rwX,o-rwx /workspace
 
         # Forge data: server-only.
@@ -396,16 +413,33 @@ initContainers:
         find /home/pi/.pi-forge -type d -exec chmod 0700 {} +
         find /home/pi/.pi-forge -type f -exec chmod 0600 {} +
 
-        # Pi config: pi-tools can traverse/read non-secret resources.
+        # Pi config parent: traversable by pi-tools so non-secret resources
+        # can load.
         mkdir -p /home/pi/.pi/agent
         chown 0:1001 /home/pi/.pi
         chmod 0750 /home/pi/.pi
-        chown -R 0:1001 /home/pi/.pi/agent
+        chown 0:1001 /home/pi/.pi/agent
         chmod 0750 /home/pi/.pi/agent
-        find /home/pi/.pi/agent -type d -exec chmod 0750 {} +
-        find /home/pi/.pi/agent -type f -exec chmod 0640 {} +
 
-        # Pi config secrets: server-only.
+        # Existing non-secret Pi resources: readable/traversable by pi-tools.
+        # This is required for previously installed skills/packages that may
+        # still be 1000:1000 from regular mode. Keep execute bits where they
+        # already exist.
+        for path in \
+          /home/pi/.pi/agent/skills \
+          /home/pi/.pi/agent/npm \
+          /home/pi/.pi/agent/git \
+          /home/pi/.pi/agent/extensions \
+          /home/pi/.pi/agent/prompts \
+          /home/pi/.pi/agent/themes; do
+          [ -e "$path" ] || continue
+          chown -R 0:1001 "$path"
+          chmod -R u+rwX,g+rX,o-rwx "$path"
+        done
+
+        # Pi config secrets/settings: server-only. Re-run this after resource
+        # permission changes so pi-tools cannot read provider auth, model
+        # config, or settings.
         chown 0:0 \
           /home/pi/.pi/agent/auth.json \
           /home/pi/.pi/agent/models.json \
@@ -493,6 +527,53 @@ When sandbox mode is enabled, pi-forge rejects:
 
 Use a literal environment value or an external secret broker instead. Tool
 children receive a scrubbed env and do not inherit the LDAP bind password.
+
+## Access model quick reference
+
+Default Docker image identities:
+
+| Surface | Regular mode (`AGENT_TOOL_SANDBOX_ENABLED=false`) | Sandbox mode (`AGENT_TOOL_SANDBOX_ENABLED=true`) |
+|---|---|---|
+| pi-forge HTTP server and session registry | `pi` (`1000:1000` by default) | `root` (`0:0`) |
+| Model file tools (`read`, `write`, `grep`, `find`, `ls`, `edit`) | SDK defaults as the server identity | Server identity plus pi-forge path policy |
+| Agent `bash`, process tool commands, terminal, quick actions, chat exec | `pi` (`1000:1000` by default) | `pi-tools` (`1001:1001` by default) |
+
+Use this matrix when debugging `EACCES`. `rwx` means the identity should be able
+to create/update entries there; `r-x` means traversal/read only; `denied` means
+normal Unix mode bits should block the identity; `policy denied` means sandboxed
+model file tools reject the path even if the server process could read it.
+
+| Path | `pi` regular server/tools | `root` sandbox server | `pi-tools` sandbox shell tools | Sandbox model file tools |
+|---|---|---|---|---|
+| `/home/pi` | `r-x`; home parent is not general scratch space | `rwx` | `r-x` | usually not used directly |
+| `/home/pi/.npm` | `rwx`; npm logs/cache | `rwx` | denied unless explicitly permissioned | outside allowed roots |
+| `/home/pi/.local` | `rwx`; user installs and Python user base | `rwx` | denied unless explicitly permissioned | outside allowed roots |
+| `/home/pi/.pi` | `r-x`; parent for Pi config | `rwx` | deployment-dependent traversal only | parent traversal only |
+| `/home/pi/.pi/agent` (`PI_CONFIG_DIR`) | `rwx` for regular config writes | `rwx` | ideally denied by mode bits, except deliberate non-secret resources | allowed for non-secret files only |
+| `auth.json`, `models.json`, `settings.json` | `rw` | `rw` | denied by mode bits | policy denied |
+| `/home/pi/.pi-forge` (`FORGE_DATA_DIR`) | `rwx` | `rwx` | denied by mode bits | policy denied |
+| `/workspace` (`WORKSPACE_PATH`) | mount-dependent; should be writable by `pi` in regular mode | mount-dependent; must be usable by the server for project/session setup | mount-dependent; should be writable by `pi-tools` in sandbox mode | allowed for the configured workspace root |
+| `/tmp` | `rwx` | `rwx` | `rwx` | outside allowed roots unless explicitly requested by a denied path |
+| `/app` | `r-x` app code | root can write but should treat as image-owned/read-only | `r-x` | outside allowed roots |
+
+Do not rely on the model file-tool policy to protect secrets from shell tools.
+Shell-like surfaces (`bash`, process commands, terminals, quick actions, and
+chat exec) run as an OS identity and are protected by ownership/mode bits and a
+scrubbed environment, not by the file-tool path policy.
+
+If sandbox sessions start but skills or package extensions are missing, inspect
+existing resource ownership. Previously installed trees often remain
+`1000:1000` from regular mode. The relevant non-secret trees are usually:
+
+- `${PI_CONFIG_DIR}/skills`
+- `${PI_CONFIG_DIR}/npm`
+- `${PI_CONFIG_DIR}/git`
+- `${PI_CONFIG_DIR}/extensions`
+- `${PI_CONFIG_DIR}/prompts`
+- `${PI_CONFIG_DIR}/themes`
+
+Those directories must be traversable/readable by `AGENT_TOOL_GID` while
+`${PI_CONFIG_DIR}/auth.json`, `models.json`, and `settings.json` stay `0600`.
 
 ## Suggested verification prompts
 

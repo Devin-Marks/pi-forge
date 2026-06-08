@@ -176,15 +176,14 @@ COPY --from=builder --chown=pi:pi /app/packages/client/dist ./packages/client/di
 # the server runs as `pi`, and pi-owned config/data dirs are writable by it.
 # Sandbox deployments must explicitly permission their mounts; see
 # docs/agent-tool-sandbox.md.
-RUN mkdir -p /workspace /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local \
+RUN mkdir -p /workspace /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm \
  && chown -R pi-tools:pi-tools /workspace \
  && chown root:root /home/pi \
  && chown root:pi-tools /home/pi/.pi \
- && chown -R pi:pi /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local \
+ && chown -R pi:pi /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm \
  && chmod 0775 /workspace \
- && chmod 0755 /home/pi \
- && chmod 0750 /home/pi/.pi \
- && chmod 0700 /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local
+ && chmod 0755 /home/pi /home/pi/.pi \
+ && chmod 0700 /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm
 
 RUN cat >/usr/local/bin/pi-forge-entrypoint <<'EOF'
 #!/bin/sh
@@ -194,12 +193,21 @@ case "$(printf '%s' "${AGENT_TOOL_SANDBOX_ENABLED:-false}" | tr '[:upper:]' '[:l
     # Sandbox mode: keep the server as root so it can setuid/setgid
     # model/user tool children to AGENT_TOOL_UID:GID. Mount ownership is
     # an operator contract; see docs/agent-tool-sandbox.md.
+    if [ "$(id -u)" != "0" ]; then
+      echo "AGENT_TOOL_SANDBOX_ENABLED=true requires the container to run as root" >&2
+      exit 1
+    fi
     exec "$@"
     ;;
   *)
-    # Legacy/default mode: run the server as pi, matching historical
-    # container behavior and pi-owned image defaults.
-    exec gosu pi "$@"
+    # Legacy/default mode: run as whichever non-root user the runtime
+    # selected. Compose starts as pi directly so regular mode does not
+    # need SETUID/SETGID capabilities; the root fallback preserves
+    # compatibility for `docker run` invocations without --user.
+    if [ "$(id -u)" = "0" ]; then
+      exec gosu pi "$@"
+    fi
+    exec "$@"
     ;;
 esac
 EOF
