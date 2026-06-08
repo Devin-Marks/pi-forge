@@ -1545,7 +1545,12 @@ function SandboxTab({ onError }: { onError: (msg: string | undefined) => void })
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4">
+    <form
+      onSubmit={(event) => {
+        void submit(event);
+      }}
+      className="space-y-4"
+    >
       <div>
         <h2 className="text-sm font-semibold text-neutral-100">Sandbox mode</h2>
         <p className="mt-1 text-xs text-neutral-400">
