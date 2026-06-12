@@ -19,6 +19,7 @@ Set:
 AGENT_TOOL_SANDBOX_ENABLED=true
 AGENT_TOOL_UID=<numeric uid>
 AGENT_TOOL_GID=<numeric gid>
+AGENT_TOOL_HOME=<writable sandbox tool home>
 ```
 
 In the Docker image defaults, `pi-tools` is:
@@ -26,6 +27,7 @@ In the Docker image defaults, `pi-tools` is:
 ```txt
 AGENT_TOOL_UID=1001
 AGENT_TOOL_GID=1001
+AGENT_TOOL_HOME=/home/pi-tools
 ```
 
 When enabled:
@@ -38,6 +40,9 @@ When enabled:
 - quick-action command chips run as `AGENT_TOOL_UID:GID`
 - chat `!` / `!!` exec commands run as `AGENT_TOOL_UID:GID`
 - shell/process/terminal env is scrubbed
+- shell/process/terminal `HOME` points at `AGENT_TOOL_HOME` (the Docker
+  default is `/home/pi-tools`) so CLIs such as `gh` can create sandbox-owned
+  config without writing the server user's `/home/pi`
 
 ## What is protected
 
@@ -96,6 +101,7 @@ the container or pod**.
 | `/home/pi/.pi/agent/models.json` | Not readable by `AGENT_TOOL_UID:GID`. Recommended: `root:root` `0600`. Also blocked by file-tool policy. |
 | `/home/pi/.pi/agent/settings.json` | Not readable by `AGENT_TOOL_UID:GID`. Recommended: `root:root` `0600`. Also blocked by file-tool policy. |
 | `/home/pi/.pi-forge` | Not readable by `AGENT_TOOL_UID:GID`. Recommended: `root:root` `0700`. |
+| `/home/pi-tools` (`AGENT_TOOL_HOME`) | Writable by `AGENT_TOOL_UID:GID`; this is where sandbox terminals/processes/model bash create per-user CLI config such as `~/.config/gh`. Treat credentials stored here as available to model/user shell surfaces. |
 | mounted secret dirs/files | Not readable by `AGENT_TOOL_UID:GID`; prefer root-owned `0700` dirs and `0600` files. |
 
 Why `.pi` is partially readable: pi package skills and other non-secret pi
@@ -104,9 +110,12 @@ secret Pi config files by policy and filesystem mode, while leaving non-secret
 resources loadable.
 
 The Docker image's built-in directory ownership remains optimized for regular
-mode (`pi` owns `/home/pi/.pi/agent` and `/home/pi/.pi-forge`). Enabling sandbox
-with bind mounts or persistent volumes is an explicit operator step: adjust the
-mount permissions to the table above before relying on filesystem isolation.
+mode (`pi` owns `/home/pi` plus `/home/pi/.pi/agent` and `/home/pi/.pi-forge`) so
+non-sandbox tools can create ordinary per-user config such as `~/.config/gh`.
+Enabling sandbox with bind mounts or persistent volumes is an explicit operator
+step: adjust the mount permissions to the table above before relying on
+filesystem isolation. Sandbox tool children should still run as a different
+`AGENT_TOOL_UID:GID` so they cannot write the `pi` user's home by default.
 Switching an existing deployment between regular and sandbox mode may require
 changing volume ownership/modes.
 
@@ -176,6 +185,7 @@ Set sandbox env in `docker/.env`:
 AGENT_TOOL_SANDBOX_ENABLED=true
 AGENT_TOOL_UID=1001
 AGENT_TOOL_GID=1001
+AGENT_TOOL_HOME=/home/pi-tools
 ```
 
 Start sandbox mode with the sandbox compose overlay. The base compose file runs
@@ -317,6 +327,7 @@ Set sandbox env in `docker/.env`:
 AGENT_TOOL_SANDBOX_ENABLED=true
 AGENT_TOOL_UID=1001
 AGENT_TOOL_GID=1001
+AGENT_TOOL_HOME=/home/pi-tools
 ```
 
 Start pi-forge with the sandbox overlay:
@@ -382,6 +393,8 @@ env:
     value: "1001"
   - name: AGENT_TOOL_GID
     value: "1001"
+  - name: AGENT_TOOL_HOME
+    value: /home/pi-tools
 ```
 
 ### Init container
@@ -545,7 +558,8 @@ model file tools reject the path even if the server process could read it.
 
 | Path | `pi` regular server/tools | `root` sandbox server | `pi-tools` sandbox shell tools | Sandbox model file tools |
 |---|---|---|---|---|
-| `/home/pi` | `r-x`; home parent is not general scratch space | `rwx` | `r-x` | usually not used directly |
+| `/home/pi` | `rwx`; regular CLIs can create per-user config such as `~/.config/gh` | `rwx` | `r-x` when `AGENT_TOOL_UID` differs from `pi`; not used as HOME | usually not used directly |
+| `/home/pi-tools` (`AGENT_TOOL_HOME`) | not used | `rwx` | `rwx`; sandbox CLIs create `~/.config`, `~/.gitconfig`, caches here | outside allowed roots |
 | `/home/pi/.npm` | `rwx`; npm logs/cache | `rwx` | denied unless explicitly permissioned | outside allowed roots |
 | `/home/pi/.local` | `rwx`; user installs and Python user base | `rwx` | denied unless explicitly permissioned | outside allowed roots |
 | `/home/pi/.pi` | `r-x`; parent for Pi config | `rwx` | deployment-dependent traversal only | parent traversal only |

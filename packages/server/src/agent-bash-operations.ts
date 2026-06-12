@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import { config } from "./config.js";
-import { scrubbedEnv } from "./pty-manager.js";
+import { toolShellEnv } from "./pty-manager.js";
 import { mergeToolEnv } from "./sandbox-settings.js";
 
 export function sandboxSpawnIdentity(): { uid?: number; gid?: number } {
@@ -18,7 +18,7 @@ export function createForgeBashOperations(
       return new Promise<{ exitCode: number | null }>((resolve, reject) => {
         const proc = spawn("/bin/sh", ["-c", command], {
           cwd: workspacePath,
-          env: mergeToolEnv(scrubbedEnv(), toolEnv),
+          env: mergeToolEnv(toolShellEnv(), toolEnv),
           stdio: ["ignore", "pipe", "pipe"],
           ...sandboxSpawnIdentity(),
         });

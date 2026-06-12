@@ -29,12 +29,14 @@ const project = resolve(workspace, "project-a");
 const shared = resolve(workspace, "shared");
 const piConfig = resolve(workspace, ".pi", "agent");
 const forgeData = resolve(tmp, "forge-data");
+const toolHome = resolve(tmp, "pi-tools-home");
 const outside = resolve(tmp, "outside");
 mkdirSync(workspace, { recursive: true });
 mkdirSync(project, { recursive: true });
 mkdirSync(shared, { recursive: true });
 mkdirSync(piConfig, { recursive: true });
 mkdirSync(forgeData, { recursive: true });
+mkdirSync(toolHome, { recursive: true });
 mkdirSync(outside, { recursive: true });
 writeFileSync(resolve(project, "hello.txt"), "hello workspace\n");
 writeFileSync(resolve(shared, "shared.txt"), "hello shared workspace\n");
@@ -52,6 +54,7 @@ process.env.FORGE_DATA_DIR = forgeData;
 process.env.AGENT_TOOL_SANDBOX_ENABLED = "true";
 process.env.AGENT_TOOL_UID = String(process.getuid?.() ?? 1000);
 process.env.AGENT_TOOL_GID = String(process.getgid?.() ?? 1000);
+process.env.AGENT_TOOL_HOME = toolHome;
 process.env.SERVE_CLIENT = "false";
 
 try {
@@ -122,6 +125,16 @@ try {
   const { expandFileReferences } = (await import(
     resolve(repoRoot, "packages/server/dist/file-references.js")
   )) as { expandFileReferences: (text: string, workspacePath: string) => Promise<string> };
+  const { toolShellEnv } = (await import(
+    resolve(repoRoot, "packages/server/dist/pty-manager.js")
+  )) as {
+    toolShellEnv: (env?: NodeJS.ProcessEnv) => Record<string, string>;
+  };
+
+  console.log("\nsandbox shell env");
+  const shellEnv = toolShellEnv({ ...process.env, HOME: "/home/pi", USER: "pi", LOGNAME: "pi" });
+  assert("sandbox shell HOME uses AGENT_TOOL_HOME", shellEnv.HOME === toolHome, shellEnv.HOME);
+  assert("sandbox shell USER uses tool identity", shellEnv.USER === "pi-tools", shellEnv.USER);
 
   function allowed(label: string, requested: string): void {
     try {

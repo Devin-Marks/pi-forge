@@ -170,7 +170,7 @@ RUN apt-get update \
  && groupadd -g $PGID pi \
  && useradd -m -u $PUID -g $PGID -s /bin/bash pi \
  && groupadd -g $PTOOLS_GID pi-tools \
- && useradd -M -u $PTOOLS_UID -g $PTOOLS_GID -s /usr/sbin/nologin pi-tools \
+ && useradd -m -d /home/pi-tools -u $PTOOLS_UID -g $PTOOLS_GID -s /usr/sbin/nologin pi-tools \
  && usermod -aG pi-tools pi
 
 WORKDIR /app
@@ -192,14 +192,14 @@ COPY --from=builder --chown=pi:pi /app/packages/client/dist ./packages/client/di
 # the server runs as `pi`, and pi-owned config/data dirs are writable by it.
 # Sandbox deployments must explicitly permission their mounts; see
 # docs/agent-tool-sandbox.md.
-RUN mkdir -p /workspace /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm \
- && chown -R pi-tools:pi-tools /workspace \
- && chown root:root /home/pi \
+RUN mkdir -p /workspace /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm /home/pi-tools/.config \
+ && chown -R pi-tools:pi-tools /workspace /home/pi-tools \
+ && chown pi:pi /home/pi \
  && chown root:pi-tools /home/pi/.pi \
  && chown -R pi:pi /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm \
  && chmod 0775 /workspace \
  && chmod 0755 /home/pi /home/pi/.pi \
- && chmod 0700 /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm
+ && chmod 0700 /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm /home/pi-tools
 
 RUN cat >/usr/local/bin/pi-forge-entrypoint <<'EOF'
 #!/bin/sh

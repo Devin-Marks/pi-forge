@@ -123,7 +123,7 @@ export function spawnPty(opts: SpawnOptions): ManagedPty {
     cols,
     rows,
     cwd: opts.cwd,
-    env: filterEnv(env),
+    env: toolShellEnv(env),
     ...identity,
   });
   const ptyId = randomUUID();
@@ -437,12 +437,29 @@ function filterEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return out;
 }
 
+function applySandboxToolHome(env: Record<string, string>): Record<string, string> {
+  if (!config.agentToolSandbox.enabled) return env;
+  return {
+    ...env,
+    HOME: config.agentToolSandbox.home,
+    USER: "pi-tools",
+    LOGNAME: "pi-tools",
+  };
+}
+
 /**
- * Re-export so non-PTY callers (the user-bash `!` exec route) get the
- * same env allowlist without having to re-implement it. The PTY and
- * the one-shot user-bash share an identical threat model: an
- * authenticated browser user must not be able to `echo
- * $JWT_SECRET` (or any other host-env secret) from a shell the
- * pi-forge spawned on their behalf.
+ * Re-export so server-owned subprocess callers can get the same allowlist
+ * without inheriting pi-forge / provider secrets. This does NOT rewrite HOME
+ * for the sandbox tool identity; server-owned commands should keep the server
+ * process identity/env semantics.
  */
 export const scrubbedEnv = (): Record<string, string> => filterEnv(process.env);
+
+/**
+ * Env for shell-like user/model surfaces (PTY terminals, `!` exec,
+ * quick actions, process tool, and agent bash). In sandbox mode these
+ * surfaces also run as `AGENT_TOOL_UID:GID`, so HOME must point at the
+ * sandbox tool user's writable home instead of the server user's home.
+ */
+export const toolShellEnv = (env: NodeJS.ProcessEnv = process.env): Record<string, string> =>
+  applySandboxToolHome(filterEnv(env));

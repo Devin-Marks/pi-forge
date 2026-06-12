@@ -88,6 +88,7 @@ const sandboxSettingsSchema = {
     enabled: { type: "boolean" },
     uid: { type: "integer" },
     gid: { type: "integer" },
+    home: { type: "string" },
     toolEnv: { type: "object", additionalProperties: { type: "string" } },
   },
 } as const;
@@ -372,6 +373,7 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
           enabled: config.agentToolSandbox.enabled,
           uid: config.agentToolSandbox.uid,
           gid: config.agentToolSandbox.gid,
+          home: config.agentToolSandbox.home,
           toolEnv: settings.toolEnv,
         };
       } catch (err) {
@@ -407,6 +409,7 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
           enabled: config.agentToolSandbox.enabled,
           uid: config.agentToolSandbox.uid,
           gid: config.agentToolSandbox.gid,
+          home: config.agentToolSandbox.home,
           toolEnv: settings.toolEnv,
         };
       } catch (err) {

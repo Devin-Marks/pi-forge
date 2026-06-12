@@ -50,7 +50,8 @@ The image creates two users:
   preserves legacy path/env expectations.
 - `pi-tools` (`AGENT_TOOL_UID` / `AGENT_TOOL_GID` in compose, default
   `1001:1001`) is the restricted identity used when
-  `AGENT_TOOL_SANDBOX_ENABLED=true`.
+  `AGENT_TOOL_SANDBOX_ENABLED=true`. It has its own writable home at
+  `/home/pi-tools`, exposed to sandboxed shells as `AGENT_TOOL_HOME`.
 
 By default (`AGENT_TOOL_SANDBOX_ENABLED=false`), compose starts the
 server as the legacy `pi` user directly and drops all Linux
@@ -144,8 +145,10 @@ when you need them.
 | `PI_CONFIG_DIR` | `/home/pi/.pi/agent` |
 | `FORGE_DATA_DIR` | `/home/pi/.pi-forge` |
 | `PYTHONUSERBASE` | `/home/pi/.local` |
+| `HOME` | `/home/pi`; writable by the `pi` user in regular/non-sandbox mode so CLIs such as `gh` can create `~/.config`, `~/.gitconfig`, and similar per-user files |
 | `AGENT_TOOL_SANDBOX_ENABLED` | `false` by default; set `true` to run tool children as `pi-tools` |
 | `AGENT_TOOL_UID` / `AGENT_TOOL_GID` | `1001` / `1001` in compose defaults |
+| `AGENT_TOOL_HOME` | `/home/pi-tools`; writable home injected as `HOME` for sandboxed terminals/processes/model bash |
 
 Set `UI_PASSWORD` and / or `API_KEY` in `.env` for any non-loopback
 deploy — without them, auth is disabled. `JWT_SECRET` is intentionally
@@ -252,9 +255,11 @@ SSE-buffering and WebSocket-upgrade settings live in
   directories). The sandbox also blocks `/run/secrets` and
   `/var/run/secrets` from model file tools.
 - **Read-only root filesystem (optional).** Add `read_only: true` to
-  compose with `tmpfs` mounts for `/tmp` and `/home/pi/.npm` if you
-  want a hardened deploy. Native modules + node_modules live in the
-  image, so they're already read-only.
+  compose with `tmpfs` mounts for `/tmp`, `/home/pi/.npm`, and any other
+  regular-mode home/config paths you expect tools to write (for example
+  `/home/pi/.config` for GitHub CLI auth) if you want a hardened deploy.
+  Native modules + node_modules live in the image, so they're already
+  read-only.
 
 ## Updating
 
