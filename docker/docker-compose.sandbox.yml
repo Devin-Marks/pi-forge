@@ -13,6 +13,8 @@ services:
     user: "0:0"
     environment:
       AGENT_TOOL_SANDBOX_ENABLED: ${AGENT_TOOL_SANDBOX_ENABLED:-true}
+      AGENT_TOOL_UID: ${AGENT_TOOL_UID:-1001}
+      AGENT_TOOL_GID: ${AGENT_TOOL_GID:-1001}
     cap_add:
       - SETUID
       - SETGID

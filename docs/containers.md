@@ -127,8 +127,12 @@ bind mount.
 
 The full env-var reference lives in
 [`configuration.md`](./configuration.md#environment-variables). The
-container fixes the path-related vars; everything else is yours to set
-in `docker/.env`:
+container fixes the path-related vars; the shipped `docker/.env.example`
+only includes the settings most Docker users edit on day one. Add
+less-used server knobs (LDAP, CORS pinning, minimal UI, orchestration,
+rate limits, terminal tuning, explicit JWT rotation, etc.) in your own
+compose override (or by adding them to the compose `environment:` block)
+when you need them.
 
 | Variable | Container value |
 |---|---|
@@ -142,12 +146,17 @@ in `docker/.env`:
 | `AGENT_TOOL_UID` / `AGENT_TOOL_GID` | `1001` / `1001` in compose defaults |
 
 Set `UI_PASSWORD` and / or `API_KEY` in `.env` for any non-loopback
-deploy — without them, auth is disabled.
+deploy — without them, auth is disabled. `JWT_SECRET` is intentionally
+not in the sample `.env`; when auth is enabled, pi-forge auto-generates
+and persists it under `${FORGE_DATA_DIR}/jwt-secret` unless you choose
+to manage rotation yourself.
 
 ## Compose recipe
 
 The shipped compose file (`docker/docker-compose.yml`) covers a typical
-single-host deploy. Quickstart:
+single-host deploy. Its `.env.example` is deliberately concise; advanced
+server env vars remain supported but are documented instead of being
+listed as runtime defaults. Quickstart:
 
 ```bash
 cp docker/.env.example docker/.env

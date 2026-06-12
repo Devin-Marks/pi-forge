@@ -36,7 +36,10 @@ the `FLAGS` table there.
 ## Environment variables
 
 The exhaustive list lives in `pi-forge --help` (and the `FLAGS` table
-in `cli.ts`). The most-touched ones:
+in `cli.ts`). Docker's `.env.example` intentionally mirrors only a
+small common subset; use this section when adding advanced values to a
+compose override (or compose `environment:` block), Kubernetes manifest,
+or shell environment. The most-touched ones:
 
 | Variable | Default | Notes |
 |---|---|---|
@@ -303,6 +306,13 @@ The shipped `docker-compose.yml` mounts these paths by default:
 | `/home/pi/.pi/agent` | `${PI_CONFIG_HOST_PATH:-~/.pi/agent}` | Shared with host pi CLI by default — same provider keys, custom providers, agent defaults |
 | `/home/pi/.pi-forge` | `${FORGE_DATA_HOST_PATH:-~/.pi-forge-docker}` | **Separate** from the host's `~/.pi-forge` so the container has its own project list — host project paths wouldn't resolve inside the container anyway |
 | `/workspace` | `${WORKSPACE_HOST_PATH:-../workspace}` | User code; sessions under `.pi/sessions/` here |
+
+`docker/.env.example` intentionally keeps to common values (host port,
+UID/GID, bind mounts, auth, logging/proxy hints). Less-used values such
+as `JWT_SECRET`, `CORS_ORIGIN`, `MINIMAL_UI`, LDAP settings,
+orchestration toggles, rate limits, terminal tuning, and sandbox mode
+remain supported; add them to your own compose override or compose
+`environment:` block using the reference above when needed.
 
 See [`containers.md`](./containers.md) for UID/GID handling, image
 internals, and override env vars.
