@@ -10,6 +10,7 @@ import {
 import { useUiConfigStore } from "../store/ui-config-store";
 import { useSessionStore } from "../store/session-store";
 import { useComposerStore } from "../store/composer-store";
+import { createClientId } from "../lib/client-id";
 
 /**
  * Toolbar chip rendered in `ChatView`'s top bar (left-aligned). Two
@@ -41,10 +42,7 @@ function isPromptAction(a: QuickAction): boolean {
 }
 
 function randomId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return createClientId("run");
 }
 
 export function QuickActionsMenu({ sessionId, projectId }: Props) {

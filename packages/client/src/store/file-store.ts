@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api, ApiError, type FileTreeNode } from "../lib/api-client";
 import { parseUnifiedDiff, type DiffLine } from "../lib/diff-parser";
+import { createClientId } from "../lib/client-id";
 
 /**
  * Per-tab editor state. Tracks an in-memory `draft` separately from
@@ -705,10 +706,7 @@ export const useFileStore = create<FileState>((set, get) => ({
 }));
 
 function newTabId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return createClientId("tab");
 }
 
 function omitKey<V>(record: Record<string, V>, key: string): Record<string, V> {
