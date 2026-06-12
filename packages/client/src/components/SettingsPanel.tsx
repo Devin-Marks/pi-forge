@@ -140,10 +140,14 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
         // Width history: max-w-3xl (768px) → max-w-4xl (896px) when
         // the Prompts tab brought the count to 9 → max-w-6xl (1152px)
         // because the Quick Actions / MCP tabs render dense
-        // multi-column forms that wrapped awkwardly at 896. Settings
-        // is a modal, so the extra width doesn't compete with the
-        // chat for screen real estate.
-        className="flex h-full max-h-[720px] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950 shadow-2xl"
+        // multi-column forms that wrapped awkwardly at 896 → 88rem for
+        // the v1.4.2 settings surface, which now has enough tabs and
+        // wide form rows that 1152px can create an avoidable inner
+        // scrollbar on desktop. Settings is a modal, so the extra
+        // width doesn't compete with the chat for screen real estate;
+        // `w-full` plus the overlay padding still clamps it on smaller
+        // viewports.
+        className="flex h-full max-h-[720px] w-full max-w-[88rem] flex-col overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950 shadow-2xl"
       >
         <header className="flex items-center gap-3 border-b border-neutral-800 px-4 py-3">
           {/* Horizontally scrollable tab strip. With 10+ tabs the strip
@@ -234,7 +238,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto px-4 py-3 text-sm text-neutral-200">
+        <div className="min-w-0 flex-1 overflow-y-auto px-4 py-3 text-sm text-neutral-200">
           {tab === "providers" && <ProvidersTab onError={setError} />}
           {tab === "agent" && <AgentTab onError={setError} />}
           {tab === "mcp" && <McpTab onError={setError} />}
