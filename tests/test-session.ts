@@ -100,6 +100,10 @@ async function main(): Promise<void> {
     resumeSession: (id: string, projectId: string, workspacePath: string) => Promise<TestLive>;
     discoverSessionsOnDisk: (projectId: string, workspacePath: string) => Promise<TestDiscovered[]>;
     maybeNameSessionFromFirstPrompt: (live: TestLive, promptText: string) => string | undefined;
+    findLastAssistantErrorMessage: (
+      messages: readonly unknown[],
+      startIndex?: number,
+    ) => string | undefined;
     sessionCount: () => number;
     disposeAllSessions: () => void;
   }
@@ -113,6 +117,27 @@ async function main(): Promise<void> {
   )) as unknown as TestRegistry;
 
   try {
+    const boundedErrorMessages = [
+      { role: "user", content: "old failing prompt" },
+      { role: "assistant", stopReason: "error", errorMessage: "old provider error" },
+      { role: "user", content: "successful follow-up" },
+      { role: "assistant", stopReason: "stop", content: "ok" },
+    ];
+    assert(
+      "agent_end error fallback ignores prior-turn assistant errors",
+      registry.findLastAssistantErrorMessage(boundedErrorMessages, 2) === undefined,
+    );
+    assert(
+      "agent_end error fallback still reports current-turn assistant errors",
+      registry.findLastAssistantErrorMessage(
+        [
+          ...boundedErrorMessages,
+          { role: "assistant", stopReason: "error", errorMessage: "new error" },
+        ],
+        2,
+      ) === "new error",
+    );
+
     const projectId = "proj-" + Date.now().toString(36);
 
     // 1. Create

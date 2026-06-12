@@ -340,8 +340,12 @@ export function shouldSuppressCodexProviderErrorFromWebUi(
  * SDK's openai-completions catch path; we scope the scan to those
  * to avoid surfacing a stale errorMessage from a previous turn.
  */
-function findLastAssistantErrorMessage(messages: readonly unknown[]): string | undefined {
-  for (let i = messages.length - 1; i >= 0; i--) {
+export function findLastAssistantErrorMessage(
+  messages: readonly unknown[],
+  startIndex = 0,
+): string | undefined {
+  const from = Math.max(0, Math.min(startIndex, messages.length));
+  for (let i = messages.length - 1; i >= from; i--) {
     const m = messages[i] as {
       role?: string;
       stopReason?: string;
@@ -366,6 +370,15 @@ function makeSubscribeHandler(live: LiveSession): () => void {
       // at the first message of the new turn (the user prompt or the
       // steered/follow-up entry).
       live.lastAgentStartIndex = live.session.messages.length;
+      // The SDK may leave `session.errorMessage` populated after a failed
+      // turn. A follow-up prompt starts a new run, so acknowledge the stale
+      // session-level error here; if this new run fails, the SDK will set a
+      // fresh value before `agent_end` and the banner still appears.
+      try {
+        (live.session as unknown as { errorMessage: string | undefined }).errorMessage = undefined;
+      } catch {
+        // Best-effort only — never let error clearing break event fan-out.
+      }
     }
 
     // Surface SDK-level provider errors to stderr. The pi SDK swallows
@@ -474,7 +487,10 @@ function makeSubscribeHandler(live: LiveSession): () => void {
       // spinner mid-tool-chain). Scan the post-turn messages for the
       // most-recent assistant with an error and surface that.
       if (errMsg === undefined || errMsg === "") {
-        const fromMessage = findLastAssistantErrorMessage(live.session.messages);
+        const fromMessage = findLastAssistantErrorMessage(
+          live.session.messages,
+          live.lastAgentStartIndex ?? 0,
+        );
         if (fromMessage !== undefined && fromMessage !== "") {
           errMsg = fromMessage;
           logAgentEvent("warn", {
