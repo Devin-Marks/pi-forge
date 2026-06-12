@@ -356,6 +356,14 @@ const FLAGS: readonly FlagDef[] = [
     desc: "Numeric GID for sandboxed model/user shell processes",
     defaultText: "(required when sandbox enabled)",
   },
+  {
+    name: "agent-tool-home",
+    env: "AGENT_TOOL_HOME",
+    type: "string",
+    group: "sandbox",
+    desc: "Writable HOME for sandboxed model/user shell processes",
+    defaultText: "/home/pi-tools",
+  },
   // rate limits
   {
     name: "rate-limit-login-max",

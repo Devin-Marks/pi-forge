@@ -146,6 +146,7 @@ const PASSWORD_HASH_FILE = join(FORGE_DATA_DIR, "password-hash");
 const AGENT_TOOL_SANDBOX_ENABLED = readBool("AGENT_TOOL_SANDBOX_ENABLED", false);
 const AGENT_TOOL_UID = readOptionalInt("AGENT_TOOL_UID");
 const AGENT_TOOL_GID = readOptionalInt("AGENT_TOOL_GID");
+const AGENT_TOOL_HOME = resolve(readEnv("AGENT_TOOL_HOME") ?? "/home/pi-tools");
 if (AGENT_TOOL_SANDBOX_ENABLED && (AGENT_TOOL_UID === undefined || AGENT_TOOL_GID === undefined)) {
   throw new Error(
     "config: AGENT_TOOL_SANDBOX_ENABLED=true requires numeric AGENT_TOOL_UID and AGENT_TOOL_GID",
@@ -458,6 +459,7 @@ export const config = Object.freeze({
     enabled: AGENT_TOOL_SANDBOX_ENABLED,
     uid: AGENT_TOOL_UID,
     gid: AGENT_TOOL_GID,
+    home: AGENT_TOOL_HOME,
   }),
   /**
    * How long a detached PTY (its WebSocket closed but no replacement

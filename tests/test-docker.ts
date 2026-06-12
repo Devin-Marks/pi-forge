@@ -172,7 +172,11 @@ services:
       "python3 -m pip --version",
       'test "$PYTHONUSERBASE" = /home/pi/.local',
       'test "$(python3 -m site --user-base)" = /home/pi/.local',
+      "test -w /home/pi",
       "test -w /home/pi/.local",
+      "mkdir -p /home/pi/.config/pi-forge-home-test",
+      "printf ok > /home/pi/.config/pi-forge-home-test/probe",
+      "test -s /home/pi/.config/pi-forge-home-test/probe",
       "make --version",
       "g++ --version",
       "npm rebuild node-pty --build-from-source",
@@ -183,7 +187,7 @@ services:
       true,
     );
     assert(
-      "runtime image has Python 3.12/pip and can rebuild node-pty from source",
+      "runtime image has writable HOME plus Python 3.12/pip and can rebuild node-pty",
       rebuild.status === 0,
       `exit=${rebuild.status}; stdout=${rebuild.stdout.slice(-1000)}; stderr=${rebuild.stderr.slice(-1000)}`,
     );

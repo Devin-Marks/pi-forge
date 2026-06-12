@@ -172,6 +172,7 @@ function vSandboxSettings(value: unknown, status: number): SandboxSettingsRespon
   const out: SandboxSettingsResponse = { enabled: value.enabled, toolEnv };
   if (typeof value.uid === "number") out.uid = value.uid;
   if (typeof value.gid === "number") out.gid = value.gid;
+  if (typeof value.home === "string") out.home = value.home;
   return out;
 }
 

@@ -1559,9 +1559,9 @@ function SandboxTab({ onError }: { onError: (msg: string | undefined) => void })
       <div>
         <h2 className="text-sm font-semibold text-neutral-100">Sandbox mode</h2>
         <p className="mt-1 text-xs text-neutral-400">
-          Configure environment variables injected into future agent tool calls. Sandbox enablement
-          and UID/GID are deploy-time settings; changes here take effect for new or refreshed
-          sessions.
+          Configure environment variables injected into future agent tool calls. Sandbox enablement,
+          UID/GID, and tool HOME are deploy-time settings; changes here take effect for new or
+          refreshed sessions.
         </p>
       </div>
 
@@ -1572,6 +1572,7 @@ function SandboxTab({ onError }: { onError: (msg: string | undefined) => void })
           <span>
             Enabled{settings.uid !== undefined ? ` · uid ${settings.uid}` : ""}
             {settings.gid !== undefined ? ` · gid ${settings.gid}` : ""}
+            {settings.home !== undefined ? ` · home ${settings.home}` : ""}
           </span>
         ) : (
           <span className="text-amber-300">

@@ -31,8 +31,10 @@ import { createForgeBashOperations } from "../agent-bash-operations.js";
  * inject context.
  *
  * Security posture: BashOperations is overridden to inject our
- * `scrubbedEnv()` — an allowlist-based filter that only passes
- * known-harmless system vars (PATH, HOME, TERM, locales, …). pi-forge
+ * `toolShellEnv()` — an allowlist-based filter that only passes
+ * known-harmless system vars (PATH, HOME, TERM, locales, …), with HOME
+ * rewritten to the sandbox tool home when the identity sandbox is enabled.
+ * pi-forge
  * secrets, provider keys, cloud credentials, and any other host-env
  * vars are dropped unless the operator opts them back in via
  * `TERMINAL_PASSTHROUGH_ENV`. Matches the integrated terminal's

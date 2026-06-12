@@ -71,6 +71,7 @@ or shell environment. The most-touched ones:
 | `AGENT_TOOL_SANDBOX_ENABLED` | `false` | Opt-in identity/path sandbox for model/user tool surfaces. When `true`, `AGENT_TOOL_UID` and `AGENT_TOOL_GID` are required. |
 | `AGENT_TOOL_UID` | (unset) | Numeric UID used for sandboxed bash/process/terminal/quick-action/exec children. Required only when sandbox is enabled. |
 | `AGENT_TOOL_GID` | (unset) | Numeric GID used for sandboxed bash/process/terminal/quick-action/exec children. Required only when sandbox is enabled. |
+| `AGENT_TOOL_HOME` | `/home/pi-tools` | Writable HOME injected into sandboxed bash/process/terminal/quick-action/exec children. The Docker image creates this directory owned by `pi-tools`. |
 
 Production-tuning knobs (rate limits, JWT lifetime, TLS / proxy posture)
 are documented in [`deployment.md`](./deployment.md).
@@ -80,9 +81,9 @@ are documented in [`deployment.md`](./deployment.md).
 The identity sandbox is off by default and has a strict mount-permission
 contract. Read [`agent-tool-sandbox.md`](./agent-tool-sandbox.md) before
 enabling it. In short: pi-forge runs the server as root, drops
-model/user shell surfaces to `AGENT_TOOL_UID:GID`, scopes model file
-access, and requires workspace / Pi config / forge data mounts to have
-specific ownership and mode bits.
+model/user shell surfaces to `AGENT_TOOL_UID:GID`, points their `HOME`
+at `AGENT_TOOL_HOME`, scopes model file access, and requires workspace /
+Pi config / forge data mounts to have specific ownership and mode bits.
 
 When this mode is enabled, LDAP bind password file references are
 rejected (`LDAP_BIND_PASSWORD_FILE` and CLI/env `@file` forms). Use a
@@ -314,8 +315,12 @@ orchestration toggles, rate limits, terminal tuning, and sandbox mode
 remain supported; add them to your own compose override or compose
 `environment:` block using the reference above when needed.
 
-See [`containers.md`](./containers.md) for UID/GID handling, image
-internals, and override env vars.
+In regular/non-sandbox containers, `$HOME` is `/home/pi` and is writable by the
+`pi` user so terminal/tool CLIs can create per-user files (`~/.config/gh`,
+`~/.gitconfig`, caches, and similar). In sandbox mode, tool/terminal children
+instead receive `HOME=${AGENT_TOOL_HOME}` (`/home/pi-tools` in the Docker image).
+See [`containers.md`](./containers.md) for UID/GID handling, image internals,
+sandbox-mode differences, and override env vars.
 
 ## See also
 

@@ -262,6 +262,7 @@ export interface SandboxSettingsResponse {
   enabled: boolean;
   uid?: number;
   gid?: number;
+  home?: string;
   toolEnv: Record<string, string>;
 }
 

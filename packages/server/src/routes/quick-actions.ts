@@ -3,7 +3,7 @@ import type { FastifyPluginAsync, FastifyReply } from "fastify";
 import { sandboxSpawnIdentity } from "../agent-bash-operations.js";
 import { config } from "../config.js";
 import { getProject } from "../project-manager.js";
-import { scrubbedEnv } from "../pty-manager.js";
+import { toolShellEnv } from "../pty-manager.js";
 import {
   createQuickAction,
   DEFAULT_TIMEOUT_MS,
@@ -146,7 +146,7 @@ async function runCommand(
   return new Promise((resolve) => {
     const proc = spawn("/bin/sh", ["-c", command], {
       cwd,
-      env: scrubbedEnv(),
+      env: toolShellEnv(),
       stdio: ["ignore", "pipe", "pipe"],
       ...sandboxSpawnIdentity(),
     });
