@@ -50,6 +50,28 @@ function disableBrowserTextAssist(host: HTMLElement): void {
 }
 
 /**
+ * Push xterm's current grid size to the backing PTY whenever fit() changes it.
+ * Shell line editors use the PTY's kernel window size to decide where pasted
+ * input wraps; if xterm and the PTY drift apart, long paste echo wraps back over
+ * the same visual line. Keep the websocket resize in one helper so every fit()
+ * path (mount, remount, tab visibility, container resize) stays in sync.
+ */
+function syncPtySize(entry: Live, force = false): void {
+  const cols = entry.term.cols;
+  const rows = entry.term.rows;
+  if (!force && cols === entry.lastSize.cols && rows === entry.lastSize.rows) return;
+  entry.lastSize = { cols, rows };
+  if (entry.ws.readyState === WebSocket.OPEN) {
+    entry.ws.send(JSON.stringify({ type: "resize", cols, rows }));
+  }
+}
+
+function fitAndSyncPty(entry: Live, force = false): void {
+  entry.fit.fit();
+  syncPtySize(entry, force);
+}
+
+/**
  * Mirrors the SSE backoff in `streamSSE`: 1→2→4→8→16→30s then steady
  * at 30. The cap matches the SSE client so behavior is consistent
  * across the two transport channels.
@@ -232,8 +254,9 @@ function TerminalHost({
         disableBrowserTextAssist(host);
         // visibility:hidden (not display:none) is used for tab
         // switching, so `host` has real layout dimensions on every
-        // mount — fit always returns correct cols/rows.
-        existing.fit.fit();
+        // mount — fit always returns correct cols/rows. Force a resize
+        // frame because the socket may have reconnected while unmounted.
+        fitAndSyncPty(existing, true);
       } catch {
         // open() / appendChild can throw transiently if the host
         // hasn't been laid out yet; the visibility-change effect
@@ -242,16 +265,9 @@ function TerminalHost({
       }
       const observer = new ResizeObserver(() => {
         try {
-          existing.fit.fit();
+          fitAndSyncPty(existing);
         } catch {
           // host detached momentarily during tab/panel toggles
-        }
-        const cols = existing.term.cols;
-        const rows = existing.term.rows;
-        if (cols === existing.lastSize.cols && rows === existing.lastSize.rows) return;
-        existing.lastSize = { cols, rows };
-        if (existing.ws.readyState === WebSocket.OPEN) {
-          existing.ws.send(JSON.stringify({ type: "resize", cols, rows }));
         }
       });
       observer.observe(host);
@@ -265,7 +281,7 @@ function TerminalHost({
       existing.observer = observer;
       requestAnimationFrame(() => {
         try {
-          existing.fit.fit();
+          fitAndSyncPty(existing);
           existing.term.focus();
         } catch {
           // ignore
@@ -340,19 +356,12 @@ function TerminalHost({
     // ourselves. Reads the current WS each call (post-reconnect-safe).
     const observer = new ResizeObserver(() => {
       try {
-        fit.fit();
+        const entry = live.get(tab.id);
+        if (entry === undefined) return;
+        fitAndSyncPty(entry);
       } catch {
         // fit can throw if the host is detached momentarily during
         // tab toggles; harmless.
-      }
-      const cols = term.cols;
-      const rows = term.rows;
-      const entry = live.get(tab.id);
-      if (entry === undefined) return;
-      if (cols === entry.lastSize.cols && rows === entry.lastSize.rows) return;
-      entry.lastSize = { cols, rows };
-      if (entry.ws.readyState === WebSocket.OPEN) {
-        entry.ws.send(JSON.stringify({ type: "resize", cols, rows }));
       }
     });
     observer.observe(hostRef.current);
@@ -397,7 +406,7 @@ function TerminalHost({
     if (entry === undefined) return;
     requestAnimationFrame(() => {
       try {
-        entry.fit.fit();
+        fitAndSyncPty(entry);
         entry.term.focus();
       } catch {
         // see ResizeObserver comment
@@ -500,7 +509,10 @@ function attachWebSocket(
     // server resizes the existing PTY rather than spawning a new one.
     // visibility:hidden tab-switching means every host has real
     // dimensions at mount, so this size is always honest.
-    ws.send(JSON.stringify({ type: "resize", cols: size.cols, rows: size.rows }));
+    const entry = live.get(tabId);
+    const currentSize =
+      entry !== undefined ? { cols: entry.term.cols, rows: entry.term.rows } : size;
+    ws.send(JSON.stringify({ type: "resize", cols: currentSize.cols, rows: currentSize.rows }));
     // Note: no "reconnected" banner here. The server's buffer
     // replay (sent on attach) shows recent output, and the same PTY
     // is still alive — the user is back in the SAME shell, not a
@@ -508,8 +520,10 @@ function attachWebSocket(
     // succeeded; a fresh PTY only happens if the idle reaper killed
     // it (10 min) and that case looks indistinguishable from "new
     // tab" on the wire.
-    const entry = live.get(tabId);
-    if (entry !== undefined) entry.reconnectAttempt = 0;
+    if (entry !== undefined) {
+      entry.lastSize = currentSize;
+      entry.reconnectAttempt = 0;
+    }
     // Suppress the unused-arg lint without changing the function
     // signature (kept stable for future use, e.g. a server-side
     // "fresh_pty" hint frame).

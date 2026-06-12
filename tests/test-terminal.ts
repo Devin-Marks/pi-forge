@@ -347,10 +347,20 @@ async function main(): Promise<void> {
       assert("echo output reaches client", sawSentinel, `output: ${term.output.slice(-200)}`);
 
       send(term.ws, { type: "resize", cols: 120, rows: 40 });
-      // Wait a tick — the resize is fire-and-forget; we just want to
-      // assert no error closes the socket.
+      // Wait a tick — the resize is fire-and-forget; we first assert
+      // no error closes the socket, then ask the shell for its PTY
+      // window size. Long pasted input wraps according to this kernel
+      // size, so it must stay in sync with xterm's grid.
       await new Promise((r) => setTimeout(r, 100));
       assert("socket still open after resize", term.ws.readyState === WebSocket.OPEN);
+      const sizeMarker = "SIZECHK_" + randomBytes(3).toString("hex");
+      send(term.ws, { type: "input", data: `printf '${sizeMarker}='; stty size\n` });
+      const sawPtySize = await waitForOutput(term, `${sizeMarker}=40 120`, 5_000);
+      assert(
+        "PTY receives terminal resize cols/rows",
+        sawPtySize,
+        `output: ${term.output.slice(-400)}`,
+      );
 
       // ---- Idle WebSocket keepalive ----
       // The PTY is idle here: no input and no shell output required.
