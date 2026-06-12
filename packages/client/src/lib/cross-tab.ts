@@ -18,6 +18,8 @@
  * and suspenders.
  */
 
+import { createClientId } from "./client-id";
+
 const CHANNEL_NAME = "pi-forge";
 
 /**
@@ -39,7 +41,7 @@ interface Envelope {
   msg: CrossTabMessage;
 }
 
-const TAB_ID = `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+const TAB_ID = createClientId("tab");
 
 let channel: BroadcastChannel | undefined;
 function getChannel(): BroadcastChannel | undefined {

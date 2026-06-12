@@ -20,6 +20,7 @@ import { useUiStore } from "../store/ui-store";
 import { EMPTY_STATUS, useMcpStore } from "../store/mcp-store";
 import { useQuickActionsStore } from "../store/quick-actions-store";
 import { THEME_DEFS, useThemeStore, type ThemeId } from "../lib/theme";
+import { createClientId } from "../lib/client-id";
 import { getStoredToken } from "../lib/auth-client";
 import { WebhooksTab } from "./WebhooksTab";
 import { useAuthStore } from "../store/auth-store";
@@ -1479,7 +1480,7 @@ interface SandboxEnvRow {
 function sandboxRowsFromEnv(toolEnv: Record<string, string>): SandboxEnvRow[] {
   return Object.entries(toolEnv)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, value]) => ({ id: crypto.randomUUID(), name, value, revealed: false }));
+    .map(([name, value]) => ({ id: createClientId("sandbox-env"), name, value, revealed: false }));
 }
 
 function sandboxRowsToEnv(rows: readonly SandboxEnvRow[]): Record<string, string> {
@@ -1589,7 +1590,7 @@ function SandboxTab({ onError }: { onError: (msg: string | undefined) => void })
             onClick={() => {
               setRows((current) => [
                 ...current,
-                { id: crypto.randomUUID(), name: "", value: "", revealed: false },
+                { id: createClientId("sandbox-env"), name: "", value: "", revealed: false },
               ]);
               setSaved(false);
             }}
