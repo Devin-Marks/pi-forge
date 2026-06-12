@@ -14,6 +14,8 @@ services:
         # Override in .env to match `id -u` / `id -g` for writable bind mounts.
         PUID: ${PUID:-1000}
         PGID: ${PGID:-1000}
+        # Advanced: set when using docker-compose.sandbox.yml with
+        # non-default pi-tools IDs (see ../docs/agent-tool-sandbox.md).
         PTOOLS_UID: ${AGENT_TOOL_UID:-1001}
         PTOOLS_GID: ${AGENT_TOOL_GID:-1001}
     image: pi-forge:latest
@@ -41,28 +43,14 @@ services:
       PORT: "3000"
       # Auth — read from .env. Both empty = auth disabled.
       UI_PASSWORD: ${UI_PASSWORD:-}
-      REQUIRE_PASSWORD_CHANGE: ${REQUIRE_PASSWORD_CHANGE:-false}
-      JWT_SECRET: ${JWT_SECRET:-}
       API_KEY: ${API_KEY:-}
       # Logging + reverse-proxy hint.
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TRUST_PROXY: ${TRUST_PROXY:-false}
-      CORS_ORIGIN: ${CORS_ORIGIN:-}
-      MINIMAL_UI: ${MINIMAL_UI:-false}
-      # Session orchestration — enabled by default. Hard-disabled under
-      # MINIMAL_UI; set ORCHESTRATION_DISABLED=true to remove the surface.
-      # ORCHESTRATION_ENABLED=false remains a compatibility disable switch.
-      # See docs/orchestration.md.
-      ORCHESTRATION_DISABLED: ${ORCHESTRATION_DISABLED:-false}
-      ORCHESTRATION_ENABLED: ${ORCHESTRATION_ENABLED:-}
-      ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR: ${ORCHESTRATION_MAX_WORKERS_PER_SUPERVISOR:-8}
-      # Identity sandbox — disabled by default. Use
-      # docker-compose.sandbox.yml when enabling it so the server runs
-      # as root with only the SETUID/SETGID capabilities needed to drop
-      # model/user shell surfaces to pi-tools.
-      AGENT_TOOL_SANDBOX_ENABLED: ${AGENT_TOOL_SANDBOX_ENABLED:-false}
-      AGENT_TOOL_UID: ${AGENT_TOOL_UID:-1001}
-      AGENT_TOOL_GID: ${AGENT_TOOL_GID:-1001}
+      # Less-used server env vars (JWT_SECRET, CORS_ORIGIN, MINIMAL_UI,
+      # LDAP, orchestration, rate limits, terminal tuning, sandbox, etc.)
+      # are intentionally documentation-only; add them in your own compose
+      # override when needed. See ../docs/configuration.md.
     # Hardening. Not read-only because the agent's bash tool needs to
     # write to /home/pi/.npm, /tmp, etc. Regular mode does not need any
     # Linux capabilities because the container starts as pi directly.
