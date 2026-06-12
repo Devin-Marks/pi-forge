@@ -642,7 +642,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   sendPrompt: async (sessionId, text, attachments) => {
-    set({ error: undefined });
+    set((s) => ({
+      error: undefined,
+      bannerBySession: { ...s.bannerBySession, [sessionId]: undefined },
+    }));
     // Optimistically append the user message so the chat reflects the input
     // immediately. If the server rejects (no API key, no model, etc.) the
     // catch below rolls it back. If it accepts, the eventual messages
