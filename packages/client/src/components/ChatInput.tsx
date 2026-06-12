@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -715,10 +716,12 @@ export function ChatInput({ sessionId }: Props) {
   // would steal ~90 px of horizontal real estate from the textarea.
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const attachMenuRef = useRef<HTMLDivElement | null>(null);
-  // Auto-grown textarea height for mobile (px). Recomputed on every
-  // text change as `min(scrollHeight, 30vh)` — desktop ignores this
-  // because it has the drag-resize handle for the same purpose.
-  const [autoHeight, setAutoHeight] = useState<number | undefined>(undefined);
+  // Auto-grown textarea metrics (px). Recomputed on every text change:
+  // shrink to the configured floor, expand with scrollHeight, then cap
+  // at a viewport-relative max and allow internal scrolling past it.
+  const [autoSize, setAutoSize] = useState<
+    { height: number; maxHeight: number; overflowing: boolean } | undefined
+  >(undefined);
 
   // Per-file size + count limits mirror the server's. Validating
   // client-side gives instant feedback; the server still re-checks.
@@ -1585,33 +1588,34 @@ export function ChatInput({ sessionId }: Props) {
     };
   }, [attachMenuOpen]);
 
-  // Mobile-only auto-grow: the textarea has a comfortable minimum
-  // height (matches the attach + send buttons' 44 px height so the
-  // composer row reads as one unified bar) and grows with input up
-  // to a 30vh cap, after which it scrolls internally. Measuring:
-  // collapse height to "auto" first (otherwise scrollHeight reports
-  // the previously-set expanded value and we can never shrink),
-  // measure, then store clamped to [min, max]. Desktop opts out —
-  // the drag handle owns textarea sizing there.
-  useEffect(() => {
-    if (!isMobile) {
-      if (autoHeight !== undefined) setAutoHeight(undefined);
-      return;
-    }
+  // Auto-grow the textarea on every input change. Collapse to "auto"
+  // before measuring so deleting lines can shrink the box again; then
+  // clamp to a sensible floor/ceiling. Desktop keeps the drag handle as
+  // an optional preferred minimum height, while content can still grow
+  // beyond that up to 60vh. Mobile uses the tighter 30vh cap so the
+  // keyboard and transcript remain usable.
+  useLayoutEffect(() => {
     const ta = textareaRef.current;
     if (ta === null) return;
-    const prev = ta.style.height;
+
+    const prevHeight = ta.style.height;
     ta.style.height = "auto";
     const measured = ta.scrollHeight;
-    ta.style.height = prev;
-    const min = 44; // matches min-h-11 on attach/send buttons
-    const max = Math.round(window.innerHeight * 0.3);
-    const next = Math.max(min, Math.min(measured, max));
-    if (next !== autoHeight) setAutoHeight(next);
-    // Recompute when the input grows/shrinks or the viewport flips
-    // (orientation change → different 30vh).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text, isMobile]);
+    ta.style.height = prevHeight;
+
+    const min = isMobile ? 44 : (textareaHeight ?? 80);
+    const max = Math.max(min, Math.round(window.innerHeight * (isMobile ? 0.3 : 0.6)));
+    const height = Math.max(min, Math.min(measured, max));
+    const overflowing = measured > max;
+    const next = { height, maxHeight: max, overflowing };
+    setAutoSize((cur) =>
+      cur?.height === next.height &&
+      cur.maxHeight === next.maxHeight &&
+      cur.overflowing === next.overflowing
+        ? cur
+        : next,
+    );
+  }, [text, isMobile, textareaHeight]);
 
   return (
     <div className="bg-neutral-950">
@@ -2058,21 +2062,21 @@ export function ChatInput({ sessionId }: Props) {
                   ? "The agent is auto-retrying after a provider error. New messages are queued and delivered when the retry succeeds."
                   : undefined
               }
-              // Mobile: starts at 2 lines, then auto-grows with the
-              // user's input via the useEffect above (capped at
-              // 30vh; scrolls internally past that). Desktop keeps
-              // its 3-row default and uses the drag handle for
-              // explicit resizing — autoHeight is undefined on
-              // desktop so the inline style only applies the
-              // user-dragged value.
+              // Starts at a comfortable minimum (2 rows on mobile,
+              // 3 on desktop), then auto-grows with the user's input.
+              // Desktop drag-resize still works as a preferred minimum;
+              // once content exceeds that, the textarea grows up to the
+              // cap and then scrolls internally.
               rows={isMobile ? 2 : 3}
               disabled={isReadOnlyExternal}
               style={
-                isMobile && autoHeight !== undefined
-                  ? { height: `${autoHeight}px`, maxHeight: "30vh" }
-                  : !isMobile && textareaHeight !== undefined
-                    ? { height: `${textareaHeight}px` }
-                    : undefined
+                autoSize === undefined
+                  ? undefined
+                  : {
+                      height: `${autoSize.height}px`,
+                      maxHeight: `${autoSize.maxHeight}px`,
+                      overflowY: autoSize.overflowing ? "auto" : "hidden",
+                    }
               }
               className={`block w-full resize-none rounded-md border bg-neutral-900 px-3 py-2 text-sm text-neutral-100 outline-none disabled:cursor-not-allowed disabled:opacity-60 ${
                 // Match attach + send button min-height on mobile so
