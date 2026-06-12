@@ -15,6 +15,25 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.4.2] — 2026-06-11
+
+### Added
+
+- **Prompt text box auto-grow.** The chat prompt input now grows and shrinks with multi-line content while keeping a bounded maximum height.
+- **Tea CLI in the container image.** The Docker image now includes the pinned `tea` Gitea/Forgejo CLI with checksum verification and Docker test coverage.
+
+### Changed
+
+- **Docker environment examples are focused on common settings.** Less-used and advanced environment variables moved out of the base compose/example files and into documentation, while sandbox-specific settings remain in the sandbox compose overlay.
+- **Settings pane has more room.** The Settings modal is wider on desktop and avoids unnecessary inner overflow from cramped flex sizing.
+- **Sandboxed tools get their own writable home.** Non-sandbox Docker keeps `/home/pi` writable for regular CLI config, while sandboxed tool and terminal surfaces use `AGENT_TOOL_HOME` (`/home/pi-tools`) instead of writing the server user home.
+
+### Fixed
+
+- **Stale session error banners no longer return on follow-up prompts.** Previous turn errors are cleared/scoped when a new run starts so only current failures show banners.
+- **Terminal paste wrapping stays aligned.** The terminal now keeps xterm fitting and backend PTY resize sync centralized across lifecycle events to prevent long pasted input from wrapping incorrectly.
+- **Client ID generation works without `crypto.randomUUID`.** Sandbox environment variable rows and other client IDs now use a shared helper with safe fallbacks for browsers that lack `crypto.randomUUID`.
+
 ## [1.4.1] — 2026-06-08
 
 ### Added
