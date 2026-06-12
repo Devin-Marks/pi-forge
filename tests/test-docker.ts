@@ -8,6 +8,7 @@
  * - Polls `GET /api/v1/health` until 200, then asserts:
  *     - runtime image has Python 3.12 + pip and can rebuild `node-pty` from source
  *       (dev-container npm install path)
+ *     - runtime image has the Gitea/Forgejo `tea` CLI on PATH
  *     - `/manifest.webmanifest` returns 200 with `display: "standalone"`
  *     - `/sw.js` returns 200 (service worker present)
  *     - `/icons/icon.svg` returns 200
@@ -185,6 +186,17 @@ services:
       "runtime image has Python 3.12/pip and can rebuild node-pty from source",
       rebuild.status === 0,
       `exit=${rebuild.status}; stdout=${rebuild.stdout.slice(-1000)}; stderr=${rebuild.stderr.slice(-1000)}`,
+    );
+
+    const tea = compose(
+      ["exec", "-T", "pi-forge", "sh", "-lc", "command -v tea && tea --version"],
+      { composeFile, projectName },
+      true,
+    );
+    assert(
+      "runtime image has tea CLI on PATH",
+      tea.status === 0,
+      `exit=${tea.status}; stdout=${tea.stdout.slice(-1000)}; stderr=${tea.stderr.slice(-1000)}`,
     );
 
     // ---- PWA assets ----

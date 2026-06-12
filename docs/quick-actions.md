@@ -131,7 +131,7 @@ schemas at `/api/docs`.
 PATH. Pi-forge launches commands with the same PATH as the
 parent process; for chips that need `gh`, `kubectl`, etc.,
 ensure they're installed in the container (the shipped image
-already has `git`, `gh`, `ripgrep`, `bash`, `curl`, `less`,
+already has `git`, `gh`, `tea`, `ripgrep`, `bash`, `curl`, `less`,
 `procps`).
 
 **Chip ran successfully but the output looks cut off.** Stream

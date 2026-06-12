@@ -99,6 +99,7 @@ ARG PUID=1000
 ARG PGID=1000
 ARG PTOOLS_UID=1001
 ARG PTOOLS_GID=1001
+ARG TEA_VERSION=0.14.1
 
 # Some upstream base images have shipped a pre-baked `node` user/group
 # at UID/GID 1000 — the same default we want for `pi`. Drop it before
@@ -117,6 +118,9 @@ ARG PTOOLS_GID=1001
 #     `gh pr`, `gh issue`, `gh repo`, etc. Not in Debian's default
 #     repos — installed from GitHub's apt source (the keyring and
 #     sources.list lines below).
+#   - tea: the Gitea/Forgejo CLI. Debian bookworm does not reliably
+#     provide the upstream Gitea tea CLI package, so install a pinned
+#     upstream release with per-architecture SHA-256 verification.
 #   - ripgrep: pi's `grep` tool delegates to ripgrep when present.
 #     Without it, code search inside the agent silently degrades.
 #   - bash: replaces dash as the integrated terminal's interactive
@@ -148,6 +152,18 @@ RUN apt-get update \
       > /etc/apt/sources.list.d/github-cli.list \
  && apt-get update \
  && apt-get install -y --no-install-recommends gh \
+ && tea_arch="$(dpkg --print-architecture)" \
+ && case "$tea_arch" in \
+      amd64) tea_sha256="3cf7c5d1c20808c9ba2efb9ac125cee10d969daf398e653ea2b33cde201ea317" ;; \
+      arm64) tea_sha256="0947b07f15fd2dde1768e0eb8c8619f280f45fb08b8895a11b64f6ba94b13dbf" ;; \
+      armhf) tea_arch="arm-7"; tea_sha256="5c648d888cc016fd2a95cbeedc3688c7de03fd71c8902c4c14a78d812e7d6bc9" ;; \
+      *) echo "unsupported tea architecture: $tea_arch" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL "https://dl.gitea.com/tea/${TEA_VERSION}/tea-${TEA_VERSION}-linux-${tea_arch}" \
+      -o /usr/local/bin/tea \
+ && echo "$tea_sha256  /usr/local/bin/tea" | sha256sum -c - \
+ && chmod 0755 /usr/local/bin/tea \
+ && tea --version \
  && rm -rf /var/lib/apt/lists/* \
  && (userdel node 2>/dev/null || true) \
  && (groupdel node 2>/dev/null || true) \
