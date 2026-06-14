@@ -232,7 +232,7 @@ export function ChatView({ sessionId }: Props) {
       el.scrollTop = el.scrollHeight;
       lastScrollTopRef.current = el.scrollTop;
     }
-  }, [messages, streamingText, isStreaming]);
+  }, [messages, streamingText, isStreaming, generatingToolCall]);
 
   // Force scroll-to-bottom + re-engage follow mode whenever a NEW
   // user message lands at the tail. Catches both the "user typed in
@@ -705,21 +705,21 @@ function ToolCallGenerationPlaceholder({ toolCall }: { toolCall: ToolCallGenerat
   const argsPreview = formatToolCallArgsPreview(toolCall);
   return (
     <div
-      className="rounded-md border border-amber-900/50 bg-amber-950/20 px-3 py-2 text-xs text-amber-100 light:border-amber-300 light:bg-amber-50 light:text-amber-900"
+      className="inline-block max-w-full rounded border border-amber-900/50 bg-amber-950/20 px-2 py-1 text-[11px] text-amber-100 light:border-amber-300 light:bg-amber-50 light:text-amber-900"
       aria-live="polite"
       aria-label="Agent is generating a tool call"
     >
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5">
         <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-300 light:bg-amber-700" />
         <span className="text-amber-300 light:text-amber-800">generating tool call</span>
         {toolCall.name !== undefined && (
-          <code className="rounded bg-amber-900/40 px-1.5 py-0.5 font-mono text-[11px] text-amber-50 light:bg-amber-100 light:text-amber-950">
+          <code className="rounded bg-amber-900/40 px-1 py-0.5 font-mono text-[10px] text-amber-50 light:bg-amber-100 light:text-amber-950">
             {toolCall.name}
           </code>
         )}
       </div>
       {argsPreview !== undefined && (
-        <pre className="mt-2 max-h-28 overflow-hidden whitespace-pre-wrap break-words rounded bg-neutral-950/60 px-2 py-1 font-mono text-[11px] text-neutral-200 light:bg-white light:text-neutral-800">
+        <pre className="mt-1 max-h-16 overflow-hidden whitespace-pre-wrap break-words rounded bg-neutral-950/60 px-1.5 py-1 font-mono text-[10px] text-neutral-200 light:bg-white light:text-neutral-800">
           {argsPreview}
         </pre>
       )}
