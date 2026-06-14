@@ -986,7 +986,13 @@ function applyEvent(
     const tool: ActiveTool = summary !== undefined ? { name, summary } : { name };
     set((s) => ({
       activeToolBySession: { ...s.activeToolBySession, [sessionId]: tool },
-      toolCallGenerationBySession: { ...s.toolCallGenerationBySession, [sessionId]: undefined },
+      toolCallGenerationBySession: {
+        ...s.toolCallGenerationBySession,
+        [sessionId]: removeStartedToolCallGeneration(
+          s.toolCallGenerationBySession[sessionId],
+          event,
+        ),
+      },
     }));
     // Refetch so the assistant message containing the toolCall block
     // becomes visible immediately (the SDK finalizes the assistant
@@ -1385,6 +1391,17 @@ function renameSessionInLists(
     });
   }
   return { byProject };
+}
+
+function removeStartedToolCallGeneration(
+  existing: ToolCallGeneration[] | undefined,
+  event: IncomingEvent,
+): ToolCallGeneration[] | undefined {
+  if (existing === undefined || existing.length === 0) return undefined;
+  const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : undefined;
+  if (toolCallId === undefined) return existing;
+  const remaining = existing.filter((toolCall) => toolCall.id !== toolCallId);
+  return remaining.length > 0 ? remaining : undefined;
 }
 
 function mergeToolCallGenerations(

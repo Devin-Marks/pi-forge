@@ -234,6 +234,14 @@ export function ChatView({ sessionId }: Props) {
     }
   }, [messages, streamingText, isStreaming, generatingToolCall]);
 
+  const snapChatToBottom = (): void => {
+    const el = scrollRef.current;
+    if (el !== null) {
+      el.scrollTop = el.scrollHeight;
+      lastScrollTopRef.current = el.scrollTop;
+    }
+  };
+
   // Force scroll-to-bottom + re-engage follow mode whenever a NEW
   // user message lands at the tail. Catches both the "user typed in
   // the input box" path AND the "user message arrived via cross-tab
@@ -244,27 +252,17 @@ export function ChatView({ sessionId }: Props) {
   useEffect(() => {
     const userCount = messages.reduce((n, m) => (m.role === "user" ? n + 1 : n), 0);
     if (userCount > lastUserMessageCountRef.current) {
-      const snapToBottom = (): void => {
-        const el = scrollRef.current;
-        if (el !== null) {
-          el.scrollTop = el.scrollHeight;
-          lastScrollTopRef.current = el.scrollTop;
-        }
-      };
       isFollowingBottomRef.current = true;
-      snapToBottom();
-      requestAnimationFrame(snapToBottom);
+      snapChatToBottom();
+      requestAnimationFrame(snapChatToBottom);
     }
     lastUserMessageCountRef.current = userCount;
   }, [messages]);
 
   useEffect(() => {
     if (!isStreaming) return;
-    const el = scrollRef.current;
-    if (el === null) return;
     isFollowingBottomRef.current = true;
-    el.scrollTop = el.scrollHeight;
-    lastScrollTopRef.current = el.scrollTop;
+    snapChatToBottom();
   }, [isStreaming]);
 
   // Global-search scroll-to-message: when the search bar dispatches a
@@ -598,14 +596,15 @@ export function ChatView({ sessionId }: Props) {
                 </div>
               </div>
             )}
-            {isStreaming && activeTool === undefined && generatingToolCall !== undefined && (
-              <ToolCallGenerationPlaceholder toolCalls={generatingToolCall} />
+            {isStreaming && generatingToolCall !== undefined && (
+              <ToolCallGenerationPlaceholder
+                toolCalls={generatingToolCall}
+                onVisibleOrUpdate={snapChatToBottom}
+              />
             )}
-            {isStreaming &&
-              streamingText.length === 0 &&
-              (generatingToolCall === undefined || activeTool !== undefined) && (
-                <ActiveToolPlaceholder tool={activeTool} />
-              )}
+            {isStreaming && streamingText.length === 0 && generatingToolCall === undefined && (
+              <ActiveToolPlaceholder tool={activeTool} />
+            )}
             {queued !== undefined && <QueuedMessages queued={queued} />}
             {sessionRuns.map((run) => (
               <QuickActionRunCard key={run.runId} run={run} />
@@ -716,19 +715,31 @@ function ActiveToolPlaceholder({ tool }: { tool: ActiveTool | undefined }) {
   );
 }
 
-function ToolCallGenerationPlaceholder({ toolCalls }: { toolCalls: ToolCallGeneration[] }) {
-  const [visible, setVisible] = useState(false);
+function ToolCallGenerationPlaceholder({
+  toolCalls,
+  onVisibleOrUpdate,
+}: {
+  toolCalls: ToolCallGeneration[];
+  onVisibleOrUpdate: () => void;
+}) {
+  const [visible, setVisible] = useState(toolCalls.length > 1);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (toolCalls.length > 1) {
+      setVisible(true);
+      return;
+    }
     const timeout = window.setTimeout(() => setVisible(true), 3_000);
     return () => window.clearTimeout(timeout);
-  }, []);
+  }, [toolCalls.length]);
 
   useEffect(() => {
     if (!visible) return;
     rootRef.current?.scrollIntoView({ block: "end" });
-  }, [visible, toolCalls]);
+    onVisibleOrUpdate();
+    requestAnimationFrame(onVisibleOrUpdate);
+  }, [visible, toolCalls, onVisibleOrUpdate]);
 
   if (!visible) return <ActiveToolPlaceholder tool={undefined} />;
 
