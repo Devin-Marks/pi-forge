@@ -236,6 +236,43 @@ export function initProcessesFanout(): () => void {
           // best-effort fanout
         }
       }
+      const content =
+        `Process "${event.match.processName}" (id=${event.match.processId}) matched ` +
+        `log watch /${event.match.watch.pattern}/ on ${event.match.source}: ` +
+        event.match.line;
+      sendCustomLifecycleMessage(
+        live.session,
+        {
+          customType: "process-watch",
+          content,
+          display: true,
+          details: {
+            source: "process",
+            state: "watch",
+            processId: event.match.processId,
+            name: event.match.processName,
+            command: event.match.processCommand,
+            stream: event.match.source,
+            line: event.match.line,
+            watch: event.match.watch,
+          },
+        },
+        {
+          triggerTurn: true,
+          onError: (err: unknown) => {
+            process.stderr.write(
+              JSON.stringify({
+                level: "warn",
+                time: new Date().toISOString(),
+                msg: "process-watch sendCustomMessage failed",
+                sessionId: event.sessionId,
+                processId: event.match.processId,
+                err: err instanceof Error ? err.message : String(err),
+              }) + "\n",
+            );
+          },
+        },
+      );
       return;
     }
     if (event.type === "process_output_changed") {
@@ -255,10 +292,10 @@ export function initProcessesFanout(): () => void {
     }
     if (event.type === "process_alert") {
       // Lifecycle alerts are status messages, not user-authored chat.
-      // Custom messages let the client render a compact status card
-      // and let the server decide per outcome whether the parent
-      // agent should take a turn. Clean exits are informational;
-      // failures/kills preserve the old "wake the agent" behavior.
+      // Success is intentionally informational: background processes
+      // are async work, so a clean exit should not wake the agent back
+      // up just to acknowledge success. Failures/kills still wake the
+      // agent because they usually require intervention.
       const reasonText =
         event.reason === "success"
           ? `finished successfully (exit ${event.info.exitCode ?? "?"})`

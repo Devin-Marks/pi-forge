@@ -48,7 +48,7 @@ const inputSchema = {
     alertOnSuccess: {
       type: "boolean",
       description:
-        "Get a turn to react when process completes successfully (default: false). Use for builds/tests where you need confirmation.",
+        "Show an informational notification when the process completes successfully (default: false). Does not wake the agent; use bash for synchronous work.",
     },
     alertOnFailure: {
       type: "boolean",
@@ -118,7 +118,7 @@ function shouldSuppressPoll(key: string, signature: string, now = Date.now()): b
 }
 
 function pollingSuppressedMessage(action: "list" | "output"): string {
-  return `Polling suppressed: process.${action} was called again while live process state/output had not changed. Do not call process.${action} repeatedly to wait; continue other work or rely on alertOnSuccess / alertOnFailure / logWatches notifications.`;
+  return `Polling suppressed: process.${action} was called again while live process state/output had not changed. Do not call process.${action} repeatedly to wait; use bash for synchronous work, continue other work, or rely on alertOnFailure / alertOnKill / logWatches notifications for asynchronous follow-up.`;
 }
 
 function validateLogWatches(watches: LogWatch[] | undefined): string | null {

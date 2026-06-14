@@ -6,12 +6,13 @@
  * Coverage:
  *   - start/list/output/kill/clear lifecycle via the tool factory
  *   - write to stdin (with end:true closing)
- *   - logWatches: regex match fires the manager's watch event
+ *   - logWatches: regex match fires the manager's watch event and agent alert
  *   - Validation: missing name/command, bad regex, unknown action
  *   - REST routes: GET list, POST kill, DELETE clear,
  *     POST stdin, GET output, GET logs/file
  *   - Cross-session 404
  *   - MINIMAL_UI gate on start (existing list still readable)
+ *   - Process failure/watch notifications trigger agent turns when requested
  *   - Session dispose terminates live processes
  */
 import { spawn, type ChildProcess } from "node:child_process";
@@ -608,8 +609,9 @@ async function main(): Promise<void> {
     // -------- agent alerts on process completion --------
     // alertOnSuccess, alertOnFailure, alertOnKill fire `process_alert`
     // events on the manager; the SSE bridge translates those into
-    // custom status messages. Clean exit cards do not trigger a parent
-    // turn; non-zero failures do.
+    // custom status messages. Clean exits are informational because
+    // process work is async/background; failures trigger/steer a turn
+    // because they usually require intervention.
     {
       const alerts: {
         reason: string;
@@ -730,22 +732,58 @@ async function main(): Promise<void> {
       );
     }
 
-    // -------- logWatches: regex match fires manager event --------
+    // -------- logWatches: regex match fires manager event + agent alert --------
     {
       const events: { type: string }[] = [];
+      const customMessages: {
+        customType: string;
+        details?: { processId?: string; state?: string; stream?: string };
+        triggerTurn?: boolean;
+      }[] = [];
+      const originalSendCustom = live.session.sendCustomMessage;
+      live.session.sendCustomMessage = async (message, options) => {
+        const captured: {
+          customType: string;
+          details?: { processId?: string; state?: string; stream?: string };
+          triggerTurn?: boolean;
+        } = { customType: message.customType };
+        if (message.details !== undefined) {
+          captured.details = message.details as {
+            processId?: string;
+            state?: string;
+            stream?: string;
+          };
+        }
+        if (options?.triggerTurn !== undefined) captured.triggerTurn = options.triggerTurn;
+        customMessages.push(captured);
+      };
       const unsub = managerMod.processManager.subscribe((e) => {
         if (e.type === "process_watch_matched") events.push(e);
       });
-      const r = await call({
-        action: "start",
-        name: "watcher",
-        command: "echo MATCH-ME && sleep 0.2",
-        logWatches: [{ pattern: "MATCH-ME", stream: "stdout" }],
-      });
-      assert("start with logWatch → success", r.details.success === true);
-      await sleep(400);
-      unsub();
-      assert("watch matched event fired", events.length >= 1);
+      try {
+        const r = await call({
+          action: "start",
+          name: "watcher",
+          command: "echo MATCH-ME && sleep 0.2",
+          logWatches: [{ pattern: "MATCH-ME", stream: "stdout" }],
+        });
+        assert("start with logWatch → success", r.details.success === true);
+        const watchId = (r.details.process as { id: string }).id;
+        await sleep(400);
+        assert("watch matched event fired", events.length >= 1);
+        const watchCustom = customMessages.find((m) => m.details?.processId === watchId);
+        assert(
+          "watch match becomes process-watch custom card",
+          watchCustom?.customType === "process-watch" &&
+            watchCustom.details?.state === "watch" &&
+            watchCustom.details.stream === "stdout",
+          JSON.stringify(customMessages),
+        );
+        assert("watch match DOES trigger turn", watchCustom?.triggerTurn === true);
+      } finally {
+        unsub();
+        live.session.sendCustomMessage = originalSendCustom;
+      }
     }
 
     // -------- REST: GET /processes --------

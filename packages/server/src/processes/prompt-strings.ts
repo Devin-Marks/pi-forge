@@ -21,12 +21,12 @@ export const PROMPT_GUIDELINES: string[] = [
   "Use the process tool for long-running commands such as dev servers, test watchers, build watchers, and log tails instead of bash.",
   "Avoid shell background patterns such as &, nohup, disown, or setsid when the process tool fits.",
   "After starting a process, continue other work instead of waiting for it. Do not repeatedly call list/output just to see whether it has finished.",
-  "Use the pi-forge process tool's notify flags (alertOnSuccess / alertOnFailure / alertOnKill) and logWatches when you need to react to events without polling.",
+  "Use bash instead when you need a command's result before continuing. Use process notify flags/logWatches only for asynchronous follow-up, especially failures or specific output patterns.",
 ];
 
 export const TOOL_DESCRIPTION = `Manage background processes. Actions:
 - start: Run command in background (requires 'name' and 'command')
-  - alertOnSuccess (default: false): Get a turn to react when process completes successfully
+  - alertOnSuccess (default: false): Show an informational notification on clean completion; does not wake the agent
   - alertOnFailure (default: true): Get a turn to react when process crashes/fails
   - alertOnKill (default: false): Get a turn to react if killed by external signal (killing via tool never triggers a turn)
   - logWatches (optional): Runtime output watches that trigger immediate alerts while running
@@ -40,6 +40,6 @@ export const TOOL_DESCRIPTION = `Manage background processes. Actions:
 - clear: Remove all finished processes from the list
 - write: Write to process stdin (requires 'id' and 'input', optional 'end' to close stdin)
 
-Important: You DON'T need to poll or wait for processes. Do not repeatedly call list/output after start just to check whether the process has completed. Repeated list/output calls while live process state/output is unchanged are suppressed; notifications arrive automatically based on your preferences. Start processes and continue with other work — you'll be informed if something requires attention.
+Important: Use bash when you need a command's result before continuing in the current turn. Use process for asynchronous/background work only. You DON'T need to poll or wait for processes. Do not repeatedly call list/output after start just to check whether the process has completed. Repeated list/output calls while live process state/output is unchanged are suppressed; failure/kill notifications and logWatches arrive automatically when they require attention. Start processes and continue other work.
 
 Note: User always sees process updates in the UI. The notify flags control whether YOU (the agent) get a turn to react (e.g. check results, fix code, restart).`;
