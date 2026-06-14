@@ -704,12 +704,20 @@ function ActiveToolPlaceholder({ tool }: { tool: ActiveTool | undefined }) {
 function ToolCallGenerationPlaceholder({ toolCall }: { toolCall: ToolCallGeneration }) {
   const argsPreview = formatToolCallArgsPreview(toolCall);
   const argsRef = useRef<HTMLPreElement>(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setVisible(true), 500);
+    return () => window.clearTimeout(timeout);
+  }, []);
 
   useEffect(() => {
     const el = argsRef.current;
     if (el === null) return;
     el.scrollTop = el.scrollHeight;
   }, [argsPreview]);
+
+  if (!visible) return null;
 
   return (
     <div
