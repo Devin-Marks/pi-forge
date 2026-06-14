@@ -703,9 +703,17 @@ function ActiveToolPlaceholder({ tool }: { tool: ActiveTool | undefined }) {
 
 function ToolCallGenerationPlaceholder({ toolCall }: { toolCall: ToolCallGeneration }) {
   const argsPreview = formatToolCallArgsPreview(toolCall);
+  const argsRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    const el = argsRef.current;
+    if (el === null) return;
+    el.scrollTop = el.scrollHeight;
+  }, [argsPreview]);
+
   return (
     <div
-      className="inline-block max-w-full rounded border border-amber-900/50 bg-amber-950/20 px-2 py-1 text-[11px] text-amber-100 light:border-amber-300 light:bg-amber-50 light:text-amber-900"
+      className="inline-block max-w-[min(36rem,100%)] rounded border border-amber-900/50 bg-amber-950/20 px-2 py-1 text-[11px] text-amber-100 light:border-amber-300 light:bg-amber-50 light:text-amber-900"
       aria-live="polite"
       aria-label="Agent is generating a tool call"
     >
@@ -719,7 +727,10 @@ function ToolCallGenerationPlaceholder({ toolCall }: { toolCall: ToolCallGenerat
         )}
       </div>
       {argsPreview !== undefined && (
-        <pre className="mt-1 max-h-16 overflow-hidden whitespace-pre-wrap break-words rounded bg-neutral-950/60 px-1.5 py-1 font-mono text-[10px] text-neutral-200 light:bg-white light:text-neutral-800">
+        <pre
+          ref={argsRef}
+          className="mt-1 max-h-16 overflow-y-auto whitespace-pre-wrap break-words rounded bg-neutral-950/60 px-1.5 py-1 font-mono text-[10px] text-neutral-200 light:bg-white light:text-neutral-800"
+        >
           {argsPreview}
         </pre>
       )}
