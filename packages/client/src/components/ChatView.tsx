@@ -586,11 +586,13 @@ export function ChatView({ sessionId }: Props) {
               </div>
             )}
             {isStreaming && activeTool === undefined && generatingToolCall !== undefined && (
-              <ToolCallGenerationPlaceholder toolCall={generatingToolCall} />
+              <ToolCallGenerationPlaceholder toolCalls={generatingToolCall} />
             )}
-            {isStreaming && streamingText.length === 0 && generatingToolCall === undefined && (
-              <ActiveToolPlaceholder tool={activeTool} />
-            )}
+            {isStreaming &&
+              streamingText.length === 0 &&
+              (generatingToolCall === undefined || activeTool !== undefined) && (
+                <ActiveToolPlaceholder tool={activeTool} />
+              )}
             {queued !== undefined && <QueuedMessages queued={queued} />}
             {sessionRuns.map((run) => (
               <QuickActionRunCard key={run.runId} run={run} />
@@ -701,9 +703,7 @@ function ActiveToolPlaceholder({ tool }: { tool: ActiveTool | undefined }) {
   );
 }
 
-function ToolCallGenerationPlaceholder({ toolCall }: { toolCall: ToolCallGeneration }) {
-  const argsPreview = formatToolCallArgsPreview(toolCall);
-  const argsRef = useRef<HTMLPreElement>(null);
+function ToolCallGenerationPlaceholder({ toolCalls }: { toolCalls: ToolCallGeneration[] }) {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -711,29 +711,54 @@ function ToolCallGenerationPlaceholder({ toolCall }: { toolCall: ToolCallGenerat
     return () => window.clearTimeout(timeout);
   }, []);
 
+  if (!visible) return <ActiveToolPlaceholder tool={undefined} />;
+
+  return (
+    <div
+      className="w-full rounded border border-amber-900/50 bg-amber-950/20 px-2 py-1 text-[11px] text-amber-100 light:border-amber-300 light:bg-amber-50 light:text-amber-900"
+      aria-live="polite"
+      aria-label="Agent is generating tool calls"
+    >
+      <div className="flex items-center gap-1.5">
+        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-300 light:bg-amber-700" />
+        <span className="text-amber-300 light:text-amber-800">
+          generating tool call{toolCalls.length === 1 ? "" : "s"}
+        </span>
+        {toolCalls.length > 1 && (
+          <span className="rounded bg-amber-900/40 px-1 py-0.5 text-[10px] text-amber-50 light:bg-amber-100 light:text-amber-950">
+            {toolCalls.length}
+          </span>
+        )}
+      </div>
+      <div className="mt-1 space-y-1">
+        {toolCalls.map((toolCall, index) => (
+          <ToolCallGenerationItem
+            key={toolCall.id ?? toolCall.contentIndex ?? index}
+            toolCall={toolCall}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ToolCallGenerationItem({ toolCall }: { toolCall: ToolCallGeneration }) {
+  const argsPreview = formatToolCallArgsPreview(toolCall);
+  const argsRef = useRef<HTMLPreElement>(null);
+
   useEffect(() => {
     const el = argsRef.current;
     if (el === null) return;
     el.scrollTop = el.scrollHeight;
   }, [argsPreview]);
 
-  if (!visible) return null;
-
   return (
-    <div
-      className="inline-block max-w-[min(36rem,100%)] rounded border border-amber-900/50 bg-amber-950/20 px-2 py-1 text-[11px] text-amber-100 light:border-amber-300 light:bg-amber-50 light:text-amber-900"
-      aria-live="polite"
-      aria-label="Agent is generating a tool call"
-    >
-      <div className="flex items-center gap-1.5">
-        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-300 light:bg-amber-700" />
-        <span className="text-amber-300 light:text-amber-800">generating tool call</span>
-        {toolCall.name !== undefined && (
-          <code className="rounded bg-amber-900/40 px-1 py-0.5 font-mono text-[10px] text-amber-50 light:bg-amber-100 light:text-amber-950">
-            {toolCall.name}
-          </code>
-        )}
-      </div>
+    <div>
+      {toolCall.name !== undefined && (
+        <code className="rounded bg-amber-900/40 px-1 py-0.5 font-mono text-[10px] text-amber-50 light:bg-amber-100 light:text-amber-950">
+          {toolCall.name}
+        </code>
+      )}
       {argsPreview !== undefined && (
         <pre
           ref={argsRef}

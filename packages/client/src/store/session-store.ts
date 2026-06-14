@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { api, ApiError, type SessionSummary, type UnifiedSession } from "../lib/api-client";
 import { streamSSE } from "../lib/sse-client";
-import { extractToolCallGeneration, type ToolCallGeneration } from "../lib/tool-call-streaming";
+import { extractToolCallGenerations, type ToolCallGeneration } from "../lib/tool-call-streaming";
 import { postCrossTab, subscribeCrossTab } from "../lib/cross-tab";
 import { useAskUserQuestionStore, type PendingAskQuestion } from "./ask-user-question-store";
 import { useTodoStore, type Task as TodoTaskShape } from "./todo-store";
@@ -273,7 +273,7 @@ interface SessionState {
    * toolcall_* deltas when providers expose partial JSON args; otherwise
    * it appears only when the complete tool call arrives.
    */
-  toolCallGenerationBySession: Record<string, ToolCallGeneration | undefined>;
+  toolCallGenerationBySession: Record<string, ToolCallGeneration[] | undefined>;
   /**
    * Per-session monotonic counter incremented on every `agent_end`
    * event the client observes. Components that need to react to
@@ -1180,12 +1180,12 @@ function applyEvent(
     // comes through the same channel as `toolcall_start` / `toolcall_delta` /
     // `toolcall_end`; when providers expose partial JSON args, surface that
     // state before the later `tool_execution_start` event arrives.
-    const generatingToolCall = extractToolCallGeneration(event);
-    if (generatingToolCall !== undefined) {
+    const generatingToolCalls = extractToolCallGenerations(event);
+    if (generatingToolCalls.length > 0) {
       set((s) => ({
         toolCallGenerationBySession: {
           ...s.toolCallGenerationBySession,
-          [sessionId]: generatingToolCall,
+          [sessionId]: generatingToolCalls,
         },
       }));
     }

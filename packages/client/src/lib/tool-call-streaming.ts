@@ -1,4 +1,6 @@
 export interface ToolCallGeneration {
+  id?: string;
+  contentIndex?: number;
   name?: string;
   partialJson?: string;
   arguments?: unknown;
@@ -17,35 +19,42 @@ interface AssistantStreamEventLike {
 }
 
 /**
- * Extract the SDK/provider's in-progress tool-call block from a
+ * Extract the SDK/provider's in-progress tool-call blocks from a
  * `message_update` event. pi-ai normalizes provider deltas to
  * `toolcall_start` / `toolcall_delta` / `toolcall_end`; for providers
  * that stream JSON args (Anthropic input_json_delta, OpenAI Responses
  * function-call arguments deltas, etc.) the `partial` assistant message
- * contains the currently parsed `toolCall` block on every delta.
+ * contains the currently parsed `toolCall` block(s) on every delta.
  *
- * If a provider only emits a complete function call, this still returns
- * the complete block once it arrives; the UI must not invent args before
+ * Parallel tool calls can be generated in the same assistant message, so
+ * return every current `toolCall` block from `partial.content`, not only
+ * the block at the event's `contentIndex`.
+ *
+ * If a provider only emits complete function calls, this still returns
+ * the complete blocks once they arrive; the UI must not invent args before
  * the SDK exposes them.
  */
-export function extractToolCallGeneration(
-  event: MessageUpdateLike,
-): ToolCallGeneration | undefined {
+export function extractToolCallGenerations(event: MessageUpdateLike): ToolCallGeneration[] {
   const streamEvent = event.assistantMessageEvent as AssistantStreamEventLike | undefined;
-  if (streamEvent === undefined || typeof streamEvent.type !== "string") return undefined;
-  if (!isToolCallStreamEvent(streamEvent.type)) return undefined;
+  if (streamEvent === undefined || typeof streamEvent.type !== "string") return [];
+  if (!isToolCallStreamEvent(streamEvent.type)) return [];
 
-  const contentIndex =
-    typeof streamEvent.contentIndex === "number" ? streamEvent.contentIndex : undefined;
   const partial = asRecord(streamEvent.partial) ?? asRecord(event.message);
   const content = Array.isArray(partial?.content) ? partial.content : undefined;
-  const block =
-    contentIndex !== undefined
-      ? asRecord(content?.[contentIndex])
-      : content?.map(asRecord).find((candidate) => candidate?.type === "toolCall");
+  if (content === undefined) return [];
 
-  if (block?.type !== "toolCall") return undefined;
+  return content.flatMap((entry, index) => {
+    const block = asRecord(entry);
+    if (block?.type !== "toolCall") return [];
+    return [toolCallGenerationFromBlock(block, index)];
+  });
+}
 
+function toolCallGenerationFromBlock(
+  block: Record<string, unknown>,
+  contentIndex: number,
+): ToolCallGeneration {
+  const id = typeof block.id === "string" && block.id.length > 0 ? block.id : undefined;
   const name = typeof block.name === "string" && block.name.length > 0 ? block.name : undefined;
   const partialJson =
     typeof block.partialJson === "string" && block.partialJson.length > 0
@@ -55,7 +64,8 @@ export function extractToolCallGeneration(
     ? block.arguments
     : undefined;
 
-  const generation: ToolCallGeneration = {};
+  const generation: ToolCallGeneration = { contentIndex };
+  if (id !== undefined) generation.id = id;
   if (name !== undefined) generation.name = name;
   if (partialJson !== undefined) generation.partialJson = partialJson;
   if (args !== undefined) generation.arguments = args;
