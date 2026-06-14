@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent,
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -25,6 +26,7 @@ import { useUiStore } from "../store/ui-store";
 import { useComposerStore } from "../store/composer-store";
 import { deriveCounts, selectTodoState, useTodoStore } from "../store/todo-store";
 import { countRunning, selectProcesses, useProcessesStore } from "../store/processes-store";
+import { extractClipboardImageFiles } from "../lib/clipboard-images";
 import { isChatSubmitShortcut } from "../lib/chat-input-keys";
 import { ProcessesPopover, TodosPopover } from "./InputPopovers";
 
@@ -862,6 +864,25 @@ export function ChatInput({ sessionId }: Props) {
     previewUrlsRef.current.clear();
     setAttachments([]);
     setAttachmentError(undefined);
+  };
+
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>): void => {
+    const imageFiles = extractClipboardImageFiles(e.clipboardData);
+    if (imageFiles.length === 0) return;
+    if (isReadOnlyExternal) {
+      setAttachmentError("This pi-subagents child is running externally and is read-only.");
+      return;
+    }
+    if (isStreaming) {
+      setAttachmentError(
+        "Images pasted while streaming aren't attached. Wait for the current run to finish.",
+      );
+      return;
+    }
+    // Do not preventDefault: when the clipboard contains both images
+    // and text, the browser should still paste the text into the
+    // textarea while we queue the image files as prompt attachments.
+    addAttachments(imageFiles);
   };
 
   // Revoke any lingering object URLs when the component unmounts.
@@ -2030,6 +2051,7 @@ export function ChatInput({ sessionId }: Props) {
               autoCapitalize="none"
               spellCheck={false}
               onKeyDown={onKeyDown}
+              onPaste={onPaste}
               onBlur={() => {
                 // Close on blur — but only on the next tick so a
                 // mousedown on a popover item still fires its handler
