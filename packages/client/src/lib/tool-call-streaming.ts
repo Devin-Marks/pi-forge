@@ -28,7 +28,9 @@ interface AssistantStreamEventLike {
  *
  * Parallel tool calls can be generated in the same assistant message, so
  * return every current `toolCall` block from `partial.content`, not only
- * the block at the event's `contentIndex`.
+ * the block at the event's `contentIndex`. Some providers interleave
+ * thinking/text/tool-call updates; as long as the SDK event carries a
+ * `partial` assistant message with tool calls, surface it.
  *
  * If a provider only emits complete function calls, this still returns
  * the complete blocks once they arrive; the UI must not invent args before
@@ -37,7 +39,6 @@ interface AssistantStreamEventLike {
 export function extractToolCallGenerations(event: MessageUpdateLike): ToolCallGeneration[] {
   const streamEvent = event.assistantMessageEvent as AssistantStreamEventLike | undefined;
   if (streamEvent === undefined || typeof streamEvent.type !== "string") return [];
-  if (!isToolCallStreamEvent(streamEvent.type)) return [];
 
   const partial = asRecord(streamEvent.partial) ?? asRecord(event.message);
   const content = Array.isArray(partial?.content) ? partial.content : undefined;
@@ -70,10 +71,6 @@ function toolCallGenerationFromBlock(
   if (partialJson !== undefined) generation.partialJson = partialJson;
   if (args !== undefined) generation.arguments = args;
   return generation;
-}
-
-function isToolCallStreamEvent(type: string): boolean {
-  return type === "toolcall_start" || type === "toolcall_delta" || type === "toolcall_end";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

@@ -244,15 +244,28 @@ export function ChatView({ sessionId }: Props) {
   useEffect(() => {
     const userCount = messages.reduce((n, m) => (m.role === "user" ? n + 1 : n), 0);
     if (userCount > lastUserMessageCountRef.current) {
-      const el = scrollRef.current;
-      if (el !== null) {
-        el.scrollTop = el.scrollHeight;
-        lastScrollTopRef.current = el.scrollTop;
-      }
+      const snapToBottom = (): void => {
+        const el = scrollRef.current;
+        if (el !== null) {
+          el.scrollTop = el.scrollHeight;
+          lastScrollTopRef.current = el.scrollTop;
+        }
+      };
       isFollowingBottomRef.current = true;
+      snapToBottom();
+      requestAnimationFrame(snapToBottom);
     }
     lastUserMessageCountRef.current = userCount;
   }, [messages]);
+
+  useEffect(() => {
+    if (!isStreaming) return;
+    const el = scrollRef.current;
+    if (el === null) return;
+    isFollowingBottomRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    lastScrollTopRef.current = el.scrollTop;
+  }, [isStreaming]);
 
   // Global-search scroll-to-message: when the search bar dispatches a
   // pending target for this session, locate the matching wrapper by

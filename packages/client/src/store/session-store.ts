@@ -1185,7 +1185,10 @@ function applyEvent(
       set((s) => ({
         toolCallGenerationBySession: {
           ...s.toolCallGenerationBySession,
-          [sessionId]: generatingToolCalls,
+          [sessionId]: mergeToolCallGenerations(
+            s.toolCallGenerationBySession[sessionId],
+            generatingToolCalls,
+          ),
         },
       }));
     }
@@ -1382,6 +1385,28 @@ function renameSessionInLists(
     });
   }
   return { byProject };
+}
+
+function mergeToolCallGenerations(
+  existing: ToolCallGeneration[] | undefined,
+  incoming: ToolCallGeneration[],
+): ToolCallGeneration[] {
+  const merged = [...(existing ?? [])];
+  const keyFor = (toolCall: ToolCallGeneration): string =>
+    toolCall.id ?? `index:${toolCall.contentIndex ?? merged.length}`;
+  const byKey = new Map<string, number>();
+  merged.forEach((toolCall, index) => byKey.set(keyFor(toolCall), index));
+  for (const toolCall of incoming) {
+    const key = keyFor(toolCall);
+    const index = byKey.get(key);
+    if (index === undefined) {
+      byKey.set(key, merged.length);
+      merged.push(toolCall);
+    } else {
+      merged[index] = { ...merged[index], ...toolCall };
+    }
+  }
+  return merged.sort((a, b) => (a.contentIndex ?? 0) - (b.contentIndex ?? 0));
 }
 
 function summarizeToolInput(name: string, input: Record<string, unknown>): string | undefined {
