@@ -1120,7 +1120,10 @@ function Message({
   // Forge lifecycle/status notifications are custom SDK messages, not
   // user-authored chat. Render them as compact status cards so they don't
   // look like the user asked the agent something.
-  if (message.role === "custom" && message.customType === "process-notify") {
+  if (
+    message.role === "custom" &&
+    (message.customType === "process-notify" || message.customType === "process-watch")
+  ) {
     return <LifecycleStatusCard message={message} kind="process" />;
   }
   if (message.role === "custom" && message.customType === "orchestration-notify") {
@@ -1216,6 +1219,7 @@ function processStatusTitle(details: Record<string, unknown>, state: string): st
   if (state === "success") return `Process completed: ${name}`;
   if (state === "failure") return `Process failed: ${name}`;
   if (state === "killed") return `Process killed: ${name}`;
+  if (state === "watch") return `Process watch matched: ${name}`;
   return `Process update: ${name}`;
 }
 

@@ -24,12 +24,18 @@ conversation continues.
 Per-`start` flags control whether the agent gets a turn to react
 on lifecycle events:
 
-- `alertOnSuccess` (default: `false`) — non-zero exit gates this off
+- `alertOnSuccess` (default: `false`) — records an informational clean-exit card, but does not wake the agent
 - `alertOnFailure` (default: `true`) — fires on crash / non-zero exit
 - `alertOnKill` (default: `false`) — fires only on external signal; killing via the tool never triggers a turn
 
+When one of these enabled lifecycle alerts fires, pi-forge appends a
+`process-notify` status card. Clean success is informational and does
+not wake the agent; failure and external-kill alerts start/steer an
+agent turn because they usually require intervention.
+
 `logWatches` adds runtime regex matchers per process. On match, the
-manager emits a watch event the UI surfaces as an alert badge.
+manager emits a watch event the UI surfaces as an alert badge and a
+`process-watch` status card that starts/steers an agent turn.
 `stream: "stdout" | "stderr" | "both"`; `repeat: false` is the
 default (single-fire) — set `true` for repeat alerts.
 
