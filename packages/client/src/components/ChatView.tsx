@@ -23,6 +23,7 @@ import {
   type AgentMessageLike,
   type CompactionEvent,
 } from "../store/session-store";
+import type { ToolCallGeneration } from "../lib/tool-call-streaming";
 import { useActiveProject, useProjectStore } from "../store/project-store";
 import { api, ApiError } from "../lib/api-client";
 import { useIsMobile } from "../lib/use-is-mobile";
@@ -101,6 +102,7 @@ export function ChatView({ sessionId }: Props) {
   const streamingText = useSessionStore((s) => s.streamingTextBySession[sessionId] ?? EMPTY_STRING);
   const isStreaming = useSessionStore((s) => s.streamingBySession[sessionId] ?? false);
   const activeTool = useSessionStore((s) => s.activeToolBySession[sessionId]);
+  const generatingToolCall = useSessionStore((s) => s.toolCallGenerationBySession[sessionId]);
   const banner = useSessionStore((s) => s.bannerBySession[sessionId]);
   const clearBanner = useSessionStore((s) => s.clearBanner);
   const queued = useSessionStore((s) => s.queuedBySession[sessionId]);
@@ -230,7 +232,15 @@ export function ChatView({ sessionId }: Props) {
       el.scrollTop = el.scrollHeight;
       lastScrollTopRef.current = el.scrollTop;
     }
-  }, [messages, streamingText, isStreaming]);
+  }, [messages, streamingText, isStreaming, generatingToolCall]);
+
+  const snapChatToBottom = (): void => {
+    const el = scrollRef.current;
+    if (el !== null) {
+      el.scrollTop = el.scrollHeight;
+      lastScrollTopRef.current = el.scrollTop;
+    }
+  };
 
   // Force scroll-to-bottom + re-engage follow mode whenever a NEW
   // user message lands at the tail. Catches both the "user typed in
@@ -242,15 +252,18 @@ export function ChatView({ sessionId }: Props) {
   useEffect(() => {
     const userCount = messages.reduce((n, m) => (m.role === "user" ? n + 1 : n), 0);
     if (userCount > lastUserMessageCountRef.current) {
-      const el = scrollRef.current;
-      if (el !== null) {
-        el.scrollTop = el.scrollHeight;
-        lastScrollTopRef.current = el.scrollTop;
-      }
       isFollowingBottomRef.current = true;
+      snapChatToBottom();
+      requestAnimationFrame(snapChatToBottom);
     }
     lastUserMessageCountRef.current = userCount;
   }, [messages]);
+
+  useEffect(() => {
+    if (!isStreaming) return;
+    isFollowingBottomRef.current = true;
+    snapChatToBottom();
+  }, [isStreaming]);
 
   // Global-search scroll-to-message: when the search bar dispatches a
   // pending target for this session, locate the matching wrapper by
@@ -583,7 +596,13 @@ export function ChatView({ sessionId }: Props) {
                 </div>
               </div>
             )}
-            {isStreaming && streamingText.length === 0 && (
+            {isStreaming && activeTool === undefined && generatingToolCall !== undefined && (
+              <ToolCallGenerationPlaceholder
+                toolCall={generatingToolCall}
+                onVisibleOrUpdate={snapChatToBottom}
+              />
+            )}
+            {isStreaming && streamingText.length === 0 && generatingToolCall === undefined && (
               <ActiveToolPlaceholder tool={activeTool} />
             )}
             {queued !== undefined && <QueuedMessages queued={queued} />}
@@ -694,6 +713,80 @@ function ActiveToolPlaceholder({ tool }: { tool: ActiveTool | undefined }) {
       )}
     </div>
   );
+}
+
+function ToolCallGenerationPlaceholder({
+  toolCall,
+  onVisibleOrUpdate,
+}: {
+  toolCall: ToolCallGeneration;
+  onVisibleOrUpdate: () => void;
+}) {
+  const argsPreview = formatToolCallArgsPreview(toolCall);
+  const argsRef = useRef<HTMLPreElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setVisible(true), 3_000);
+    return () => window.clearTimeout(timeout);
+  }, []);
+
+  useEffect(() => {
+    const el = argsRef.current;
+    if (el === null) return;
+    el.scrollTop = el.scrollHeight;
+  }, [argsPreview]);
+
+  useEffect(() => {
+    if (!visible) return;
+    rootRef.current?.scrollIntoView({ block: "end" });
+    onVisibleOrUpdate();
+    requestAnimationFrame(onVisibleOrUpdate);
+  }, [visible, toolCall, onVisibleOrUpdate]);
+
+  if (!visible) return <ActiveToolPlaceholder tool={undefined} />;
+
+  return (
+    <div
+      ref={rootRef}
+      className="w-full rounded border border-amber-900/50 bg-amber-950/20 px-2 py-1 text-[11px] text-amber-100 light:border-amber-300 light:bg-amber-50 light:text-amber-900"
+      aria-live="polite"
+      aria-label="Agent is generating a tool call"
+    >
+      <div className="flex items-center gap-1.5">
+        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-300 light:bg-amber-700" />
+        <span className="text-amber-300 light:text-amber-800">generating tool call</span>
+        {toolCall.name !== undefined && (
+          <code className="rounded bg-amber-900/40 px-1 py-0.5 font-mono text-[10px] text-amber-50 light:bg-amber-100 light:text-amber-950">
+            {toolCall.name}
+          </code>
+        )}
+      </div>
+      {argsPreview !== undefined && (
+        <pre
+          ref={argsRef}
+          className="mt-1 max-h-16 overflow-y-auto whitespace-pre-wrap break-words rounded bg-neutral-950/60 px-1.5 py-1 font-mono text-[10px] text-neutral-200 light:bg-white light:text-neutral-800"
+        >
+          {argsPreview}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function formatToolCallArgsPreview(toolCall: ToolCallGeneration): string | undefined {
+  if (toolCall.partialJson !== undefined && toolCall.partialJson.length > 0) {
+    return toolCall.partialJson;
+  }
+  if (toolCall.arguments !== undefined) {
+    try {
+      return JSON.stringify(toolCall.arguments, null, 2);
+    } catch {
+      return String(toolCall.arguments);
+    }
+  }
+  return undefined;
 }
 
 /**

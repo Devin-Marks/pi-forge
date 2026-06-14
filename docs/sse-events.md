@@ -157,14 +157,20 @@ The `assistantMessageEvent` shape is from pi-ai's
 
 | `assistantMessageEvent.type` | Payload |
 |---|---|
-| `text_delta` | `{ type: "text_delta", delta: "..." }` — append to streaming text |
-| `thinking_delta` | `{ type: "thinking_delta", delta: "..." }` — thinking-block token |
-| `tool_use_start` | `{ type: "tool_use_start", toolCallId, name, input: {} }` — tool call begins |
-| `tool_use_input_delta` | `{ type: "tool_use_input_delta", toolCallId, partialInput: "..." }` — JSON args streaming |
-| `usage` | `{ type: "usage", usage: { input, output, cacheRead, cacheWrite, ... } }` — token + cost update |
+| `text_delta` | `{ type: "text_delta", contentIndex, delta: "...", partial }` — append to streaming text |
+| `thinking_delta` | `{ type: "thinking_delta", contentIndex, delta: "...", partial }` — thinking-block token |
+| `toolcall_start` | `{ type: "toolcall_start", contentIndex, partial }` — tool-call block began |
+| `toolcall_delta` | `{ type: "toolcall_delta", contentIndex, delta: "...", partial }` — JSON args streaming, when the provider exposes them |
+| `toolcall_end` | `{ type: "toolcall_end", contentIndex, toolCall, partial }` — tool-call block complete |
 
 The UI renders streaming text by accumulating `text_delta` deltas into
-`streamingTextBySession[id]` (see `session-store.ts`).
+`streamingTextBySession[id]` (see `session-store.ts`). It also reads the
+`partial` assistant message on `toolcall_*` updates to show an explicit
+"generating tool call" indicator and any partial JSON args the SDK/provider
+has exposed. Providers differ: Anthropic streams input JSON deltas, Google
+currently emits the function-call args as a complete payload, and other
+adapters may do either. pi-forge forwards what the SDK emits and does not
+invent argument text before it exists.
 
 ### `message_end`
 
