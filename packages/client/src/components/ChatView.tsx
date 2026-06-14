@@ -705,16 +705,23 @@ function ActiveToolPlaceholder({ tool }: { tool: ActiveTool | undefined }) {
 
 function ToolCallGenerationPlaceholder({ toolCalls }: { toolCalls: ToolCallGeneration[] }) {
   const [visible, setVisible] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const timeout = window.setTimeout(() => setVisible(true), 10_000);
+    const timeout = window.setTimeout(() => setVisible(true), 3_000);
     return () => window.clearTimeout(timeout);
   }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+    rootRef.current?.scrollIntoView({ block: "end" });
+  }, [visible, toolCalls]);
 
   if (!visible) return <ActiveToolPlaceholder tool={undefined} />;
 
   return (
     <div
+      ref={rootRef}
       className="w-full rounded border border-amber-900/50 bg-amber-950/20 px-2 py-1 text-[11px] text-amber-100 light:border-amber-300 light:bg-amber-50 light:text-amber-900"
       aria-live="polite"
       aria-label="Agent is generating tool calls"
