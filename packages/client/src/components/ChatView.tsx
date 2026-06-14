@@ -707,7 +707,7 @@ function ToolCallGenerationPlaceholder({ toolCall }: { toolCall: ToolCallGenerat
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    const timeout = window.setTimeout(() => setVisible(true), 500);
+    const timeout = window.setTimeout(() => setVisible(true), 10_000);
     return () => window.clearTimeout(timeout);
   }, []);
 
