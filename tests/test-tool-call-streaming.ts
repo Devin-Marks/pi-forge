@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { extractToolCallGenerations } from "../packages/client/src/lib/tool-call-streaming.js";
+import { extractToolCallGeneration } from "../packages/client/src/lib/tool-call-streaming.js";
 
-const partial = extractToolCallGenerations({
+const partial = extractToolCallGeneration({
   assistantMessageEvent: {
     type: "toolcall_delta",
     contentIndex: 1,
@@ -22,17 +22,13 @@ const partial = extractToolCallGenerations({
   },
 });
 
-assert.deepEqual(partial, [
-  {
-    id: "call_1",
-    contentIndex: 1,
-    name: "read",
-    partialJson: '{"filePath": "src/index.ts"}',
-    arguments: { filePath: "src/index.ts" },
-  },
-]);
+assert.deepEqual(partial, {
+  name: "read",
+  partialJson: '{"filePath": "src/index.ts"}',
+  arguments: { filePath: "src/index.ts" },
+});
 
-const completeOnly = extractToolCallGenerations({
+const completeOnly = extractToolCallGeneration({
   assistantMessageEvent: {
     type: "toolcall_end",
     contentIndex: 0,
@@ -50,39 +46,15 @@ const completeOnly = extractToolCallGenerations({
   },
 });
 
-assert.deepEqual(completeOnly, [
-  {
-    id: "call_2",
-    contentIndex: 0,
-    name: "bash",
-    arguments: { command: "npm test" },
-  },
-]);
-
-const parallel = extractToolCallGenerations({
-  assistantMessageEvent: {
-    type: "toolcall_delta",
-    contentIndex: 2,
-    partial: {
-      role: "assistant",
-      content: [
-        { type: "toolCall", id: "call_a", name: "read", arguments: { filePath: "a.ts" } },
-        { type: "text", text: "and" },
-        { type: "toolCall", id: "call_b", name: "grep", arguments: { pattern: "TODO" } },
-      ],
-    },
-  },
+assert.deepEqual(completeOnly, {
+  name: "bash",
+  arguments: { command: "npm test" },
 });
 
-assert.deepEqual(parallel, [
-  { id: "call_a", contentIndex: 0, name: "read", arguments: { filePath: "a.ts" } },
-  { id: "call_b", contentIndex: 2, name: "grep", arguments: { pattern: "TODO" } },
-]);
-
-const ignored = extractToolCallGenerations({
+const ignored = extractToolCallGeneration({
   assistantMessageEvent: { type: "text_delta", delta: "hello" },
 });
 
-assert.deepEqual(ignored, []);
+assert.equal(ignored, undefined);
 
 console.log("test-tool-call-streaming: ok");

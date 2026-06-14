@@ -596,9 +596,9 @@ export function ChatView({ sessionId }: Props) {
                 </div>
               </div>
             )}
-            {isStreaming && generatingToolCall !== undefined && (
+            {isStreaming && activeTool === undefined && generatingToolCall !== undefined && (
               <ToolCallGenerationPlaceholder
-                toolCalls={generatingToolCall}
+                toolCall={generatingToolCall}
                 onVisibleOrUpdate={snapChatToBottom}
               />
             )}
@@ -716,30 +716,34 @@ function ActiveToolPlaceholder({ tool }: { tool: ActiveTool | undefined }) {
 }
 
 function ToolCallGenerationPlaceholder({
-  toolCalls,
+  toolCall,
   onVisibleOrUpdate,
 }: {
-  toolCalls: ToolCallGeneration[];
+  toolCall: ToolCallGeneration;
   onVisibleOrUpdate: () => void;
 }) {
-  const [visible, setVisible] = useState(toolCalls.length > 1);
+  const argsPreview = formatToolCallArgsPreview(toolCall);
+  const argsRef = useRef<HTMLPreElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    if (toolCalls.length > 1) {
-      setVisible(true);
-      return;
-    }
     const timeout = window.setTimeout(() => setVisible(true), 3_000);
     return () => window.clearTimeout(timeout);
-  }, [toolCalls.length]);
+  }, []);
+
+  useEffect(() => {
+    const el = argsRef.current;
+    if (el === null) return;
+    el.scrollTop = el.scrollHeight;
+  }, [argsPreview]);
 
   useEffect(() => {
     if (!visible) return;
     rootRef.current?.scrollIntoView({ block: "end" });
     onVisibleOrUpdate();
     requestAnimationFrame(onVisibleOrUpdate);
-  }, [visible, toolCalls, onVisibleOrUpdate]);
+  }, [visible, toolCall, onVisibleOrUpdate]);
 
   if (!visible) return <ActiveToolPlaceholder tool={undefined} />;
 
@@ -748,48 +752,17 @@ function ToolCallGenerationPlaceholder({
       ref={rootRef}
       className="w-full rounded border border-amber-900/50 bg-amber-950/20 px-2 py-1 text-[11px] text-amber-100 light:border-amber-300 light:bg-amber-50 light:text-amber-900"
       aria-live="polite"
-      aria-label="Agent is generating tool calls"
+      aria-label="Agent is generating a tool call"
     >
       <div className="flex items-center gap-1.5">
         <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-300 light:bg-amber-700" />
-        <span className="text-amber-300 light:text-amber-800">
-          generating tool call{toolCalls.length === 1 ? "" : "s"}
-        </span>
-        {toolCalls.length > 1 && (
-          <span className="rounded bg-amber-900/40 px-1 py-0.5 text-[10px] text-amber-50 light:bg-amber-100 light:text-amber-950">
-            {toolCalls.length}
-          </span>
+        <span className="text-amber-300 light:text-amber-800">generating tool call</span>
+        {toolCall.name !== undefined && (
+          <code className="rounded bg-amber-900/40 px-1 py-0.5 font-mono text-[10px] text-amber-50 light:bg-amber-100 light:text-amber-950">
+            {toolCall.name}
+          </code>
         )}
       </div>
-      <div className="mt-1 space-y-1">
-        {toolCalls.map((toolCall, index) => (
-          <ToolCallGenerationItem
-            key={toolCall.id ?? toolCall.contentIndex ?? index}
-            toolCall={toolCall}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ToolCallGenerationItem({ toolCall }: { toolCall: ToolCallGeneration }) {
-  const argsPreview = formatToolCallArgsPreview(toolCall);
-  const argsRef = useRef<HTMLPreElement>(null);
-
-  useEffect(() => {
-    const el = argsRef.current;
-    if (el === null) return;
-    el.scrollTop = el.scrollHeight;
-  }, [argsPreview]);
-
-  return (
-    <div>
-      {toolCall.name !== undefined && (
-        <code className="rounded bg-amber-900/40 px-1 py-0.5 font-mono text-[10px] text-amber-50 light:bg-amber-100 light:text-amber-950">
-          {toolCall.name}
-        </code>
-      )}
       {argsPreview !== undefined && (
         <pre
           ref={argsRef}

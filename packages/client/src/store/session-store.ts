@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { api, ApiError, type SessionSummary, type UnifiedSession } from "../lib/api-client";
 import { streamSSE } from "../lib/sse-client";
-import { extractToolCallGenerations, type ToolCallGeneration } from "../lib/tool-call-streaming";
+import { extractToolCallGeneration, type ToolCallGeneration } from "../lib/tool-call-streaming";
 import { postCrossTab, subscribeCrossTab } from "../lib/cross-tab";
 import { useAskUserQuestionStore, type PendingAskQuestion } from "./ask-user-question-store";
 import { useTodoStore, type Task as TodoTaskShape } from "./todo-store";
@@ -273,7 +273,7 @@ interface SessionState {
    * toolcall_* deltas when providers expose partial JSON args; otherwise
    * it appears only when the complete tool call arrives.
    */
-  toolCallGenerationBySession: Record<string, ToolCallGeneration[] | undefined>;
+  toolCallGenerationBySession: Record<string, ToolCallGeneration | undefined>;
   /**
    * Per-session monotonic counter incremented on every `agent_end`
    * event the client observes. Components that need to react to
@@ -986,13 +986,7 @@ function applyEvent(
     const tool: ActiveTool = summary !== undefined ? { name, summary } : { name };
     set((s) => ({
       activeToolBySession: { ...s.activeToolBySession, [sessionId]: tool },
-      toolCallGenerationBySession: {
-        ...s.toolCallGenerationBySession,
-        [sessionId]: removeStartedToolCallGeneration(
-          s.toolCallGenerationBySession[sessionId],
-          event,
-        ),
-      },
+      toolCallGenerationBySession: { ...s.toolCallGenerationBySession, [sessionId]: undefined },
     }));
     // Refetch so the assistant message containing the toolCall block
     // becomes visible immediately (the SDK finalizes the assistant
@@ -1186,15 +1180,12 @@ function applyEvent(
     // comes through the same channel as `toolcall_start` / `toolcall_delta` /
     // `toolcall_end`; when providers expose partial JSON args, surface that
     // state before the later `tool_execution_start` event arrives.
-    const generatingToolCalls = extractToolCallGenerations(event);
-    if (generatingToolCalls.length > 0) {
+    const generatingToolCall = extractToolCallGeneration(event);
+    if (generatingToolCall !== undefined) {
       set((s) => ({
         toolCallGenerationBySession: {
           ...s.toolCallGenerationBySession,
-          [sessionId]: mergeToolCallGenerations(
-            s.toolCallGenerationBySession[sessionId],
-            generatingToolCalls,
-          ),
+          [sessionId]: generatingToolCall,
         },
       }));
     }
@@ -1391,39 +1382,6 @@ function renameSessionInLists(
     });
   }
   return { byProject };
-}
-
-function removeStartedToolCallGeneration(
-  existing: ToolCallGeneration[] | undefined,
-  event: IncomingEvent,
-): ToolCallGeneration[] | undefined {
-  if (existing === undefined || existing.length === 0) return undefined;
-  const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : undefined;
-  if (toolCallId === undefined) return existing;
-  const remaining = existing.filter((toolCall) => toolCall.id !== toolCallId);
-  return remaining.length > 0 ? remaining : undefined;
-}
-
-function mergeToolCallGenerations(
-  existing: ToolCallGeneration[] | undefined,
-  incoming: ToolCallGeneration[],
-): ToolCallGeneration[] {
-  const merged = [...(existing ?? [])];
-  const keyFor = (toolCall: ToolCallGeneration): string =>
-    toolCall.id ?? `index:${toolCall.contentIndex ?? merged.length}`;
-  const byKey = new Map<string, number>();
-  merged.forEach((toolCall, index) => byKey.set(keyFor(toolCall), index));
-  for (const toolCall of incoming) {
-    const key = keyFor(toolCall);
-    const index = byKey.get(key);
-    if (index === undefined) {
-      byKey.set(key, merged.length);
-      merged.push(toolCall);
-    } else {
-      merged[index] = { ...merged[index], ...toolCall };
-    }
-  }
-  return merged.sort((a, b) => (a.contentIndex ?? 0) - (b.contentIndex ?? 0));
 }
 
 function summarizeToolInput(name: string, input: Record<string, unknown>): string | undefined {
