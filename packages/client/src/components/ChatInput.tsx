@@ -27,6 +27,7 @@ import { useComposerStore } from "../store/composer-store";
 import { deriveCounts, selectTodoState, useTodoStore } from "../store/todo-store";
 import { countRunning, selectProcesses, useProcessesStore } from "../store/processes-store";
 import { extractClipboardImageFiles } from "../lib/clipboard-images";
+import { isChatSubmitShortcut } from "../lib/chat-input-keys";
 import { ProcessesPopover, TodosPopover } from "./InputPopovers";
 
 /**
@@ -224,9 +225,9 @@ function scoreOption(opt: ModelOption, query: string): number | undefined {
  *   600 ms) also fires Abort — keyboard-only path for users who
  *   never leave the input.
  *
- * Enter submits, Shift+Enter inserts a newline. The model selector
- * lives alongside in this same phase; attachments and token/cost
- * display land in later phases.
+ * Desktop Enter submits, Shift+Enter inserts a newline, and
+ * Cmd/Ctrl+Enter submits everywhere. The model selector lives alongside
+ * in this same phase; attachments and token/cost display land in later phases.
  */
 const DOUBLE_ESC_WINDOW_MS = 600;
 
@@ -1200,7 +1201,8 @@ export function ChatInput({ sessionId }: Props) {
   };
 
   const submit = async (): Promise<void> => {
-    const value = text.trim();
+    const rawValue = text;
+    const value = rawValue.trim();
     // Allow empty text only when there's at least one attachment —
     // sending "look at this" with an image but no caption is a
     // common path. Server still rejects entirely-empty prompts.
@@ -1277,9 +1279,9 @@ export function ChatInput({ sessionId }: Props) {
           clearAttachments();
           setAttachmentError("Attachments aren't sent on steer (mid-turn). Cleared.");
         }
-        await sendSteer(sessionId, value);
+        await sendSteer(sessionId, rawValue);
       } else {
-        await sendPrompt(sessionId, value, attachments.length > 0 ? attachments : undefined);
+        await sendPrompt(sessionId, rawValue, attachments.length > 0 ? attachments : undefined);
       }
       setText("");
       clearAttachments();
@@ -1332,13 +1334,15 @@ export function ChatInput({ sessionId }: Props) {
         }
         if (e.key === "Enter" || e.key === "Tab") {
           // Pi-prompt invocation form (`/<knownname>` or
-          // `/<knownname> ...args`) — fall through to the normal
-          // Enter-submits path. Without this branch the Enter key
-          // would re-fire the prompt entry's `run()` and clobber
-          // any args the user typed.
-          if (isPromptInvocation && e.key === "Enter" && !e.shiftKey) {
-            // Don't preventDefault — let the regular Enter handler
-            // below pick it up. (Tab still discovers / fills in.)
+          // `/<knownname> ...args`) — fall through to normal textarea
+          // handling. Shift+Enter inserts a newline for multiline
+          // prompt args; regular desktop Enter and Cmd/Ctrl+Enter
+          // submit and let pi expand the template at send time.
+          // Without this branch, Enter would re-fire the prompt
+          // entry's `run()` and clobber any args the user typed.
+          // (Tab still discovers / fills in.)
+          if (isPromptInvocation && e.key === "Enter") {
+            // Intentionally fall through.
           } else {
             e.preventDefault();
             slashRunSelected();
@@ -1371,7 +1375,7 @@ export function ChatInput({ sessionId }: Props) {
         setAcSelectedIdx((i) => Math.max(i - 1, 0));
         return;
       }
-      if (e.key === "Enter" || e.key === "Tab") {
+      if ((e.key === "Enter" && e.metaKey !== true && e.ctrlKey !== true) || e.key === "Tab") {
         const pick = acSuggestions[acSelectedIdx];
         if (pick !== undefined) {
           e.preventDefault();
@@ -1385,15 +1389,11 @@ export function ChatInput({ sessionId }: Props) {
         return;
       }
     }
-    // Plain-Enter submits on desktop. On mobile we let the keyboard's
-    // Enter key insert a newline (default browser behavior) — sending
-    // happens via the explicit Send button. Mobile virtual keyboards
-    // don't expose Shift conveniently, so the desktop "Shift+Enter
-    // for newline" rule would force users into multi-line workflows
-    // with no working escape. The slash-palette and @-completion
-    // popover Enter paths above are unaffected — they still pick the
-    // highlighted suggestion regardless of viewport.
-    if (e.key === "Enter" && !e.shiftKey && !isMobile) {
+    // Desktop plain Enter submits; Shift+Enter inserts a newline.
+    // Mobile plain Enter still inserts a newline because virtual
+    // keyboards do not expose Shift consistently; Cmd/Ctrl+Enter and
+    // the Send button remain explicit submit paths everywhere.
+    if (isChatSubmitShortcut(e, { isMobile })) {
       e.preventDefault();
       void submit();
       return;
@@ -2070,14 +2070,14 @@ export function ChatInput({ sessionId }: Props) {
                     : isStreaming
                       ? isMobile
                         ? "Steer the agent…"
-                        : "Steer the agent (Enter to send, Shift+Enter for newline)…"
+                        : "Steer the agent (Enter to send; Shift+Enter for newline)…"
                       : isMobile
                         ? minimalUi
-                          ? "Ask pi — `/` runs commands, `@path` references files…"
-                          : "Ask pi — `/` runs commands, `!` runs bash, `@path` references files…"
+                          ? "Ask pi — Enter for newline; Send to submit; `/` runs commands, `@path` references files…"
+                          : "Ask pi — Enter for newline; Send to submit; `/` runs commands, `!` runs bash, `@path` references files…"
                         : minimalUi
-                          ? "Ask pi (Enter to send, Shift+Enter for newline) — `/` runs commands, `@path` references files…"
-                          : "Ask pi (Enter to send, Shift+Enter for newline) — `/` runs commands, `!` runs bash, `@path` references files…"
+                          ? "Ask pi (Enter to send; Shift+Enter for newline) — `/` runs commands, `@path` references files…"
+                          : "Ask pi (Enter to send; Shift+Enter for newline) — `/` runs commands, `!` runs bash, `@path` references files…"
               }
               title={
                 isAutoRetrying
@@ -2158,8 +2158,8 @@ export function ChatInput({ sessionId }: Props) {
               className="flex-1 rounded-md bg-neutral-100 px-4 text-sm font-medium text-neutral-900 disabled:cursor-not-allowed disabled:opacity-50 md:flex-none md:py-2"
               title={
                 isStreaming
-                  ? "Send (Pi queues at the next agent break — steer or follow-up depending on agent state)"
-                  : "Send (Enter)"
+                  ? "Send (Enter or Cmd/Ctrl+Enter; Pi queues at the next agent break — steer or follow-up depending on agent state)"
+                  : "Send (Enter or Cmd/Ctrl+Enter)"
               }
             >
               Send
@@ -2177,8 +2177,8 @@ export function ChatInput({ sessionId }: Props) {
         </div>
         {isStreaming && (
           <p className="text-[10px] text-neutral-600">
-            Send queues at the next agent break — Pi picks steer or follow-up. Abort: stop the agent
-            (or press Esc twice in the textbox).
+            Enter, Cmd/Ctrl+Enter, or Send queues at the next agent break — Pi picks steer or
+            follow-up. Abort: stop the agent (or press Esc twice in the textbox).
           </p>
         )}
       </div>

@@ -29,8 +29,20 @@ When cutting a version, use the repository release tooling. Do not hand-edit pac
    `CHANGELOG.md` from `## [Unreleased]` to the dated release heading, stages the changes, and
    prints next-step instructions. It does **not** commit, push, or tag.
 
-5. Include the changelog updates and version bumps together in the version bump PR. The PR should
+5. Check npm install-script approvals before opening the version bump PR:
+
+   ```bash
+   npx npm@latest approve-scripts --allow-scripts-pending
+   ```
+
+   This is a read-only check of the root `package.json` `allowScripts` policy. If it reports
+   unreviewed install scripts, audit each package and ask the user whether to approve or deny each
+   script before changing `allowScripts`. Do not make approval or denial decisions without explicit
+   user direction. After the user decides, update `allowScripts` with `npm approve-scripts` or
+   `npm deny-scripts` before release.
+6. Include the changelog updates and version bumps together in the version bump PR. The PR should
    clearly call out that release notes were generated from changes since the previous version.
+
 ## Important Rules
 
 - Do not bypass `scripts/bump-version.sh` for normal releases.
