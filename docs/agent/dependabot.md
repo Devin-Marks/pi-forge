@@ -16,10 +16,21 @@ For every PR, check:
 - Direct pi-forge usage of the dependency, including imports, CLI calls, config,
   lockfile peers, build plugins, and runtime assumptions.
 - CI, build, test, release, Docker, and dev-server implications.
+- Published npm metadata for package updates, especially scripts and dependency
+  shape:
+
+  ```sh
+  npm view <pkg>@<version> scripts dependencies optionalDependencies peerDependencies dist.integrity
+  ```
+
 - `preinstall`, `install`, `postinstall`, `prepare`, and other package lifecycle
   script changes. Treat new or changed install-time code as security-sensitive:
   inspect the published package metadata/diff where possible, call it out in the
   verdict, and do not recommend merge if the script cannot be explained.
+- PR diff and lockfile-only surprises, including new native dependencies, new
+  optional dependencies, lifecycle scripts, transitive major churn, or peer
+  version movement. Do not trust the Dependabot PR title's semver classification
+  on its own.
 - Transitive dependency and lockfile churn that could affect the client runtime,
   server runtime, native builds, or package publication.
 
@@ -108,6 +119,82 @@ Rules for fanout:
 For 19 PRs, use 6 batches of 3 plus 1 batch of 1: seven sequential subagent
 calls.
 
+## Merge Safety Standard
+
+Use `VERDICT: MERGE` only when all of these are true:
+
+- Required checks are green, or the PR is clearly waiting only on the configured
+  required checks that will gate auto-merge.
+- No unexplained lifecycle script was added or changed, and npm install-script
+  approval state is understood.
+- Direct pi-forge usage has no breaking change or required migration.
+- Peer/version coupling is safe, especially for client packages and native/tooling
+  packages.
+- The update does not violate project policy, such as the Node-LTS rule or pinned
+  pi SDK trio handling.
+- Changelog, source, package metadata, and PR diff are available enough to justify
+  confidence. If evidence cannot be fetched or confidence is partial, use
+  `BATCH: hold`, not “probably safe.”
+
+## npm Install-Script Review
+
+For npm dependency PRs, review both package metadata and the repository's script
+approval state. New or changed install-time code is security-sensitive.
+
+Use package metadata to inspect scripts and dependency shape:
+
+```sh
+npm view <pkg>@<version> scripts dependencies optionalDependencies peerDependencies dist.integrity
+```
+
+Also check whether the updated dependency graph introduces unreviewed lifecycle
+scripts:
+
+```sh
+npx npm@latest approve-scripts --allow-scripts-pending
+```
+
+If this reports pending scripts, place the PR in `BATCH: hold` until the user
+decides whether each script should be approved or denied. Do not approve or deny
+install scripts on the user's behalf without explicit direction.
+
+## Sensitive Dependency Groups
+
+Some dependencies should usually be reviewed or merged together because solo
+bumps can create peer drift, config breakage, or runtime mismatches:
+
+- pi SDK trio: `@earendil-works/pi-coding-agent`, `@earendil-works/pi-ai`, and
+  related pi SDK packages.
+- React pair: `react` and `react-dom`.
+- Vite pair: `vite` and `@vitejs/plugin-react`.
+- CodeMirror packages: `@codemirror/*` and related editor packages.
+- xterm packages: `@xterm/*`.
+- ESLint stack: `eslint`, `@eslint/*`, `typescript-eslint`, and ESLint plugins.
+- Fastify/OpenAPI stack: `fastify`, `@fastify/*`, Swagger, and type-provider
+  packages when their APIs or schemas move together.
+
+Use `BATCH: cluster:<name>` when separate Dependabot PRs should be closed in
+favor of one coordinated branch.
+
+## Docker and Base Image Updates
+
+For Dockerfile, base image, or runtime image PRs, check:
+
+- Node version policy. Defer non-LTS Node majors unless the user explicitly wants
+  to track current.
+- Distro changes, package manager changes, and system package availability.
+- Native build impact for packages such as `node-pty`, `esbuild`, and optional
+  platform packages.
+- Image security notes, deprecations, and changes to default users, shells,
+  certificates, or libc/toolchain assumptions.
+
+## Branch Freshness and Stale Checks
+
+Before printing queue commands for a PR, check whether the Dependabot branch is
+behind `main` or whether status checks are stale. If the branch needs a rebase or
+checks need rerunning, do not queue it yet; ask Dependabot/GitHub to rebase or
+wait for fresh checks first.
+
 ## Reviewer Verdict Shape
 
 Collect the structured block from each reviewer. If a reviewer fails because of a
@@ -138,8 +225,9 @@ Present buckets in ascending risk order.
 ### `trivial`
 
 Patch/minor updates with no meaningful pi-forge impact after usage, changelog,
-CI, and install-script review. List each PR and include a fenced queue command.
-End the bucket with one combined loop the user can paste:
+CI, install-script review, lockfile review, and branch freshness checks. List
+each PR and include a fenced queue command. End the bucket with one combined loop
+the user can paste:
 
 ```sh
 for n in <space-separated PR numbers>; do
@@ -157,16 +245,18 @@ shape as `trivial`, including a combined loop when appropriate.
 ### `npm-major`
 
 Major npm updates that require individual attention. List each PR separately with
-its breaking-change notes, direct usage impact, CI/dev-server implications, and
-any lifecycle-script findings. Recommend merging one at a time and running the
-full verification protocol below between merges. Do **not** include a bulk loop.
+its breaking-change notes, direct usage impact, CI/dev-server implications,
+lifecycle-script findings, `approve-scripts` status, and lockfile surprises.
+Recommend merging one at a time and running the full verification protocol below
+between merges. Do **not** include a bulk loop.
 
 ### `cluster:<name>`
 
 Related dependency updates that should move together, such as ESLint packages,
-React/React DOM, Vite/plugin pairs, or the pi SDK trio. List siblings together,
-quote relevant breaking-change notes, and recommend closing the individual
-Dependabot PRs in favor of one coordinated local branch.
+React/React DOM, Vite/plugin pairs, CodeMirror packages, xterm packages,
+Fastify/OpenAPI packages, or the pi SDK trio. List siblings together, quote
+relevant breaking-change notes, and recommend closing the individual Dependabot
+PRs in favor of one coordinated local branch.
 
 ### `defer`
 
@@ -176,8 +266,10 @@ ignore rules where applicable.
 
 ### `hold`
 
-Failed, suspicious, incomplete, or ambiguous reviews. Include the failure or
-security reason. These need manual user review before any action.
+Failed, suspicious, incomplete, stale, or ambiguous reviews. Include the failure
+or security reason. Use this bucket for unreviewed install scripts, unavailable
+metadata/changelogs, stale checks, and partial-confidence results. These need
+manual user review before any action.
 
 ## Queue Command Rules
 
