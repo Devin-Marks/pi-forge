@@ -37,6 +37,7 @@ Before making changes, read the most specific guide(s):
 | MCP registry, MCP custom tools, MCP truncation, MCP/tool overrides | `docs/agent/mcp.md` |
 | Tests, test runner usage, contract changes, adding/updating integration tests | `docs/agent/testing.md` |
 | Cutting a release, bumping versions, release notes, version bump PRs | `docs/agent/releases.md` |
+| Reviewing or batching Dependabot PRs | `docs/agent/dependabot.md` |
 | End-of-session PR description, handoff summary, merge-ready change report | `docs/agent/prs.md` |
 
 Do not move existing files under `docs/` when updating these agent guides. Add or
