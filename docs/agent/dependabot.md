@@ -20,7 +20,7 @@ For every PR, check:
   shape:
 
   ```sh
-  npm view <pkg>@<version> scripts dependencies optionalDependencies peerDependencies dist.integrity
+  npm view <pkg>@<version> scripts dependencies optionalDependencies peerDependencies dist.integrity dist.tarball
   ```
 
 - `preinstall`, `install`, `postinstall`, `prepare`, and other package lifecycle
@@ -136,15 +136,34 @@ Use `VERDICT: MERGE` only when all of these are true:
   confidence. If evidence cannot be fetched or confidence is partial, use
   `BATCH: hold`, not “probably safe.”
 
-## npm Install-Script Review
+## npm Package and Install-Script Review
 
 For npm dependency PRs, review both package metadata and the repository's script
 approval state. New or changed install-time code is security-sensitive.
 
-Use package metadata to inspect scripts and dependency shape:
+Use package metadata to inspect scripts and dependency shape for both the old and
+new versions when possible:
 
 ```sh
-npm view <pkg>@<version> scripts dependencies optionalDependencies peerDependencies dist.integrity
+npm view <pkg>@<old-version> scripts dependencies optionalDependencies peerDependencies dist.integrity dist.tarball
+npm view <pkg>@<new-version> scripts dependencies optionalDependencies peerDependencies dist.integrity dist.tarball
+```
+
+Inspect the published package contents and package-level diff when the update is
+not obviously trivial, when lifecycle scripts are present, or when the package is
+security-sensitive:
+
+```sh
+npm pack <pkg>@<new-version> --dry-run --json
+npm diff --diff=<pkg>@<old-version> --diff=<pkg>@<new-version> -- package.json
+```
+
+Use the PR diff and lockfile to catch lockfile-only surprises. Do not rely on the
+Dependabot title's semver label alone:
+
+```sh
+gh pr diff <N> > /tmp/dependabot-pr-<N>.diff
+grep -E 'hasInstallScript|node-gyp|preinstall|postinstall|prepare|optionalDependencies|peerDependencies' /tmp/dependabot-pr-<N>.diff
 ```
 
 Also check whether the updated dependency graph introduces unreviewed lifecycle
@@ -191,9 +210,20 @@ For Dockerfile, base image, or runtime image PRs, check:
 ## Branch Freshness and Stale Checks
 
 Before printing queue commands for a PR, check whether the Dependabot branch is
-behind `main` or whether status checks are stale. If the branch needs a rebase or
-checks need rerunning, do not queue it yet; ask Dependabot/GitHub to rebase or
-wait for fresh checks first.
+behind `main`, whether it is mergeable, and whether status checks are stale. If
+the branch needs a rebase or checks need rerunning, do not queue it yet; ask
+Dependabot/GitHub to rebase or wait for fresh checks first.
+
+Useful inspection commands:
+
+```sh
+gh pr view <N> --json mergeStateStatus,isDraft,reviewDecision,statusCheckRollup,headRefOid,baseRefOid,updatedAt
+gh pr checks <N>
+```
+
+Treat stale, missing, pending, or failing required checks as `BATCH: hold` unless
+the user explicitly asks to queue and rely on GitHub's required checks to gate the
+merge.
 
 ## Reviewer Verdict Shape
 
