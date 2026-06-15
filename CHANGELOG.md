@@ -15,6 +15,27 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.4.3] — 2026-06-14
+
+### Added
+
+- **Pasted image attachments.** Images pasted into the chat prompt are now added through the existing attachment flow with previews, limits, and multipart prompt upload behavior preserved.
+- **Dependabot review guidance.** Agent documentation now includes pi-forge-specific Dependabot triage rules, batching guidance, install-script security checks, sensitive dependency clusters, and release verification protocols.
+
+### Changed
+
+- **Multiline prompt input is supported.** Desktop keeps Enter-to-send while Shift+Enter inserts newlines, mobile Enter inserts newlines with Send as the submit path, and Cmd/Ctrl+Enter submits across form factors while preserving prompt newlines.
+- **Tool-call generation streams in chat.** The client now surfaces SDK `toolcall_*` generation updates, including streamed arguments when providers expose them, with a delayed full-width indicator and internal argument scrolling.
+- **Process tool guidance favors async notifications over polling.** Process tool prompts and docs now steer agents toward `bash` for synchronous results, `process` for true background work, and log watches/failure notifications for async follow-up.
+- **npm install-script policy is explicit.** The root `allowScripts` policy now approves required lifecycle scripts for `node-pty`, `esbuild`, and optional macOS `fsevents`, denies known nonessential scripts, and release docs require checking pending script approvals.
+- **Dependency updates for v1.4.3.** Updated the pinned pi SDK trio to 0.79.3 and refreshed selected runtime/dev dependencies including `@fastify/rate-limit` 11, `@fastify/swagger-ui` 6, React 19.2.7 / `@types/react` 19.2.17, `lucide-react` 1.18, `esbuild` 0.28.1, `@tailwindcss/vite` 4.3.1, `eslint` 10.5, `typescript-eslint` 8.61, `eslint-plugin-react-refresh` 0.5.3, `marked` 18.0.5, `prettier` 3.8.4, and `@types/node` 25.9.3.
+
+### Fixed
+
+- **Process log watches now wake agents.** Log-watch matches create lifecycle notifications that can trigger/steer the agent, so agents no longer need to poll process status/output while waiting for notable async conditions.
+- **Process watch alerts render as lifecycle cards.** `process-watch` messages now use the same compact lifecycle card path as process completion/failure/kill notifications.
+- **Chat scroll follows prompt and tool generation updates.** New user messages, streaming starts, and visible tool-call generation updates snap the transcript back to the bottom when appropriate.
+
 ## [1.4.2] — 2026-06-11
 
 ### Added
