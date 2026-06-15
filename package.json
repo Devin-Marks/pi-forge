@@ -33,7 +33,7 @@
     "eslint": "^10.5.0",
     "eslint-config-prettier": "^10.1.2",
     "eslint-plugin-react-hooks": "^7.1.1",
-    "eslint-plugin-react-refresh": "^0.5.2",
+    "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^17.6.0",
     "marked": "^18.0.4",
     "prettier": "^3.8.4",
