@@ -27,7 +27,17 @@
  * skills tree are OVERWRITTEN — the export is the source of truth on
  * restore, mirroring the config-export contract.
  */
-import { mkdir, mkdtemp, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  chown,
+  mkdir,
+  mkdtemp,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, normalize, relative, sep } from "node:path";
 import { Readable } from "node:stream";
@@ -41,6 +51,13 @@ import { config } from "./config.js";
  * still bounding accidental or malicious uploads.
  */
 export const MAX_SKILLS_IMPORT_BYTES = 50 * 1024 * 1024;
+
+const SANDBOX_SKILL_FILE_MODE = 0o664;
+const SANDBOX_SKILL_DIR_MODE = 0o775;
+const FALLBACK_SKILL_FILE_MODE = 0o666;
+const FALLBACK_SKILL_DIR_MODE = 0o777;
+
+let warnedAboutPermissiveSkillImportFallback = false;
 
 function skillsDir(): string {
   return join(config.piConfigDir, "skills");
@@ -106,6 +123,56 @@ export async function buildSkillsExportTar(): Promise<SkillsExportResult> {
   const pack = tarCreate({ gzip: true, cwd: src }, entries);
   const stream = pack as unknown as Readable;
   return { fileCount: entries.length, stream };
+}
+
+/**
+ * In sandbox mode, imported skills must be readable/writable by the
+ * `pi-tools` identity that runs terminals and model tools. Prefer
+ * ownership by AGENT_TOOL_UID:GID; fall back to permissive modes when
+ * local non-root dev/test runs cannot chown.
+ */
+async function ensureSandboxSkillPathPermissions(path: string, directory: boolean): Promise<void> {
+  if (!config.agentToolSandbox.enabled) return;
+  const mode = directory ? SANDBOX_SKILL_DIR_MODE : SANDBOX_SKILL_FILE_MODE;
+  await chmod(path, mode);
+  const uid = config.agentToolSandbox.uid!;
+  const gid = config.agentToolSandbox.gid!;
+  const currentUid = typeof process.getuid === "function" ? process.getuid() : undefined;
+  const currentGid = typeof process.getgid === "function" ? process.getgid() : undefined;
+  if (currentUid === uid && currentGid === gid) return;
+  try {
+    await chown(path, uid, gid);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EPERM") throw err;
+    if (config.isProduction) {
+      throw new Error(
+        "failed to set sandbox skill ownership; refusing permissive fallback in production",
+        { cause: err },
+      );
+    }
+    if (!warnedAboutPermissiveSkillImportFallback) {
+      warnedAboutPermissiveSkillImportFallback = true;
+      console.warn(
+        "[skills-import] unable to chown restored skills to the sandbox tool identity; " +
+          "using permissive fallback modes for this non-production import",
+      );
+    }
+    // Some non-root dev/test runs cannot chown to the sandbox identity.
+    // Fall back to world-writable import permissions so the configured
+    // pi-tools user can still read/write restored skills in sandbox mode.
+    await chmod(path, directory ? FALLBACK_SKILL_DIR_MODE : FALLBACK_SKILL_FILE_MODE);
+  }
+}
+
+async function ensureSandboxSkillDirectoryChain(root: string, dir: string): Promise<void> {
+  if (!config.agentToolSandbox.enabled) return;
+  await ensureSandboxSkillPathPermissions(root, true);
+  const rel = relative(root, dir).split(sep).filter(Boolean);
+  let current = root;
+  for (const part of rel) {
+    current = join(current, part);
+    await ensureSandboxSkillPathPermissions(current, true);
+  }
 }
 
 /**
@@ -259,15 +326,20 @@ async function commitStaged(
 ): Promise<SkillsImportSummary> {
   const dst = skillsDir();
   await mkdir(dst, { recursive: true });
+  await ensureSandboxSkillDirectoryChain(dst, dst);
   const imported: string[] = [];
   for (const name of accepted) {
     const src = join(stage, name);
     const target = join(dst, name);
-    await mkdir(dirname(target), { recursive: true });
+    const targetDir = dirname(target);
+    await mkdir(targetDir, { recursive: true });
+    await ensureSandboxSkillDirectoryChain(dst, targetDir);
     const tmpDst = `${target}.${Date.now()}.import.tmp`;
     try {
       await rename(src, tmpDst);
+      await ensureSandboxSkillPathPermissions(tmpDst, false);
       await rename(tmpDst, target);
+      await ensureSandboxSkillPathPermissions(target, false);
       imported.push(name);
     } catch (err) {
       // Best-effort cleanup of the .tmp if rename-into-place failed.

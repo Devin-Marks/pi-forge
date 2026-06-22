@@ -326,6 +326,15 @@ async function main(): Promise<void> {
       assert("unknown projectId → close 4404", code === 4404, `code=${code}`);
     }
 
+    const sandboxEnvName = "PI_FORGE_TERMINAL_ENV_" + randomBytes(3).toString("hex").toUpperCase();
+    const sandboxEnvValue = "terminal-ok-" + randomBytes(3).toString("hex");
+    const sandboxSettings = await fetch(`${base}/api/v1/config/sandbox`, {
+      method: "PUT",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ toolEnv: { [sandboxEnvName]: sandboxEnvValue } }),
+    });
+    assert("PUT /config/sandbox terminal env → 200", sandboxSettings.status === 200);
+
     // ---- Echo + resize ----
     let term: OpenedSocket;
     {
@@ -389,6 +398,22 @@ async function main(): Promise<void> {
         sawAdjacent,
         `expected sentinels ${sL} and ${sR} to appear adjacent (API_KEY empty); ` +
           `last output: ${term.output.slice(-400)}`,
+      );
+
+      const sandboxEnvMarker = "SANDBOX_ENV_" + randomBytes(3).toString("hex");
+      send(term.ws, {
+        type: "input",
+        data: `printf '${sandboxEnvMarker}=%s\\n' "$${sandboxEnvName}"\n`,
+      });
+      const sawSandboxEnv = await waitForOutput(
+        term,
+        `${sandboxEnvMarker}=${sandboxEnvValue}`,
+        5_000,
+      );
+      assert(
+        "settings sandbox env is inherited by PTY shell",
+        sawSandboxEnv,
+        `last output: ${term.output.slice(-400)}`,
       );
 
       // PATH must still come through — a shell with no PATH can't even

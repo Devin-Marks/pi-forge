@@ -6,6 +6,7 @@ import { extractBearer, verifyApiKey, verifyToken } from "../auth.js";
 import { authEnabled, config } from "../config.js";
 import { getProject } from "../project-manager.js";
 import { attachSink, findPtyByTabId, killPty, spawnPty } from "../pty-manager.js";
+import { readSandboxSettings } from "../sandbox-settings.js";
 
 /**
  * WebSocket close codes used here. Per RFC 6455 §7.4, codes in
@@ -238,10 +239,12 @@ export const terminalRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if (managed === undefined) {
         try {
+          const sandboxSettings = await readSandboxSettings();
           managed = spawnPty({
             cwd: project.path,
             tabId: requestedTabId ?? `srv-${Date.now().toString(36)}`,
             projectId: project.id,
+            toolEnv: sandboxSettings.toolEnv,
           });
         } catch (err) {
           log.error({ err }, "pty spawn failed");
