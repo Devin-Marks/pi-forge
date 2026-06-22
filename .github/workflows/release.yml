@@ -25,7 +25,7 @@ jobs:
     name: Verify tag matches package.json
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Compare tag against package.json versions
         run: |
           tag="${GITHUB_REF_NAME#v}"
@@ -61,7 +61,7 @@ jobs:
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Compute lowercase image name
         # GHCR requires lowercase repo names; ${{ github.repository_owner }}
@@ -132,7 +132,7 @@ jobs:
     steps:
       - name: Checkout
         # Needed so the changelog-extraction step can read CHANGELOG.md.
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Compute lowercase image name
         # See the matching step in the build job for rationale.
@@ -234,7 +234,7 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js
         # Setting registry-url switches the npm CLI's auth flow into
