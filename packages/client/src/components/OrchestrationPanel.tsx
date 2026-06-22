@@ -85,7 +85,7 @@ export function OrchestrationPanel({ sessionId, onClose }: Props) {
   const role = link?.role ?? "standalone";
 
   return (
-    <div className="rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 p-3 text-sm">
+    <div className="rounded-md border border-neutral-800 bg-neutral-900/50 p-3 text-sm text-neutral-200">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 font-medium">
           <Users size={14} />
@@ -99,7 +99,7 @@ export function OrchestrationPanel({ sessionId, onClose }: Props) {
               void reload();
             }}
             title="Refresh"
-            className="p-1 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+            className="p-1 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
           >
             {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
           </button>
@@ -108,7 +108,7 @@ export function OrchestrationPanel({ sessionId, onClose }: Props) {
               type="button"
               onClick={onClose}
               title="Close"
-              className="p-1 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+              className="p-1 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
             >
               <X size={14} />
             </button>
@@ -117,7 +117,7 @@ export function OrchestrationPanel({ sessionId, onClose }: Props) {
       </div>
 
       {error !== undefined && (
-        <div className="mt-2 rounded bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300 px-2 py-1 text-xs">
+        <div className="mt-2 rounded bg-red-900/30 px-2 py-1 text-xs text-red-300 light:bg-red-100 light:text-red-800">
           {error}
         </div>
       )}
@@ -152,10 +152,10 @@ export function OrchestrationPanel({ sessionId, onClose }: Props) {
 function RoleBadge({ role }: { role: "supervisor" | "worker" | "standalone" }) {
   const styles =
     role === "supervisor"
-      ? "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200"
+      ? "bg-violet-900/40 text-violet-200 light:bg-violet-100 light:text-violet-800"
       : role === "worker"
-        ? "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200"
-        : "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+        ? "bg-sky-900/40 text-sky-200 light:bg-sky-100 light:text-sky-800"
+        : "bg-neutral-800 text-neutral-300";
   return (
     <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${styles}`}>
       {role === "supervisor" ? "Supervisor" : role === "worker" ? "Worker" : "Standalone"}
@@ -195,7 +195,7 @@ function StandaloneControls({
   };
   return (
     <div className="mt-2 space-y-2">
-      <p className="text-xs text-zinc-600 dark:text-zinc-400">
+      <p className="text-xs text-neutral-400">
         This session is standalone. Enable supervisor mode to give this session the{" "}
         <code className="text-xs">orchestrate_*</code> tools — letting it spawn, observe, and
         coordinate other worker sessions in the same project.
@@ -206,11 +206,11 @@ function StandaloneControls({
           void onEnable();
         }}
         disabled={busy}
-        className="rounded bg-violet-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-violet-500 disabled:opacity-50"
+        className="rounded bg-violet-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-violet-500 disabled:opacity-70"
       >
         {busy ? "Enabling…" : "Enable supervisor mode"}
       </button>
-      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+      <p className="text-[11px] text-neutral-400">
         The agent's tool list refreshes immediately — no reload needed.
       </p>
     </div>
@@ -314,7 +314,7 @@ function SupervisorControls({
   return (
     <div className="mt-2 space-y-2">
       <div className="flex items-center justify-between">
-        <div className="text-xs text-zinc-600 dark:text-zinc-400">
+        <div className="text-xs text-neutral-400">
           {workers.length} worker{workers.length === 1 ? "" : "s"}
         </div>
         <button
@@ -323,18 +323,18 @@ function SupervisorControls({
             void onDisable();
           }}
           disabled={busy}
-          className="rounded text-xs text-zinc-600 dark:text-zinc-400 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50 px-1.5 py-0.5"
+          className="rounded px-1.5 py-0.5 text-xs text-neutral-400 hover:bg-neutral-800 hover:text-red-400 disabled:opacity-70 light:hover:text-red-600"
         >
           Disable supervisor mode
         </button>
       </div>
       {workers.length === 0 ? (
-        <p className="text-xs italic text-zinc-500 dark:text-zinc-400">
+        <p className="text-xs italic text-neutral-400">
           No workers yet. The agent can spawn one with{" "}
           <code className="text-xs">orchestrate_spawn_worker</code>.
         </p>
       ) : (
-        <ul className="divide-y divide-zinc-200 dark:divide-zinc-800 rounded border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950">
+        <ul className="divide-y divide-neutral-800 rounded border border-neutral-800 bg-neutral-950">
           {workers.map((w) => (
             <li key={w.workerId} className="flex items-center gap-2 px-2 py-1.5">
               <StateDot state={w.state ?? (w.isLive ? "idle" : "cold")} />
@@ -346,7 +346,9 @@ function SupervisorControls({
               >
                 <span className="font-medium">{w.name ?? w.workerId.slice(0, 8)}</span>
                 {w.messageCount !== undefined && (
-                  <span className="ml-1 text-zinc-500">({w.messageCount} msgs)</span>
+                  <span className="ml-1 text-neutral-400">
+                    ({w.messageCount} msgs)
+                  </span>
                 )}
               </button>
               <div className="flex items-center gap-1">
@@ -357,7 +359,7 @@ function SupervisorControls({
                       void onResume(w.workerId);
                     }}
                     disabled={busy}
-                    className="text-[11px] text-zinc-600 dark:text-zinc-400 hover:text-violet-700 dark:hover:text-violet-300 disabled:opacity-50 px-1 py-0.5"
+                    className="px-1 py-0.5 text-[11px] text-neutral-400 hover:bg-neutral-800 hover:text-violet-300 disabled:opacity-70 light:hover:text-violet-700"
                   >
                     Resume
                   </button>
@@ -368,7 +370,7 @@ function SupervisorControls({
                     void onDetach(w.workerId);
                   }}
                   disabled={busy}
-                  className="text-[11px] text-zinc-600 dark:text-zinc-400 hover:text-amber-700 dark:hover:text-amber-300 disabled:opacity-50 px-1 py-0.5"
+                  className="px-1 py-0.5 text-[11px] text-neutral-400 hover:bg-neutral-800 hover:text-amber-300 disabled:opacity-70 light:hover:text-amber-700"
                   title="Detach (worker continues as standalone)"
                 >
                   Detach
@@ -379,7 +381,7 @@ function SupervisorControls({
                     void onKill(w.workerId);
                   }}
                   disabled={busy}
-                  className="text-[11px] text-zinc-600 dark:text-zinc-400 hover:text-red-700 dark:hover:text-red-300 disabled:opacity-50 px-1 py-0.5"
+                  className="px-1 py-0.5 text-[11px] text-neutral-400 hover:bg-neutral-800 hover:text-red-300 disabled:opacity-70 light:hover:text-red-700"
                   title="Kill (dispose live session; transcript stays on disk)"
                 >
                   Kill
@@ -391,14 +393,16 @@ function SupervisorControls({
       )}
 
       <details open={showInbox} onToggle={(e) => setShowInbox(e.currentTarget.open)}>
-        <summary className="cursor-pointer text-xs text-zinc-600 dark:text-zinc-400 select-none">
+        <summary className="cursor-pointer select-none text-xs text-neutral-400">
           Worker event history ({inbox.length})
         </summary>
         {inbox.length === 0 ? (
-          <p className="text-xs italic text-zinc-500 dark:text-zinc-400 mt-1">No worker events.</p>
+          <p className="mt-1 text-xs italic text-neutral-400">
+            No worker events.
+          </p>
         ) : (
           <div className="mt-1 space-y-1">
-            <ul className="divide-y divide-zinc-200 dark:divide-zinc-800 rounded border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 max-h-48 overflow-auto">
+            <ul className="max-h-48 divide-y divide-neutral-800 overflow-auto rounded border border-neutral-800 bg-neutral-950">
               {inbox.map((item) => (
                 <InboxRow key={item.id} item={item} />
               ))}
@@ -409,7 +413,7 @@ function SupervisorControls({
                 void onClearInbox();
               }}
               disabled={busy}
-              className="text-[11px] text-zinc-500 dark:text-zinc-400 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50"
+              className="text-[11px] text-neutral-400 hover:text-red-400 disabled:opacity-70 light:hover:text-red-600"
             >
               Clear event history
             </button>
@@ -427,16 +431,16 @@ function InboxRow({ item }: { item: InboxItemWire }) {
       <span
         className={`rounded px-1 py-0.5 ${
           item.delivered
-            ? "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
-            : "bg-amber-200 text-amber-900 dark:bg-amber-700/40 dark:text-amber-200"
+            ? "bg-neutral-800 text-neutral-400"
+            : "bg-amber-700/40 text-amber-200 light:bg-amber-200 light:text-amber-900"
         }`}
       >
         {label}
       </span>
-      <span className="font-mono text-zinc-500" title={item.workerId}>
+      <span className="font-mono text-neutral-400" title={item.workerId}>
         {item.workerId.slice(0, 8)}
       </span>
-      <span className="text-zinc-500 ml-auto">
+      <span className="ml-auto text-neutral-400">
         {new Date(item.occurredAt).toLocaleTimeString()}
       </span>
     </li>
@@ -463,12 +467,12 @@ function WorkerControls({ link }: { link: SessionLink }) {
   const supervisorId = link.supervisorId;
   if (supervisorId === undefined) return null;
   return (
-    <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+    <div className="mt-2 text-xs text-neutral-400">
       Owned by supervisor{" "}
       <button
         type="button"
         onClick={() => openSession(supervisorId)}
-        className="font-mono underline hover:text-violet-700 dark:hover:text-violet-300"
+        className="font-mono underline hover:text-violet-300 light:hover:text-violet-700"
         title={supervisorId}
       >
         {supervisorId.slice(0, 8)}
@@ -486,7 +490,7 @@ function StateDot({ state }: { state: "streaming" | "idle" | "cold" }) {
       ? "bg-emerald-500 animate-pulse"
       : state === "idle"
         ? "bg-sky-500"
-        : "bg-zinc-400";
+        : "bg-neutral-400";
   return (
     <span className={`inline-block h-2 w-2 rounded-full ${cls}`} title={state} aria-label={state} />
   );
