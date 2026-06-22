@@ -18,6 +18,7 @@ import {
   renameEntry,
   writeFile,
   writeFileBytes,
+  writeFileBytesRelative,
 } from "../file-manager.js";
 import { config } from "../config.js";
 import { getProject } from "../project-manager.js";
@@ -25,7 +26,7 @@ import { searchFiles, SearchEngineUnavailableError } from "../file-searcher.js";
 import { errorSchema } from "./_schemas.js";
 
 const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
-const MAX_UPLOAD_FILES = 16;
+const MAX_UPLOAD_FILES = 512;
 // Aggregate cap across all files in a single upload request. The
 // per-file cap × file count gives 8 GB of theoretical headroom — the
 // aggregate cap puts a tighter ceiling on memory + disk pressure when
@@ -767,8 +768,9 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
   //   - projectId: string (required)
   //   - parentPath: string — absolute, inside project (required)
   //   - overwrite: "1"/"true" — replace existing files
-  //   - sha256:<filename>: 64-char lowercase hex (optional, per file)
-  //   - <any-field-name>: file part(s)
+  //   - path:<index>: slash-separated relative path below parentPath (optional, per file)
+  //   - sha256:<filename-or-index>: 64-char lowercase hex (optional, per file)
+  //   - file:<index> or <any-field-name>: file part(s)
   fastify.post<{
     Body: unknown;
   }>(
@@ -788,7 +790,9 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
           `(when the client supplied one via the \`sha256:<filename>\` text field). ` +
           `Per-file cap: ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB. Aggregate cap: ` +
           `${MAX_TOTAL_UPLOAD_BYTES / (1024 * 1024)} MB across all parts. Max ` +
-          `${MAX_UPLOAD_FILES} files per request. Existing targets return 409 unless ` +
+          `${MAX_UPLOAD_FILES} files per request. Folder uploads may include a ` +
+          `per-file \`path:<index>\` field for the project-relative path below ` +
+          `the selected parent folder. Existing targets return 409 unless ` +
           `\`overwrite=1\` is sent. Per-file overflows return 413 \`file_too_large\`; ` +
           `aggregate overflows return 413 \`aggregate_too_large\`.`,
         tags: ["files"],
@@ -832,13 +836,14 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
       let overwrite = false;
       let aggregateBytes = 0;
       const expectedHashes = new Map<string, string>();
+      const relativePaths = new Map<string, string>();
       const written: { path: string; size: number; sha256: string }[] = [];
       try {
         const parts = req.parts({
           limits: {
             fileSize: MAX_UPLOAD_BYTES,
             files: MAX_UPLOAD_FILES,
-            fields: 64,
+            fields: MAX_UPLOAD_FILES * 2 + 8,
           },
         });
         for await (const part of parts) {
@@ -852,6 +857,9 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
             } else if (part.fieldname.startsWith("sha256:") && typeof part.value === "string") {
               const name = part.fieldname.slice("sha256:".length);
               if (name.length > 0) expectedHashes.set(name, part.value.toLowerCase());
+            } else if (part.fieldname.startsWith("path:") && typeof part.value === "string") {
+              const key = part.fieldname.slice("path:".length);
+              if (key.length > 0) relativePaths.set(key, part.value);
             }
             continue;
           }
@@ -878,7 +886,16 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
           if (filename === undefined || filename.length === 0) {
             return reply.code(400).send({ error: "missing_filename" });
           }
-          const expected = expectedHashes.get(filename);
+          const indexedKey = file.fieldname.startsWith("file:")
+            ? file.fieldname.slice("file:".length)
+            : undefined;
+          const uploadPath =
+            indexedKey !== undefined ? (relativePaths.get(indexedKey) ?? filename) : filename;
+          const isNestedUpload = uploadPath.includes("/") || uploadPath.includes("\\");
+          const expected =
+            (indexedKey !== undefined ? expectedHashes.get(indexedKey) : undefined) ??
+            expectedHashes.get(uploadPath) ??
+            expectedHashes.get(filename);
           // Stream the part body straight through writeFileBytes so we
           // never buffer the whole file in memory. We wrap the part
           // stream in an aggregate-tracking iterator so the request
@@ -895,10 +912,15 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
           );
           let result;
           try {
-            result = await writeFileBytes(parentPath, filename, project.path, trackedSource, {
-              ...(expected !== undefined ? { expectedSha256: expected } : {}),
-              overwrite,
-            });
+            result = !isNestedUpload
+              ? await writeFileBytes(parentPath, uploadPath, project.path, trackedSource, {
+                  ...(expected !== undefined ? { expectedSha256: expected } : {}),
+                  overwrite,
+                })
+              : await writeFileBytesRelative(parentPath, uploadPath, project.path, trackedSource, {
+                  ...(expected !== undefined ? { expectedSha256: expected } : {}),
+                  overwrite,
+                });
           } catch (err) {
             if (err instanceof AggregateLimitError) {
               // Roll back every previously-written file in this same

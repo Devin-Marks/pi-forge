@@ -13,7 +13,7 @@ import {
 } from "node:fs/promises";
 import { createReadStream, createWriteStream } from "node:fs";
 import { once } from "node:events";
-import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { create as tarCreate } from "tar";
 import type { Readable } from "node:stream";
@@ -595,15 +595,50 @@ export async function writeFileBytes(
   source: AsyncIterable<Buffer | Uint8Array>,
   opts?: { expectedSha256?: string; overwrite?: boolean },
 ): Promise<{ path: string; size: number; sha256: string }> {
+  return writeFileBytesAtPath(parentAbsPath, [name], root, source, opts);
+}
+
+/**
+ * Stream bytes into a target under `parentAbsPath` using a browser-provided
+ * relative path. This is used for drag-and-drop folder uploads where each file
+ * arrives with a path such as `src/components/Button.tsx` relative to the
+ * dropped folder. The path is split into safe single-name segments before the
+ * final absolute target is verified against the project root.
+ */
+export async function writeFileBytesRelative(
+  parentAbsPath: string,
+  relativePath: string,
+  root: string,
+  source: AsyncIterable<Buffer | Uint8Array>,
+  opts?: { expectedSha256?: string; overwrite?: boolean },
+): Promise<{ path: string; size: number; sha256: string }> {
+  if (isAbsolute(relativePath) || relativePath.includes("\0")) {
+    throw new PathOutsideRootError(relativePath, root);
+  }
+  const parts = relativePath.replaceAll("\\", "/").split("/");
+  if (parts.some((part) => part === "..")) {
+    throw new PathOutsideRootError(relativePath, root);
+  }
+  return writeFileBytesAtPath(parentAbsPath, parts, root, source, opts);
+}
+
+async function writeFileBytesAtPath(
+  parentAbsPath: string,
+  relativeParts: string[],
+  root: string,
+  source: AsyncIterable<Buffer | Uint8Array>,
+  opts?: { expectedSha256?: string; overwrite?: boolean },
+): Promise<{ path: string; size: number; sha256: string }> {
   const parent = await verifyPathSafe(parentAbsPath, root);
-  const trimmed = validateName(name);
-  const target = await verifyPathSafe(join(parent, trimmed), root);
+  const trimmedParts = relativeParts.map((part) => validateName(part));
+  if (trimmedParts.length === 0) throw new InvalidNameError();
+  const target = await verifyPathSafe(join(parent, ...trimmedParts), root);
   const existing = await stat(target).catch(() => undefined);
   if (existing !== undefined) {
     if (opts?.overwrite !== true) throw new TargetExistsError(target);
     if (!existing.isFile()) throw new InvalidNameError("target is a directory");
   }
-  await mkdir(parent, { recursive: true });
+  await mkdir(dirname(target), { recursive: true });
   const tmp = `${target}.${randomUUID()}.upload.tmp`;
   const hash = createHash("sha256");
   let size = 0;

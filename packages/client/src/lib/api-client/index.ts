@@ -1437,6 +1437,12 @@ async function streamSha256(blob: Blob, onChunk?: (delta: number) => void): Prom
   return hasher.digest("hex");
 }
 
+function getUploadPath(file: File): string {
+  const withPath = file as File & { uploadRelativePath?: string; webkitRelativePath?: string };
+  const path = withPath.uploadRelativePath ?? withPath.webkitRelativePath;
+  return path !== undefined && path.length > 0 ? path : file.name;
+}
+
 /**
  * Parse the filename out of a Content-Disposition header. Prefers
  * `filename*` (RFC 5987) when present so we get the original
@@ -2612,15 +2618,17 @@ export const api = {
     if (opts?.overwrite === true) fd.append("overwrite", "1");
     const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
     let hashedSoFar = 0;
-    for (const file of files) {
+    for (const [index, file] of files.entries()) {
+      const uploadPath = getUploadPath(file);
       const digest = await streamSha256(file, (delta) => {
         hashedSoFar += delta;
         opts?.onHashProgress?.(hashedSoFar, totalBytes);
       });
-      fd.append(`sha256:${file.name}`, digest);
+      fd.append(`path:${index}`, uploadPath);
+      fd.append(`sha256:${index}`, digest);
     }
-    for (const file of files) {
-      fd.append("files", file, file.name);
+    for (const [index, file] of files.entries()) {
+      fd.append(`file:${index}`, file, getUploadPath(file));
     }
     return request("/api/v1/files/upload", vUploadResponse, {
       method: "POST",

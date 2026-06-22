@@ -292,13 +292,16 @@ export function FileBrowserPanel() {
     e.preventDefault();
     e.stopPropagation();
     setDropTarget(undefined);
-    // OS file drop: upload into the target directory.
-    if (e.dataTransfer.files.length > 0) {
-      const files = Array.from(e.dataTransfer.files);
+    const src = e.dataTransfer.getData("application/x-pi-path");
+    // In-app drags also pass through the browser's drag/drop plumbing;
+    // prefer the explicit pi path when present so a row drag never gets
+    // misclassified as an OS file upload.
+    if (src.length === 0 && hasTransferType(e.dataTransfer, "Files")) {
+      const files = await collectDroppedUploadFiles(e.dataTransfer);
       await runUpload(targetDirAbsPath, files);
       return;
     }
-    const src = e.dataTransfer.getData("application/x-pi-path");
+
     if (src.length === 0) return;
     // basename of src
     const name = src.split("/").pop() ?? "";
@@ -496,12 +499,11 @@ export function FileBrowserPanel() {
         // MUST preventDefault to enable the drop. We accept either an
         // in-app drag (custom mime) or a native OS file drag (`Files`).
         onDragOver={(e) => {
-          if (
-            e.dataTransfer.types.includes("application/x-pi-path") ||
-            e.dataTransfer.types.includes("Files")
-          ) {
+          const isPiPath = hasTransferType(e.dataTransfer, "application/x-pi-path");
+          const isFiles = hasTransferType(e.dataTransfer, "Files");
+          if (isPiPath || isFiles) {
             e.preventDefault();
-            e.dataTransfer.dropEffect = e.dataTransfer.types.includes("Files") ? "copy" : "move";
+            e.dataTransfer.dropEffect = isFiles ? "copy" : "move";
           }
         }}
         onDrop={(e) => void handleDrop(e, project.path)}
@@ -889,8 +891,8 @@ function Tree(props: TreeProps) {
         onDragOver={
           isDir
             ? (e) => {
-                const isFile = e.dataTransfer.types.includes("Files");
-                const isPiPath = e.dataTransfer.types.includes("application/x-pi-path");
+                const isFile = hasTransferType(e.dataTransfer, "Files");
+                const isPiPath = hasTransferType(e.dataTransfer, "application/x-pi-path");
                 if (!isFile && !isPiPath) return;
                 e.preventDefault();
                 e.stopPropagation();
@@ -1097,4 +1099,93 @@ function formatBytes(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+type UploadFile = File & { uploadRelativePath?: string; webkitRelativePath?: string };
+
+function hasTransferType(dataTransfer: DataTransfer, type: string): boolean {
+  return Array.from(dataTransfer.types).some((candidate) => candidate === type);
+}
+
+interface FileSystemEntryLike {
+  name: string;
+  isFile: boolean;
+  isDirectory: boolean;
+}
+
+interface FileSystemFileEntryLike extends FileSystemEntryLike {
+  isFile: true;
+  file: (success: (file: File) => void, failure?: (error: DOMException) => void) => void;
+}
+
+interface FileSystemDirectoryEntryLike extends FileSystemEntryLike {
+  isDirectory: true;
+  createReader: () => FileSystemDirectoryReaderLike;
+}
+
+interface FileSystemDirectoryReaderLike {
+  readEntries: (
+    success: (entries: FileSystemEntryLike[]) => void,
+    failure?: (error: DOMException) => void,
+  ) => void;
+}
+
+function getDataTransferEntry(item: DataTransferItem): FileSystemEntryLike | null {
+  const withEntry = item as unknown as { webkitGetAsEntry?: () => FileSystemEntryLike | null };
+  return withEntry.webkitGetAsEntry?.() ?? null;
+}
+
+async function collectDroppedUploadFiles(dataTransfer: DataTransfer): Promise<File[]> {
+  const entries = Array.from(dataTransfer.items)
+    .map((item) => getDataTransferEntry(item))
+    .filter((entry): entry is FileSystemEntryLike => entry !== null);
+  if (entries.length === 0) {
+    return Array.from(dataTransfer.files).map((file) => withUploadRelativePath(file, file.name));
+  }
+  const files: File[] = [];
+  for (const entry of entries) {
+    await collectEntryFiles(entry, entry.name, files);
+  }
+  return files;
+}
+
+async function collectEntryFiles(
+  entry: FileSystemEntryLike,
+  relativePath: string,
+  out: File[],
+): Promise<void> {
+  if (entry.isFile) {
+    const file = await readFileEntry(entry as FileSystemFileEntryLike);
+    out.push(withUploadRelativePath(file, relativePath));
+    return;
+  }
+  if (!entry.isDirectory) return;
+  const children = await readDirectoryEntries(entry as FileSystemDirectoryEntryLike);
+  await Promise.all(
+    children.map((child) => collectEntryFiles(child, `${relativePath}/${child.name}`, out)),
+  );
+}
+
+function readFileEntry(entry: FileSystemFileEntryLike): Promise<File> {
+  return new Promise((resolveFile, reject) => entry.file(resolveFile, reject));
+}
+
+async function readDirectoryEntries(
+  entry: FileSystemDirectoryEntryLike,
+): Promise<FileSystemEntryLike[]> {
+  const reader = entry.createReader();
+  const all: FileSystemEntryLike[] = [];
+  for (;;) {
+    const batch = await new Promise<FileSystemEntryLike[]>((resolveEntries, reject) =>
+      reader.readEntries(resolveEntries, reject),
+    );
+    if (batch.length === 0) return all;
+    all.push(...batch);
+  }
+}
+
+function withUploadRelativePath(file: File, relativePath: string): File {
+  const uploadFile = file as UploadFile;
+  uploadFile.uploadRelativePath = relativePath;
+  return uploadFile;
 }
