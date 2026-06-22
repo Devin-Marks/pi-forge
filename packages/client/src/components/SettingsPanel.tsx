@@ -2290,10 +2290,8 @@ function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => vo
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-sm font-semibold text-neutral-100 light:text-neutral-900">
-          Quick action chips
-        </h2>
-        <p className="mt-1 text-xs text-neutral-400 light:text-neutral-600">
+        <h2 className="text-sm font-semibold text-neutral-100">Quick action chips</h2>
+        <p className="mt-1 text-xs text-neutral-400">
           One-click buttons on the chat toolbar. Two kinds:{" "}
           <span className="text-amber-400 light:text-amber-700">command</span> chips run a shell
           snippet in the active project&apos;s folder;{" "}
@@ -2312,7 +2310,7 @@ function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => vo
 
       <div className="space-y-1">
         {actions.length === 0 && loaded && (
-          <p className="text-xs italic text-neutral-500 light:text-neutral-600">
+          <p className="text-xs italic text-neutral-500">
             No chips defined yet. Click &ldquo;New&rdquo; below to add one.
           </p>
         )}
@@ -2335,9 +2333,7 @@ function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => vo
               >
                 {isCmd ? "cmd" : "prompt"}
               </span>
-              <span className="flex-1 truncate font-medium text-neutral-200 light:text-neutral-900">
-                {a.name}
-              </span>
+              <span className="flex-1 truncate font-medium text-neutral-200">{a.name}</span>
               {a.enabled === false && (
                 <span className="text-[10px] uppercase tracking-wider text-neutral-500">
                   disabled
@@ -2350,7 +2346,7 @@ function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => vo
               )}
               <button
                 onClick={() => startEdit(a)}
-                className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 light:border-neutral-400 light:text-neutral-700"
+                className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 light:border-neutral-400"
               >
                 Edit
               </button>
@@ -2365,7 +2361,7 @@ function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => vo
                   </button>
                   <button
                     onClick={() => setPendingDeleteId(undefined)}
-                    className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-400 hover:border-neutral-500 light:border-neutral-400 light:text-neutral-600"
+                    className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-400 hover:border-neutral-500 light:border-neutral-400"
                   >
                     Cancel
                   </button>
@@ -2373,7 +2369,7 @@ function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => vo
               ) : (
                 <button
                   onClick={() => setPendingDeleteId(a.id)}
-                  className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-400 hover:border-red-500 hover:text-red-300 light:border-neutral-400 light:text-neutral-600"
+                  className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-400 hover:border-red-500 hover:text-red-300 light:border-neutral-400"
                 >
                   Delete
                 </button>
@@ -2386,7 +2382,7 @@ function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => vo
       {draft === undefined && (
         <button
           onClick={() => setDraft(emptyActionDraft("prompt"))}
-          className="rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-200 hover:border-neutral-500 light:border-neutral-400 light:text-neutral-800"
+          className="rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-200 hover:border-neutral-500 light:border-neutral-400"
         >
           + New chip
         </button>
@@ -2395,21 +2391,21 @@ function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => vo
       {draft !== undefined && (
         <div className="space-y-3 rounded border border-neutral-700 bg-neutral-900/60 p-3 light:border-neutral-300 light:bg-white">
           <div>
-            <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400 light:text-neutral-600">
+            <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400">
               Name
             </label>
             <input
               value={draft.name}
               onChange={(e) => setDraft({ ...draft, name: e.target.value })}
               placeholder="e.g. Run tests"
-              className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm text-neutral-100 light:border-neutral-300 light:bg-white light:text-neutral-900"
+              className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm text-neutral-100 light:border-neutral-300 light:bg-white"
             />
           </div>
           <div>
-            <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400 light:text-neutral-600">
+            <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400">
               Kind
             </label>
-            <div className="flex items-center gap-3 text-xs text-neutral-300 light:text-neutral-800">
+            <div className="flex items-center gap-3 text-xs text-neutral-300">
               <label className="flex items-center gap-1.5">
                 <input
                   type="radio"
@@ -2439,7 +2435,7 @@ function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => vo
           {draft.kind === "command" ? (
             <>
               <div>
-                <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400 light:text-neutral-600">
+                <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400">
                   Command
                 </label>
                 <textarea
@@ -2447,25 +2443,25 @@ function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => vo
                   onChange={(e) => setDraft({ ...draft, command: e.target.value })}
                   rows={3}
                   placeholder="npm test"
-                  className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-100 light:border-neutral-300 light:bg-white light:text-neutral-900"
+                  className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-100 light:border-neutral-300 light:bg-white"
                 />
-                <p className="mt-1 text-[11px] text-neutral-500 light:text-neutral-600">
+                <p className="mt-1 text-[11px] text-neutral-500">
                   Runs in the active project&apos;s folder via <code>/bin/sh -c</code>. Multi-line
                   is fine (<code>&amp;&amp;</code>, <code>;</code>, etc.). Environment is scrubbed
                   of pi-forge and provider secrets (same as the integrated terminal).
                 </p>
               </div>
               <div>
-                <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400 light:text-neutral-600">
+                <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400">
                   Timeout (seconds)
                 </label>
                 <input
                   value={draft.timeoutSec}
                   onChange={(e) => setDraft({ ...draft, timeoutSec: e.target.value })}
                   placeholder="30"
-                  className="w-24 rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm text-neutral-100 light:border-neutral-300 light:bg-white light:text-neutral-900"
+                  className="w-24 rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm text-neutral-100 light:border-neutral-300 light:bg-white"
                 />
-                <p className="mt-1 text-[11px] text-neutral-500 light:text-neutral-600">
+                <p className="mt-1 text-[11px] text-neutral-500">
                   Max 300 (five minutes). Past that, use the integrated terminal.
                 </p>
               </div>
@@ -2473,7 +2469,7 @@ function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => vo
           ) : (
             <>
               <div>
-                <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400 light:text-neutral-600">
+                <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400">
                   Prompt text
                 </label>
                 <textarea
@@ -2481,14 +2477,14 @@ function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => vo
                   onChange={(e) => setDraft({ ...draft, text: e.target.value })}
                   rows={4}
                   placeholder="Review the staged changes for security issues."
-                  className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 light:border-neutral-300 light:bg-white light:text-neutral-900"
+                  className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 light:border-neutral-300 light:bg-white"
                 />
               </div>
               <div>
-                <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400 light:text-neutral-600">
+                <label className="mb-1 block text-[11px] uppercase tracking-wider text-neutral-400">
                   Mode
                 </label>
-                <div className="flex items-center gap-3 text-xs text-neutral-300 light:text-neutral-800">
+                <div className="flex items-center gap-3 text-xs text-neutral-300">
                   <label className="flex items-center gap-1.5">
                     <input
                       type="radio"
@@ -2510,7 +2506,7 @@ function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => vo
             </>
           )}
           <div>
-            <label className="flex items-center gap-1.5 text-xs text-neutral-300 light:text-neutral-800">
+            <label className="flex items-center gap-1.5 text-xs text-neutral-300">
               <input
                 type="checkbox"
                 checked={draft.enabled}
@@ -2529,7 +2525,7 @@ function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => vo
             </button>
             <button
               onClick={() => setDraft(undefined)}
-              className="rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:border-neutral-500 light:border-neutral-400 light:text-neutral-700"
+              className="rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:border-neutral-500 light:border-neutral-400"
             >
               Cancel
             </button>
