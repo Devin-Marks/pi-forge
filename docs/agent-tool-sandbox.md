@@ -95,8 +95,10 @@ the container or pod**.
 | Path | Required sandbox posture |
 |---|---|
 | `/workspace` | Writable by `AGENT_TOOL_UID` and traversable/readable by the root server without `DAC_OVERRIDE`. Recommended: `AGENT_TOOL_UID:0` with group rwX (`1001:0` in the Docker examples). Secrets in the workspace are readable by the agent. |
+| `/home/pi` when the entire home directory is mounted | Traversable by `AGENT_TOOL_UID:GID`, not writable by it. Recommended: `root:pi-tools` `0710`. Do this only for a dedicated container home mount, not your normal host login home. |
 | `/home/pi/.pi` | Traversable by `AGENT_TOOL_UID:GID` so package skills and non-secret resources can be loaded. Recommended: `root:pi-tools` `0750`. |
 | `/home/pi/.pi/agent` | Traversable/readable by `AGENT_TOOL_UID:GID` for non-secret resources. Recommended: `root:pi-tools` `0750`. |
+| `/home/pi/.pi/agent/{skills,npm,git,extensions,prompts,themes}` | Writable by `AGENT_TOOL_UID`/`pi-tools` as needed for agent resource installs and updates. Create these directories before applying ownership because `pi-tools` cannot create missing children under a non-writable `/home/pi/.pi/agent`. Recommended: `1001:1001` with owner rwX and no other access. |
 | `/home/pi/.pi/agent/auth.json` | Not readable by `AGENT_TOOL_UID:GID`. Recommended: `root:root` `0600`. Also blocked by file-tool policy. |
 | `/home/pi/.pi/agent/models.json` | Not readable by `AGENT_TOOL_UID:GID`. Recommended: `root:root` `0600`. Also blocked by file-tool policy. |
 | `/home/pi/.pi/agent/settings.json` | Not readable by `AGENT_TOOL_UID:GID`. Recommended: `root:root` `0600`. Also blocked by file-tool policy. |
@@ -107,7 +109,8 @@ the container or pod**.
 Why `.pi` is partially readable: pi package skills and other non-secret pi
 resources may live under the Pi config/home tree. The sandbox blocks the known
 secret Pi config files by policy and filesystem mode, while leaving non-secret
-resources loadable.
+resources loadable and the selected agent resource directories writable by
+`pi-tools`.
 
 The Docker image's built-in directory ownership remains optimized for regular
 mode (`pi` owns `/home/pi` plus `/home/pi/.pi/agent` and `/home/pi/.pi-forge`) so
@@ -158,20 +161,33 @@ sudo chmod 0750 ~/.pi
 sudo chown root:1001 ~/.pi/agent
 sudo chmod 0750 ~/.pi/agent
 
-# Existing non-secret Pi resources: readable/traversable by pi-tools.
-# This is required for previously installed skills/packages that may still be
-# 1000:1000 from regular mode. Keep execute bits where they already exist.
-for path in \
-  ~/.pi/agent/skills \
-  ~/.pi/agent/npm \
-  ~/.pi/agent/git \
-  ~/.pi/agent/extensions \
-  ~/.pi/agent/prompts \
-  ~/.pi/agent/themes; do
-  [ -e "$path" ] || continue
-  sudo chown -R root:1001 "$path"
-  sudo chmod -R u+rwX,g+rX,o-rwx "$path"
-done
+# If you mount an entire dedicated container home directory at /home/pi, make
+# that mounted home traversable but not writable by pi-tools. Do not run this
+# against your normal host login home.
+# sudo chown root:1001 /path/to/dedicated/container-home
+# sudo chmod 0710 /path/to/dedicated/container-home
+
+# Agent resource directories: create missing children first because pi-tools
+# cannot create them under a non-writable ~/.pi/agent. Then make these
+# non-secret trees writable by UID/user 1001 (pi-tools) for installs/updates.
+sudo mkdir -p ~/.pi/agent/skills
+sudo mkdir -p ~/.pi/agent/npm
+sudo mkdir -p ~/.pi/agent/git
+sudo mkdir -p ~/.pi/agent/extensions
+sudo mkdir -p ~/.pi/agent/prompts
+sudo mkdir -p ~/.pi/agent/themes
+sudo chown -R 1001:1001 ~/.pi/agent/skills
+sudo chown -R 1001:1001 ~/.pi/agent/npm
+sudo chown -R 1001:1001 ~/.pi/agent/git
+sudo chown -R 1001:1001 ~/.pi/agent/extensions
+sudo chown -R 1001:1001 ~/.pi/agent/prompts
+sudo chown -R 1001:1001 ~/.pi/agent/themes
+sudo chmod -R u+rwX,go-rwx ~/.pi/agent/skills
+sudo chmod -R u+rwX,go-rwx ~/.pi/agent/npm
+sudo chmod -R u+rwX,go-rwx ~/.pi/agent/git
+sudo chmod -R u+rwX,go-rwx ~/.pi/agent/extensions
+sudo chmod -R u+rwX,go-rwx ~/.pi/agent/prompts
+sudo chmod -R u+rwX,go-rwx ~/.pi/agent/themes
 
 # Pi config secrets/settings: server-only. Re-run this after broad permission
 # changes so pi-tools cannot read provider auth, model config, or settings.
@@ -300,11 +316,30 @@ find /home/pi/.pi-forge -type d -exec chmod 0700 {} +
 find /home/pi/.pi-forge -type f -exec chmod 0600 {} +
 
 # Pi config: pi-tools can traverse/read non-secret resources.
-# This includes existing skills, managed npm/git packages, extensions,
-# prompts, and themes copied into the named volume.
-chown -R root:1001 /home/pi/.pi/agent
-chmod -R u+rwX,g+rX,o-rwx /home/pi/.pi/agent
+chown root:1001 /home/pi/.pi/agent
 chmod 0750 /home/pi/.pi/agent
+
+# Agent resource directories: create missing children first because pi-tools
+# cannot create them under a non-writable /home/pi/.pi/agent. Then make these
+# non-secret trees writable by UID/user 1001 (pi-tools) for installs/updates.
+mkdir -p /home/pi/.pi/agent/skills
+mkdir -p /home/pi/.pi/agent/npm
+mkdir -p /home/pi/.pi/agent/git
+mkdir -p /home/pi/.pi/agent/extensions
+mkdir -p /home/pi/.pi/agent/prompts
+mkdir -p /home/pi/.pi/agent/themes
+chown -R 1001:1001 /home/pi/.pi/agent/skills
+chown -R 1001:1001 /home/pi/.pi/agent/npm
+chown -R 1001:1001 /home/pi/.pi/agent/git
+chown -R 1001:1001 /home/pi/.pi/agent/extensions
+chown -R 1001:1001 /home/pi/.pi/agent/prompts
+chown -R 1001:1001 /home/pi/.pi/agent/themes
+chmod -R u+rwX,go-rwx /home/pi/.pi/agent/skills
+chmod -R u+rwX,go-rwx /home/pi/.pi/agent/npm
+chmod -R u+rwX,go-rwx /home/pi/.pi/agent/git
+chmod -R u+rwX,go-rwx /home/pi/.pi/agent/extensions
+chmod -R u+rwX,go-rwx /home/pi/.pi/agent/prompts
+chmod -R u+rwX,go-rwx /home/pi/.pi/agent/themes
 
 # Pi config secrets/settings: server-only. Re-run this after broad permission
 # changes so pi-tools cannot read provider auth, model config, or settings.
@@ -426,6 +461,13 @@ initContainers:
         find /home/pi/.pi-forge -type d -exec chmod 0700 {} +
         find /home/pi/.pi-forge -type f -exec chmod 0600 {} +
 
+        # If this deployment mounts the entire /home/pi home directory, keep
+        # it traversable but not writable by pi-tools. Leave these commented
+        # when only the child volumes below are mounted.
+        # mkdir -p /home/pi
+        # chown 0:1001 /home/pi
+        # chmod 0710 /home/pi
+
         # Pi config parent: traversable by pi-tools so non-secret resources
         # can load.
         mkdir -p /home/pi/.pi/agent
@@ -434,21 +476,28 @@ initContainers:
         chown 0:1001 /home/pi/.pi/agent
         chmod 0750 /home/pi/.pi/agent
 
-        # Existing non-secret Pi resources: readable/traversable by pi-tools.
-        # This is required for previously installed skills/packages that may
-        # still be 1000:1000 from regular mode. Keep execute bits where they
-        # already exist.
-        for path in \
-          /home/pi/.pi/agent/skills \
-          /home/pi/.pi/agent/npm \
-          /home/pi/.pi/agent/git \
-          /home/pi/.pi/agent/extensions \
-          /home/pi/.pi/agent/prompts \
-          /home/pi/.pi/agent/themes; do
-          [ -e "$path" ] || continue
-          chown -R 0:1001 "$path"
-          chmod -R u+rwX,g+rX,o-rwx "$path"
-        done
+        # Agent resource directories: create missing children first because
+        # pi-tools cannot create them under a non-writable /home/pi/.pi/agent.
+        # Then make these non-secret trees writable by UID/user 1001
+        # (pi-tools) for installs/updates.
+        mkdir -p /home/pi/.pi/agent/skills
+        mkdir -p /home/pi/.pi/agent/npm
+        mkdir -p /home/pi/.pi/agent/git
+        mkdir -p /home/pi/.pi/agent/extensions
+        mkdir -p /home/pi/.pi/agent/prompts
+        mkdir -p /home/pi/.pi/agent/themes
+        chown -R 1001:1001 /home/pi/.pi/agent/skills
+        chown -R 1001:1001 /home/pi/.pi/agent/npm
+        chown -R 1001:1001 /home/pi/.pi/agent/git
+        chown -R 1001:1001 /home/pi/.pi/agent/extensions
+        chown -R 1001:1001 /home/pi/.pi/agent/prompts
+        chown -R 1001:1001 /home/pi/.pi/agent/themes
+        chmod -R u+rwX,go-rwx /home/pi/.pi/agent/skills
+        chmod -R u+rwX,go-rwx /home/pi/.pi/agent/npm
+        chmod -R u+rwX,go-rwx /home/pi/.pi/agent/git
+        chmod -R u+rwX,go-rwx /home/pi/.pi/agent/extensions
+        chmod -R u+rwX,go-rwx /home/pi/.pi/agent/prompts
+        chmod -R u+rwX,go-rwx /home/pi/.pi/agent/themes
 
         # Pi config secrets/settings: server-only. Re-run this after resource
         # permission changes so pi-tools cannot read provider auth, model
@@ -586,8 +635,9 @@ existing resource ownership. Previously installed trees often remain
 - `${PI_CONFIG_DIR}/prompts`
 - `${PI_CONFIG_DIR}/themes`
 
-Those directories must be traversable/readable by `AGENT_TOOL_GID` while
-`${PI_CONFIG_DIR}/auth.json`, `models.json`, and `settings.json` stay `0600`.
+Those directories must exist and be writable by UID/user `1001` (`pi-tools`)
+while `${PI_CONFIG_DIR}/auth.json`, `models.json`, and `settings.json` stay
+`0600`.
 
 ## Suggested verification prompts
 
