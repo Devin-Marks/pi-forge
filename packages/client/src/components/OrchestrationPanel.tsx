@@ -346,9 +346,7 @@ function SupervisorControls({
               >
                 <span className="font-medium">{w.name ?? w.workerId.slice(0, 8)}</span>
                 {w.messageCount !== undefined && (
-                  <span className="ml-1 text-neutral-400">
-                    ({w.messageCount} msgs)
-                  </span>
+                  <span className="ml-1 text-neutral-400">({w.messageCount} msgs)</span>
                 )}
               </button>
               <div className="flex items-center gap-1">
@@ -397,9 +395,7 @@ function SupervisorControls({
           Worker event history ({inbox.length})
         </summary>
         {inbox.length === 0 ? (
-          <p className="mt-1 text-xs italic text-neutral-400">
-            No worker events.
-          </p>
+          <p className="mt-1 text-xs italic text-neutral-400">No worker events.</p>
         ) : (
           <div className="mt-1 space-y-1">
             <ul className="max-h-48 divide-y divide-neutral-800 overflow-auto rounded border border-neutral-800 bg-neutral-950">
