@@ -136,6 +136,14 @@ const FLAGS: readonly FlagDef[] = [
     defaultText: "(unset)",
   },
   {
+    name: "local-admin-username",
+    env: "FORGE_LOCAL_ADMIN_USERNAME",
+    type: "string",
+    group: "auth",
+    desc: "Username that selects the local admin password when LDAP login is enabled",
+    defaultText: "admin",
+  },
+  {
     name: "api-key",
     env: "API_KEY",
     type: "string",

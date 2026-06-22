@@ -7,6 +7,7 @@
  *   C) Neither set                                  → auth fully disabled
  *   E) LDAP enabled, no local password              → auth enabled; local login unavailable
  *   F) LDAP enabled + UI_PASSWORD_FILE              → admin/password-only use local auth
+ *   G) LDAP enabled + FORGE_LOCAL_ADMIN_USERNAME    → custom username uses local auth
  *
  * Asserts the matrix of expected status codes plus a deterministic rate-limit
  * check (RATE_LIMIT_LOGIN_MAX=3 → 4th login attempt returns 429).
@@ -374,6 +375,59 @@ async function scenarioLdapAdminUsesLocalPassword(): Promise<void> {
   }
 }
 
+async function scenarioCustomLocalAdminUsername(): Promise<void> {
+  console.log("\n[scenario G] LDAP enabled, custom local admin username");
+  const localPassword = "custom-local-admin-secret";
+  const srv = await startServer({
+    UI_PASSWORD: localPassword,
+    JWT_SECRET: undefined,
+    API_KEY: undefined,
+    FORGE_LOCAL_ADMIN_USERNAME: "ops-admin",
+    // Deliberately omit LDAP_URL/BIND_DN/BIND_PASSWORD/BASE_DN:
+    // only password-only and the configured local-admin username may
+    // use local auth without a configured LDAP backend.
+    LDAP_ENABLED: "true",
+    REQUIRE_PASSWORD_CHANGE: "false",
+  });
+  try {
+    const passwordOnly = await jsonPost(`${srv.base}/api/v1/auth/login`, {
+      password: localPassword,
+    });
+    assert(
+      "password-only login remains local with custom admin username",
+      passwordOnly.status === 200,
+    );
+
+    const customAdmin = await jsonPost(`${srv.base}/api/v1/auth/login`, {
+      username: "ops-admin",
+      password: localPassword,
+    });
+    assert("configured local admin username uses local password", customAdmin.status === 200);
+
+    const customAdminUpper = await jsonPost(`${srv.base}/api/v1/auth/login`, {
+      username: "OPS-ADMIN",
+      password: localPassword,
+    });
+    assert(
+      "configured local admin username match is case-insensitive",
+      customAdminUpper.status === 200,
+    );
+
+    const oldAdmin = await jsonPost(`${srv.base}/api/v1/auth/login`, {
+      username: "admin",
+      password: localPassword,
+    });
+    assert(
+      "default admin username no longer selects local auth when overridden",
+      oldAdmin.status === 503,
+    );
+    const oldAdminBody = (await oldAdmin.json()) as { error?: string };
+    assert("  old admin falls through to LDAP", oldAdminBody.error === "ldap_not_configured");
+  } finally {
+    await srv.stop();
+  }
+}
+
 /**
  * Scenario D — persisted password-hash but NO env credentials.
  *
@@ -480,6 +534,7 @@ async function main(): Promise<void> {
   await scenarioPersistedHashOnly();
   await scenarioLdapEnabledWithoutLocalPassword();
   await scenarioLdapAdminUsesLocalPassword();
+  await scenarioCustomLocalAdminUsername();
 
   if (failures > 0) {
     console.log(`\n[test-auth] FAIL — ${failures} assertion(s) failed`);
