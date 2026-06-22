@@ -61,7 +61,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       schema: {
         description:
           "Exchange a local admin password or LDAP username/password for a short-lived JWT. " +
-          "LDAP is opt-in; username `admin` and password-only requests use local " +
+          `LDAP is opt-in; username \`${config.auth.localAdminUsername}\` and password-only requests use local ` +
           "UI_PASSWORD / stored-hash auth, while other usernames use LDAP. Returns 401 if the " +
           "credentials are wrong, or 503 if the selected auth backend is not configured.",
         tags: ["auth"],
@@ -93,7 +93,9 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const { username, password } = req.body;
-      const loginAsLocalAdmin = username === undefined || username.toLowerCase() === "admin";
+      const loginAsLocalAdmin =
+        username === undefined ||
+        username.toLowerCase() === config.auth.localAdminUsername.toLowerCase();
 
       if (config.auth.ldap.enabled && !loginAsLocalAdmin) {
         const result = await verifyLdapLogin(username, password);

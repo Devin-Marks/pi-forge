@@ -50,6 +50,7 @@ or shell environment. The most-touched ones:
 | `FORGE_DATA_DIR` | `~/.pi-forge` | Pi-forge state — `projects.json`, override files, `jwt-secret`, `password-hash`. |
 | `UI_PASSWORD` | (unset) | Enables browser JWT auth. Literal env value only; it does not expand `@/path`. After the user changes it via the UI, a scrypt hash is persisted to `${FORGE_DATA_DIR}/password-hash` and the env value is ignored. |
 | `UI_PASSWORD_FILE` | (unset) | File containing the browser login password (for Kubernetes/OpenShift mounted Secrets). Takes precedence over `UI_PASSWORD`. Equivalent CLI: `--ui-password-file`; CLI `--ui-password @/path` is also supported. |
+| `FORGE_LOCAL_ADMIN_USERNAME` | `admin` | Username that selects the local admin password when LDAP login is enabled. Equivalent CLI: `--local-admin-username`. Must be 1-256 characters using only letters, numbers, `.`, `_`, `@`, or `-`. |
 | `API_KEY` | (unset) | Static bearer token for programmatic access. |
 | `JWT_SECRET` | (auto-generated) | HS256 signing key. Auto-generated and persisted to `${FORGE_DATA_DIR}/jwt-secret` (mode 0600) when `UI_PASSWORD`, LDAP auth, or `password-hash` is in play. Set explicitly (`openssl rand -hex 32`) to override; delete the file to rotate. |
 | `LDAP_ENABLED` | `false` | Enables LDAP username/password browser login. Requires the LDAP variables below. |
@@ -93,10 +94,11 @@ tool processes receive the scrubbed env and do not inherit it.
 ### LDAP browser login
 
 LDAP is opt-in and off by default. When `LDAP_ENABLED=true`, pi-forge's
-login form asks for a username and password. Username `admin` (and
-password-only API calls) always use the local pi-forge admin password
-from `UI_PASSWORD`, `UI_PASSWORD_FILE`, or the persisted password hash;
-all other usernames use LDAP. The server binds with the
+login form asks for a username and password. The configured local admin
+username (default `admin`, set with `FORGE_LOCAL_ADMIN_USERNAME` or
+`--local-admin-username`) and password-only API calls always use the
+local pi-forge admin password from `UI_PASSWORD`, `UI_PASSWORD_FILE`, or
+the persisted password hash; all other usernames use LDAP. The server binds with the
 configured service account, searches under `LDAP_BASE_DN` using
 `LDAP_USER_FILTER`, optionally checks the returned user's `memberOf`
 (or `LDAP_GROUP_ATTRIBUTE`) against `LDAP_REQUIRED_GROUP_DN`, and then
@@ -128,12 +130,13 @@ use a mounted secret file or the CLI `--ldap-bind-password @/path/to/file`
 form instead.
 
 If both LDAP and local `UI_PASSWORD` / `UI_PASSWORD_FILE` / stored-password
-auth are present, username `admin` and password-only login use the local
-pi-forge password. Other usernames use LDAP. The username `admin` is
-reserved for local pi-forge admin auth while LDAP is enabled; an LDAP
-account named `admin` cannot be used unless this policy changes later.
-This preserves existing single-tenant admin access while allowing LDAP
-to be enabled during migration. LDAP login attempts write sanitized
+auth are present, the configured local admin username and password-only
+login use the local pi-forge password. Other usernames use LDAP. The
+local admin username is reserved for local pi-forge admin auth while
+LDAP is enabled; an LDAP account with that name cannot be used unless
+you choose a different `FORGE_LOCAL_ADMIN_USERNAME`. This preserves
+existing single-tenant admin access while allowing LDAP to be enabled
+during migration. LDAP login attempts write sanitized
 `[ldap]` lines to the server logs with the URL, base DN, username, TLS
 validation mode, and failure category; passwords are not logged.
 

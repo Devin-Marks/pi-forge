@@ -41,6 +41,20 @@ function readStringList(key: string): string[] {
     .filter((s) => s.length > 0);
 }
 
+function readUsername(key: string, fallback: string): string {
+  const value = readEnv(key) ?? fallback;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    throw new Error(`config: ${key} must be a non-empty username`);
+  }
+  if (trimmed.length > 256 || !/^[A-Za-z0-9._@-]+$/.test(trimmed)) {
+    throw new Error(
+      `config: ${key} must be 1-256 characters using only letters, numbers, '.', '_', '@', or '-'`,
+    );
+  }
+  return trimmed;
+}
+
 function readSecretFile(path: string, envKey: string): string {
   try {
     const value = readFileSync(path, "utf8").trim();
@@ -141,6 +155,7 @@ const UI_PASSWORD = UI_PASSWORD_FILE
   ? readSecretFile(UI_PASSWORD_FILE, "UI_PASSWORD_FILE")
   : readEnv("UI_PASSWORD");
 const API_KEY = readEnv("API_KEY");
+const LOCAL_ADMIN_USERNAME = readUsername("FORGE_LOCAL_ADMIN_USERNAME", "admin");
 const CORS_ORIGIN = readEnv("CORS_ORIGIN");
 const PASSWORD_HASH_FILE = join(FORGE_DATA_DIR, "password-hash");
 const AGENT_TOOL_SANDBOX_ENABLED = readBool("AGENT_TOOL_SANDBOX_ENABLED", false);
@@ -351,6 +366,7 @@ export const config = Object.freeze({
     uiPasswordFile: UI_PASSWORD_FILE,
     jwtSecret: JWT_SECRET,
     apiKey: API_KEY,
+    localAdminUsername: LOCAL_ADMIN_USERNAME,
     ldap: Object.freeze({
       enabled: LDAP_ENABLED,
       url: readEnv("LDAP_URL"),
