@@ -4,7 +4,7 @@
  * Unit-style coverage for startup config validation, path policy,
  * sandboxed SDK tool overrides, and @file expansion scoping.
  */
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -130,11 +130,116 @@ try {
   )) as {
     toolShellEnv: (env?: NodeJS.ProcessEnv) => Record<string, string>;
   };
+  const { importSkillsFromFiles } = (await import(
+    resolve(repoRoot, "packages/server/dist/skills-export.js")
+  )) as {
+    importSkillsFromFiles: (
+      files: { filename: string; buffer: Buffer }[],
+    ) => Promise<{ imported: string[]; skipped: { name: string; reason: string }[] }>;
+  };
 
   console.log("\nsandbox shell env");
   const shellEnv = toolShellEnv({ ...process.env, HOME: "/home/pi", USER: "pi", LOGNAME: "pi" });
   assert("sandbox shell HOME uses AGENT_TOOL_HOME", shellEnv.HOME === toolHome, shellEnv.HOME);
   assert("sandbox shell USER uses tool identity", shellEnv.USER === "pi-tools", shellEnv.USER);
+
+  console.log("\nskills import permissions");
+  const skillsImport = await importSkillsFromFiles([
+    { filename: "demo/SKILL.md", buffer: Buffer.from("# Demo skill\n") },
+    { filename: "demo/assets/images/icon.txt", buffer: Buffer.from("icon\n") },
+  ]);
+  assert("skills import succeeds", skillsImport.imported.includes("demo/SKILL.md"));
+  assert(
+    "nested skills import succeeds",
+    skillsImport.imported.includes("demo/assets/images/icon.txt"),
+  );
+  const importedSkill = resolve(piConfig, "skills", "demo", "SKILL.md");
+  const importedSkillDirs = [
+    resolve(piConfig, "skills", "demo"),
+    resolve(piConfig, "skills", "demo", "assets"),
+    resolve(piConfig, "skills", "demo", "assets", "images"),
+  ];
+  const skillMode = statSync(importedSkill).mode & 0o777;
+  assert(
+    "imported skill file is writable by sandbox identity or fallback",
+    (skillMode & 0o600) === 0o600 || (skillMode & 0o006) === 0o006,
+    skillMode.toString(8),
+  );
+  for (const dir of importedSkillDirs) {
+    const skillDirMode = statSync(dir).mode & 0o777;
+    assert(
+      `imported skill dir ${dir.slice(piConfig.length + 1)} is writable/searchable`,
+      (skillDirMode & 0o700) === 0o700 || (skillDirMode & 0o007) === 0o007,
+      skillDirMode.toString(8),
+    );
+  }
+
+  if ((process.getuid?.() ?? 0) !== 0) {
+    const fallbackPiConfig = resolve(tmp, "fallback-pi");
+    const fallbackWorkspace = resolve(tmp, "fallback-workspace");
+    const fallbackData = resolve(tmp, "fallback-data");
+    mkdirSync(fallbackWorkspace, { recursive: true });
+    mkdirSync(fallbackData, { recursive: true });
+    const fallback = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+          import { statSync } from "node:fs";
+          import { resolve } from "node:path";
+          const { importSkillsFromFiles } = await import(${JSON.stringify(
+            resolve(repoRoot, "packages/server/dist/skills-export.js"),
+          )});
+          await importSkillsFromFiles([{ filename: "fallback/assets/file.txt", buffer: Buffer.from("x") }]);
+          const root = resolve(${JSON.stringify(fallbackPiConfig)}, "skills", "fallback");
+          const assets = resolve(root, "assets");
+          const file = resolve(assets, "file.txt");
+          console.log(JSON.stringify({
+            root: statSync(root).mode & 0o777,
+            assets: statSync(assets).mode & 0o777,
+            file: statSync(file).mode & 0o777,
+          }));
+        `,
+      ],
+      {
+        env: {
+          ...process.env,
+          NODE_ENV: "test",
+          WORKSPACE_PATH: fallbackWorkspace,
+          PI_CONFIG_DIR: fallbackPiConfig,
+          FORGE_DATA_DIR: fallbackData,
+          SESSION_DIR: resolve(fallbackWorkspace, ".pi", "sessions"),
+          AGENT_TOOL_SANDBOX_ENABLED: "true",
+          AGENT_TOOL_UID: "1",
+          AGENT_TOOL_GID: "1",
+          AGENT_TOOL_HOME: toolHome,
+          SERVE_CLIENT: "false",
+        },
+        encoding: "utf8",
+      },
+    );
+    assert("EPERM fallback import succeeds in test", fallback.status === 0, fallback.stderr);
+    assert(
+      "EPERM fallback logs server warning",
+      fallback.stderr.includes("unable to chown restored skills"),
+      fallback.stderr,
+    );
+    const fallbackJson = fallback.stdout.trim().split(/\r?\n/).at(-1) ?? "{}";
+    const fallbackModes = JSON.parse(fallbackJson) as {
+      root: number;
+      assets: number;
+      file: number;
+    };
+    assert(
+      "EPERM fallback makes nested dirs writable",
+      fallbackModes.root === 0o777 && fallbackModes.assets === 0o777,
+      fallback.stdout,
+    );
+    assert("EPERM fallback makes file writable", fallbackModes.file === 0o666, fallback.stdout);
+  } else {
+    assert("EPERM fallback coverage skipped as root", true);
+  }
 
   function allowed(label: string, requested: string): void {
     try {

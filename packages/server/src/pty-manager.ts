@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as nodePty from "node-pty";
 import { config } from "./config.js";
+import { mergeToolEnv } from "./sandbox-settings.js";
 
 /**
  * Per-project PTY tracking with reattach support.
@@ -44,6 +45,8 @@ export interface SpawnOptions {
    * scenario of one project's tabId colliding with another's.
    */
   projectId: string;
+  /** Settings-managed env vars injected into sandbox terminal shells. */
+  toolEnv?: Record<string, string>;
 }
 
 export interface ManagedPty {
@@ -123,7 +126,7 @@ export function spawnPty(opts: SpawnOptions): ManagedPty {
     cols,
     rows,
     cwd: opts.cwd,
-    env: toolShellEnv(env),
+    env: mergeToolEnv(toolShellEnv(env), opts.toolEnv ?? {}),
     ...identity,
   });
   const ptyId = randomUUID();

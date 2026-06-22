@@ -221,6 +221,7 @@ export const config = Object.freeze({
   host: readEnv("HOST") ?? "127.0.0.1",
   logLevel: readEnv("LOG_LEVEL") ?? "info",
   isTest: (readEnv("NODE_ENV") ?? "") === "test",
+  isProduction: (readEnv("NODE_ENV") ?? "") === "production",
   trustProxy: readBool("TRUST_PROXY", false),
   workspacePath: WORKSPACE_PATH,
   piConfigDir: PI_CONFIG_DIR,
