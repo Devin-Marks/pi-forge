@@ -22,7 +22,14 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdir, mkdtemp, rm, symlink, writeFile as fsWrite } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile as fsRead,
+  rm,
+  symlink,
+  writeFile as fsWrite,
+} from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -332,6 +339,44 @@ async function main(): Promise<void> {
       assert("DELETE /files/delete (file) → 204", d.status === 204);
       const read = await jget(`${base}/api/v1/files/read?${qs}`, auth);
       assert("file gone after delete → 404", read.status === 404);
+    }
+
+    // ---- upload files with folder-relative paths ----
+    {
+      const fd = new FormData();
+      fd.append("projectId", projectId);
+      fd.append("parentPath", canonicalProjectPath);
+      fd.append("path:0", "dropped-folder/alpha.txt");
+      fd.append("sha256:0", "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8");
+      fd.append("path:1", "dropped-folder/nested/beta.txt");
+      fd.append("sha256:1", "f44e64e75f3948e9f73f8dfa94721c4ce8cbb4f265c4790c702b2d41cfbf2753");
+      fd.append("file:0", new Blob(["alpha"]), "dropped-folder/alpha.txt");
+      fd.append("file:1", new Blob(["beta"]), "dropped-folder/nested/beta.txt");
+      const res = await fetch(`${base}/api/v1/files/upload`, {
+        method: "POST",
+        headers: auth,
+        body: fd,
+      });
+      const body = (await res.json()) as { files?: { path: string }[] };
+      assert("POST /files/upload folder paths → 200", res.status === 200, JSON.stringify(body));
+      assert("upload returns two files", body.files?.length === 2, JSON.stringify(body));
+      const alpha = await fsRead(join(projectPath, "dropped-folder", "alpha.txt"), "utf8");
+      const beta = await fsRead(join(projectPath, "dropped-folder", "nested", "beta.txt"), "utf8");
+      assert("folder upload writes top-level file", alpha === "alpha");
+      assert("folder upload writes nested file", beta === "beta");
+    }
+    {
+      const fd = new FormData();
+      fd.append("projectId", projectId);
+      fd.append("parentPath", canonicalProjectPath);
+      fd.append("path:0", "../escape.txt");
+      fd.append("file:0", new Blob(["escape"]), "escape.txt");
+      const res = await fetch(`${base}/api/v1/files/upload`, {
+        method: "POST",
+        headers: auth,
+        body: fd,
+      });
+      assert("POST /files/upload traversal folder path → 403", res.status === 403);
     }
 
     // ---- mkdir + duplicate + delete empty ----
