@@ -27,6 +27,55 @@ import { DiffBlock } from "./DiffBlock";
 import { ConfirmDialog, Modal, PromptDialog } from "./Modal";
 import { laneColor, layoutCommits, type CommitLayout } from "../lib/git-graph";
 
+type SyncOperation = "fetch" | "pull";
+
+function gitTargetLabel(remote: string | undefined, branch?: string): string {
+  if (remote !== undefined && branch !== undefined) return `${remote}/${branch}`;
+  if (remote !== undefined) return remote;
+  if (branch !== undefined) return `origin/${branch}`;
+  return "the configured upstream";
+}
+
+function meaningfulGitOutputLine(output: string): string | undefined {
+  const lines = output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("From "));
+  return lines.at(-1);
+}
+
+function describeFetchSuccess(output: string, remote: string | undefined): string {
+  const target = gitTargetLabel(remote);
+  const detail = meaningfulGitOutputLine(output);
+  if (detail === undefined) {
+    return `Fetch complete from ${target}. No remote updates were reported.`;
+  }
+  return `Fetch complete from ${target}. Latest update: ${detail}`;
+}
+
+function describePullSuccess(
+  output: string,
+  remote: string | undefined,
+  branch: string | undefined,
+): string {
+  const target = gitTargetLabel(remote, branch);
+  if (/already up[- ]to[- ]date\.?/i.test(output)) {
+    return `Already up to date. Your local branch matches ${target}.`;
+  }
+  const detail = meaningfulGitOutputLine(output);
+  if (detail === undefined) {
+    return `Pull complete from ${target}. Refreshing the working tree status now.`;
+  }
+  return `Pull complete from ${target}. Latest update: ${detail}`;
+}
+
+function describeSyncFailure(operation: SyncOperation, message: string): string {
+  if (operation === "fetch") {
+    return `Fetch failed: ${message}. Check the remote name, network connection, and Git credentials.`;
+  }
+  return `Pull failed: ${message}. If there are conflicts, resolve them in the terminal, then refresh git status.`;
+}
+
 /**
  * Right-pane Git tab. Sections, top-to-bottom:
  *
@@ -53,6 +102,7 @@ export function GitPanel() {
 
   const [commitMessage, setCommitMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [busyOperation, setBusyOperation] = useState<SyncOperation | undefined>(undefined);
   const [opError, setOpError] = useState<string | undefined>(undefined);
   const [opResult, setOpResult] = useState<string | undefined>(undefined);
 
@@ -581,44 +631,49 @@ export function GitPanel() {
 
   const handleFetch = async (): Promise<void> => {
     setBusy(true);
+    setBusyOperation("fetch");
     setOpError(undefined);
-    setOpResult(undefined);
+    setOpResult(`Fetching from ${gitTargetLabel(pushRemote)}…`);
     try {
       const opts: { remote?: string; worktreePath?: string } = {};
       if (pushRemote !== undefined) opts.remote = pushRemote;
       if (selectedWorktreePath !== undefined) opts.worktreePath = selectedWorktreePath;
       const { output } = await api.gitFetch(project.id, opts);
-      setOpResult(
-        output.trim().length > 0 ? (output.trim().split("\n").pop() ?? "Fetched") : "Fetched",
-      );
+      setOpResult(describeFetchSuccess(output, pushRemote));
     } catch (err) {
-      setOpError(err instanceof ApiError ? err.message : (err as Error).message);
+      const message = err instanceof ApiError ? err.message : (err as Error).message;
+      setOpResult(undefined);
+      setOpError(describeSyncFailure("fetch", message));
     } finally {
       setBusy(false);
+      setBusyOperation(undefined);
     }
   };
 
   const handlePull = async (): Promise<void> => {
     setBusy(true);
+    setBusyOperation("pull");
     setOpError(undefined);
-    setOpResult(undefined);
+    const overrideName = pushBranchOverride.trim();
+    const branch = overrideName.length > 0 ? overrideName : undefined;
+    setOpResult(`Pulling from ${gitTargetLabel(pushRemote, branch)}…`);
     try {
       const opts: { remote?: string; branch?: string; worktreePath?: string } = {};
       if (pushRemote !== undefined) opts.remote = pushRemote;
-      const overrideName = pushBranchOverride.trim();
-      if (overrideName.length > 0) opts.branch = overrideName;
+      if (branch !== undefined) opts.branch = branch;
       if (selectedWorktreePath !== undefined) opts.worktreePath = selectedWorktreePath;
       const { output } = await api.gitPull(project.id, opts);
-      setOpResult(
-        output.trim().length > 0 ? (output.trim().split("\n").pop() ?? "Pulled") : "Pulled",
-      );
+      setOpResult(describePullSuccess(output, pushRemote, branch));
       // Pull can change the working tree; refresh status so the panel
       // reflects the new state without waiting for the 5s poll.
       void refresh();
     } catch (err) {
-      setOpError(err instanceof ApiError ? err.message : (err as Error).message);
+      const message = err instanceof ApiError ? err.message : (err as Error).message;
+      setOpResult(undefined);
+      setOpError(describeSyncFailure("pull", message));
     } finally {
       setBusy(false);
+      setBusyOperation(undefined);
     }
   };
 
@@ -928,19 +983,19 @@ export function GitPanel() {
               className="flex-1 rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-200 hover:border-neutral-500 disabled:opacity-50"
               title={
                 pushRemote !== undefined
-                  ? `git fetch ${pushRemote}`
-                  : "git fetch (configured upstream)"
+                  ? `Fetch remote-tracking updates from ${pushRemote}; the working tree is not changed.`
+                  : "Fetch remote-tracking updates from the configured upstream; the working tree is not changed."
               }
             >
-              Fetch
+              {busyOperation === "fetch" ? "Fetching…" : "Fetch"}
             </button>
             <button
               onClick={() => void handlePull()}
               disabled={busy}
               className="flex-1 rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-200 hover:border-neutral-500 disabled:opacity-50"
-              title="git pull — conflicts surface in the error banner; resolve via the integrated terminal"
+              title="Fetch and merge the selected upstream into this worktree. Conflicts are shown in the error banner; resolve them in the integrated terminal."
             >
-              Pull
+              {busyOperation === "pull" ? "Pulling…" : "Pull"}
             </button>
             <button
               onClick={() => void handlePush()}
