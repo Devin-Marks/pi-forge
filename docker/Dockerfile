@@ -127,10 +127,11 @@ ARG TEA_VERSION=0.14.1
 #     shell. node-pty defaults to /bin/sh; we set SHELL=/bin/bash
 #     below so xterm sessions land in bash with readline + history +
 #     the prompt expansions users expect.
-#   - curl, ca-certificates, less, procps: minimum interactive-terminal
+#   - curl, ca-certificates, less, procps, vim: minimum interactive-terminal
 #     hygiene. curl for fetching, ca-certificates so HTTPS works, less
 #     so `git log` and similar pagers don't bomb, procps so `ps`/`top`
-#     are present for users debugging long-running tool processes.
+#     are present for users debugging long-running tool processes, and vim
+#     provides a familiar in-terminal editor.
 #   - python3/pip3: Python 3.12 package tooling from the official
 #     Python image. `python` and `py` are aliases for `python3`.
 #   - make, g++: native-module rebuild toolchain for people using the
@@ -143,7 +144,7 @@ ARG TEA_VERSION=0.14.1
 #     present when `apt-get install gh` runs.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      tini gosu git ripgrep bash curl ca-certificates less procps make g++ gnupg \
+      tini gosu git ripgrep bash curl ca-certificates less procps vim make g++ gnupg \
  && install -dm 0755 /etc/apt/keyrings \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \

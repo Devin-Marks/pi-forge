@@ -22,7 +22,7 @@ runtime (Node + native bindings), and makes deploys reproducible.
 | `python-base` | `python:3.12-slim-bookworm` | Source for the Python 3.12 + pip runtime copied into the shared Node base |
 | `node-python-base` | `node:22-bookworm-slim` | Shared Debian slim base with Node.js 22 plus Python 3.12 + pip |
 | `builder` | `node-python-base` | Installs all deps including devDeps, compiles native bindings (`node-pty`), runs `npm run build` for both packages |
-| `runtime` | `node-python-base` | Production deps + built artifacts only. Adds `git`, `gh`, `tea`, `ripgrep`, `bash`, `curl`, `less`, `procps`, `gosu`, and the C++ toolchain needed for native-module rebuilds during in-container development. Default mode drops the server to `pi`; sandbox mode keeps the server as root so it can drop model/user tool processes to `pi-tools`; `SHELL=/bin/bash` so xterm sessions land in bash, not dash |
+| `runtime` | `node-python-base` | Production deps + built artifacts only. Adds `git`, `gh`, `tea`, `ripgrep`, `bash`, `curl`, `less`, `procps`, `vim`, `gosu`, and the C++ toolchain needed for native-module rebuilds during in-container development. Default mode drops the server to `pi`; sandbox mode keeps the server as root so it can drop model/user tool processes to `pi-tools`; `SHELL=/bin/bash` so xterm sessions land in bash, not dash |
 
 Final image size varies by architecture and cache state. Debian-based
 (not Alpine) because the Node native-module ecosystem ships glibc
@@ -38,6 +38,7 @@ Installed at runtime:
 - **`tea`** — Gitea/Forgejo CLI, pinned from the upstream Gitea release
 - **`ripgrep`** — pi's `grep` tool delegates to `rg` when present;
   silently degrades to a Node walker without it
+- **`vim`** — familiar in-terminal editor for the integrated terminal
 - **`make`, `g++`** — keeps `npm install` / `npm rebuild` working
   inside the running container when native modules such as `node-pty`
   need to compile against the container's Node ABI
