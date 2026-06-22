@@ -1,4 +1,12 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AtSign,
   Check,
@@ -225,13 +233,21 @@ export function ChatView({ sessionId }: Props) {
     lastScrollTopRef.current = el.scrollTop;
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el === null) return;
     if (isFollowingBottomRef.current) {
       el.scrollTop = el.scrollHeight;
       lastScrollTopRef.current = el.scrollTop;
+      return;
     }
+
+    // When the user has intentionally scrolled up, keep their viewport
+    // anchored on content changes below them (streaming text becoming a
+    // canonical assistant message, generated tool-call placeholders
+    // appearing/disappearing, etc.). Browser scroll anchoring can otherwise
+    // nudge the chat a few pixels when generation finishes.
+    el.scrollTop = lastScrollTopRef.current;
   }, [messages, streamingText, isStreaming, generatingToolCall]);
 
   const snapChatToBottom = (): void => {
@@ -240,6 +256,10 @@ export function ChatView({ sessionId }: Props) {
       el.scrollTop = el.scrollHeight;
       lastScrollTopRef.current = el.scrollTop;
     }
+  };
+
+  const followChatToBottom = (): void => {
+    if (isFollowingBottomRef.current) snapChatToBottom();
   };
 
   // Force scroll-to-bottom + re-engage follow mode whenever a NEW
@@ -599,7 +619,7 @@ export function ChatView({ sessionId }: Props) {
             {isStreaming && activeTool === undefined && generatingToolCall !== undefined && (
               <ToolCallGenerationPlaceholder
                 toolCall={generatingToolCall}
-                onVisibleOrUpdate={snapChatToBottom}
+                onVisibleOrUpdate={followChatToBottom}
               />
             )}
             {isStreaming && streamingText.length === 0 && generatingToolCall === undefined && (
@@ -724,7 +744,6 @@ function ToolCallGenerationPlaceholder({
 }) {
   const argsPreview = formatToolCallArgsPreview(toolCall);
   const argsRef = useRef<HTMLPreElement>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -740,7 +759,6 @@ function ToolCallGenerationPlaceholder({
 
   useEffect(() => {
     if (!visible) return;
-    rootRef.current?.scrollIntoView({ block: "end" });
     onVisibleOrUpdate();
     requestAnimationFrame(onVisibleOrUpdate);
   }, [visible, toolCall, onVisibleOrUpdate]);
@@ -749,7 +767,6 @@ function ToolCallGenerationPlaceholder({
 
   return (
     <div
-      ref={rootRef}
       className="w-full rounded border border-amber-900/50 bg-amber-950/20 px-2 py-1 text-[11px] text-amber-100 light:border-amber-300 light:bg-amber-50 light:text-amber-900"
       aria-live="polite"
       aria-label="Agent is generating a tool call"

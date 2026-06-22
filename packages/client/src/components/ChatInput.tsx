@@ -319,12 +319,14 @@ export function ChatInput({ sessionId }: Props) {
    * heights would just confuse (one preferred draft size beats N
    * session-scoped sizes the user has to re-discover on every
    * switch). Clamp on read so a stale absurd value gets corrected
-   * silently. Bounds: min 60 px (~2 rows), max 60 % viewport.
+   * silently. Bounds: min 60 px (~2 rows), max 40 % viewport.
    */
   const HEIGHT_KEY = "pi-forge:chat-input-height";
+  const DESKTOP_TEXTAREA_MAX_VIEWPORT_RATIO = 0.4;
+  const MOBILE_TEXTAREA_MAX_VIEWPORT_RATIO = 0.25;
   const heightBounds = (): { min: number; max: number } => ({
     min: 60,
-    max: Math.floor(window.innerHeight * 0.6),
+    max: Math.floor(window.innerHeight * DESKTOP_TEXTAREA_MAX_VIEWPORT_RATIO),
   });
   const [textareaHeight, setTextareaHeight] = useState<number | undefined>(() => {
     if (typeof window === "undefined") return undefined;
@@ -721,7 +723,8 @@ export function ChatInput({ sessionId }: Props) {
   const attachMenuRef = useRef<HTMLDivElement | null>(null);
   // Auto-grown textarea metrics (px). Recomputed on every text change:
   // shrink to the configured floor, expand with scrollHeight, then cap
-  // at a viewport-relative max and allow internal scrolling past it.
+  // at either the user's manual pane height or a viewport-relative max
+  // and allow internal scrolling past it.
   const [autoSize, setAutoSize] = useState<
     { height: number; maxHeight: number; overflowing: boolean } | undefined
   >(undefined);
@@ -1611,10 +1614,11 @@ export function ChatInput({ sessionId }: Props) {
 
   // Auto-grow the textarea on every input change. Collapse to "auto"
   // before measuring so deleting lines can shrink the box again; then
-  // clamp to a sensible floor/ceiling. Desktop keeps the drag handle as
-  // an optional preferred minimum height, while content can still grow
-  // beyond that up to 60vh. Mobile uses the tighter 30vh cap so the
-  // keyboard and transcript remain usable.
+  // clamp to a sensible floor/ceiling. On desktop, a user-resized
+  // composer is treated as the effective pane height (not just a
+  // preferred minimum), so dragging the divider down can shrink a long
+  // draft and make it scroll internally. Mobile keeps an even tighter
+  // cap so the keyboard and transcript remain usable.
   useLayoutEffect(() => {
     const ta = textareaRef.current;
     if (ta === null) return;
@@ -1624,10 +1628,15 @@ export function ChatInput({ sessionId }: Props) {
     const measured = ta.scrollHeight;
     ta.style.height = prevHeight;
 
-    const min = isMobile ? 44 : (textareaHeight ?? 80);
-    const max = Math.max(min, Math.round(window.innerHeight * (isMobile ? 0.3 : 0.6)));
-    const height = Math.max(min, Math.min(measured, max));
-    const overflowing = measured > max;
+    const manualMax = !isMobile ? textareaHeight : undefined;
+    const floor = isMobile ? 44 : manualMax !== undefined ? 60 : 80;
+    const viewportMax = Math.round(
+      window.innerHeight *
+        (isMobile ? MOBILE_TEXTAREA_MAX_VIEWPORT_RATIO : DESKTOP_TEXTAREA_MAX_VIEWPORT_RATIO),
+    );
+    const max = Math.max(floor, manualMax ?? viewportMax);
+    const height = manualMax !== undefined ? max : Math.max(floor, Math.min(measured, max));
+    const overflowing = measured > height;
     const next = { height, maxHeight: max, overflowing };
     setAutoSize((cur) =>
       cur?.height === next.height &&
@@ -2086,9 +2095,9 @@ export function ChatInput({ sessionId }: Props) {
               }
               // Starts at a comfortable minimum (2 rows on mobile,
               // 3 on desktop), then auto-grows with the user's input.
-              // Desktop drag-resize still works as a preferred minimum;
-              // once content exceeds that, the textarea grows up to the
-              // cap and then scrolls internally.
+              // Desktop drag-resize sets the effective pane height;
+              // long drafts scroll internally once they exceed that
+              // user-chosen size.
               rows={isMobile ? 2 : 3}
               disabled={isReadOnlyExternal}
               style={
