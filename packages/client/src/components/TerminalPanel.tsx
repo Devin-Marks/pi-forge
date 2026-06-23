@@ -20,7 +20,7 @@ interface Live {
   term: Terminal;
   fit: FitAddon;
   ws: WebSocket;
-  /** ResizeObserver watching the host div; fires `fit.fit()` and a server resize. */
+  /** ResizeObserver watching the host div; fits xterm and sends a server resize. */
   observer: ResizeObserver;
   /** Latest cols/rows we sent to the server, used to elide redundant resize messages. */
   lastSize: { cols: number; rows: number };
@@ -33,6 +33,22 @@ interface Live {
 }
 
 const live = new Map<string, Live>();
+
+interface XtermCoreForFit {
+  _renderService: {
+    clear: () => void;
+    dimensions: {
+      css: {
+        cell: { width: number; height: number };
+      };
+    };
+  };
+  viewport: { scrollBarWidth: number };
+}
+
+interface TerminalWithCore extends Terminal {
+  _core?: XtermCoreForFit;
+}
 
 /**
  * xterm.js captures keyboard input through an off-screen textarea.
@@ -66,8 +82,55 @@ function syncPtySize(entry: Live, force = false): void {
   }
 }
 
+function parseCssPixels(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function fitAndSyncPty(entry: Live, force = false): void {
-  entry.fit.fit();
+  // FitAddon 0.11 measures the host via computedStyle width/height and
+  // parseInt(), which can under-count columns in some browser/font/zoom
+  // combinations (or when the resolved width is not an integer string). Use
+  // the host's fractional border-box instead so xterm and the PTY agree on the
+  // widest grid that actually fits the visible pane.
+  const element = entry.term.element;
+  const parent = element?.parentElement;
+  const core = (entry.term as TerminalWithCore)._core;
+  const cell = core?._renderService.dimensions.css.cell;
+  if (
+    element === undefined ||
+    parent === null ||
+    parent === undefined ||
+    core === undefined ||
+    cell === undefined
+  ) {
+    entry.fit.fit();
+    syncPtySize(entry, force);
+    return;
+  }
+  if (cell.width <= 0 || cell.height <= 0) {
+    entry.fit.fit();
+    syncPtySize(entry, force);
+    return;
+  }
+
+  const elementStyle = window.getComputedStyle(element);
+  const horizontalPadding =
+    parseCssPixels(elementStyle.paddingLeft) + parseCssPixels(elementStyle.paddingRight);
+  const verticalPadding =
+    parseCssPixels(elementStyle.paddingTop) + parseCssPixels(elementStyle.paddingBottom);
+  const scrollbarWidth = entry.term.options.scrollback === 0 ? 0 : core.viewport.scrollBarWidth;
+  const parentRect = parent.getBoundingClientRect();
+  const cols = Math.max(
+    2,
+    Math.floor((parentRect.width - horizontalPadding - scrollbarWidth) / cell.width),
+  );
+  const rows = Math.max(1, Math.floor((parentRect.height - verticalPadding) / cell.height));
+
+  if (entry.term.cols !== cols || entry.term.rows !== rows) {
+    core._renderService.clear();
+    entry.term.resize(cols, rows);
+  }
   syncPtySize(entry, force);
 }
 
@@ -366,7 +429,7 @@ function TerminalHost({
     });
     observer.observe(hostRef.current);
 
-    live.set(tab.id, {
+    const entry: Live = {
       term,
       fit,
       ws,
@@ -375,6 +438,14 @@ function TerminalHost({
       reconnectAttempt: 0,
       reconnectTimer: undefined,
       disposed: false,
+    };
+    live.set(tab.id, entry);
+    requestAnimationFrame(() => {
+      try {
+        fitAndSyncPty(entry, true);
+      } catch {
+        // host detached momentarily during tab/panel toggles
+      }
     });
 
     // Reference the data listener so its handle survives remounts.
@@ -451,7 +522,7 @@ function TerminalHost({
       // compute cols, so padding would cause horizontal overflow.
       // An absolute offset shrinks the box xterm sees, which is what
       // we want.
-      className="absolute inset-y-0 left-2 right-0"
+      className="pi-terminal-host absolute inset-y-0 left-2 right-0"
       // `visibility: hidden` instead of `display: none` so every host
       // keeps real layout dimensions whether or not it's the active
       // tab. That way fit() always reads the correct cols/rows on
