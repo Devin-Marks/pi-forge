@@ -15,6 +15,27 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.4.4] — 2026-06-22
+
+### Added
+
+- **Configurable local admin username.** Deployments can set `PI_FORGE_ADMIN_USERNAME` / `--admin-username` to rename the built-in local admin login while keeping the default `admin` behavior and auth summaries safe.
+- **Vim in the runtime container.** The container image now includes `vim` for lightweight in-container editing/debugging, with container documentation updated accordingly.
+
+### Changed
+
+- **Sandbox permission setup is better documented.** The sandbox guide now calls out ownership, writable-home, and deployment permission requirements for agent tool sandboxing.
+- **Dependency updates for v1.4.4.** Updated the pinned pi SDK trio to 0.79.10 and refreshed selected runtime/dev dependencies including `lucide-react` 1.21.0, `@types/node` 26.0.0, `typescript-eslint` 8.62.0, `globals` 17.7.0, and `actions/checkout` 7.
+
+### Fixed
+
+- **File browser moves and folder uploads work correctly.** File operations now support moving files and uploading folders through the validated file API, with client and server coverage for the expanded behavior.
+- **Git fetch and pull errors are easier to act on.** The Git panel now surfaces clearer fetch/pull status and failure messages instead of generic command output.
+- **Chat scrolling and prompt sizing are preserved.** Chat input auto-sizing and transcript scroll position now stay stable across message updates and prompt changes.
+- **Orchestration Group 5 theme colors are corrected.** Orchestration dashboard and settings colors now align with the intended theme palette.
+- **Sandbox environment and skill permissions propagate correctly.** Tool sandbox environment settings now reach terminal/tool surfaces and exported skills carry the intended permissions, with regression coverage.
+- **LDAP login wording is simpler.** Login copy now describes LDAP availability more plainly.
+
 ## [1.4.3] — 2026-06-14
 
 ### Added
