@@ -41,6 +41,7 @@ import {
   OrchestrationError,
   unregisterWorker,
 } from "../orchestration/store.js";
+import { bridgeWorkerEvent } from "../orchestration/inbox.js";
 import { clearInbox, pendingInboxCount, readAllInbox } from "../orchestration/store.js";
 import { MAX_DEPTH } from "../orchestration/types.js";
 import { killWorkerAndArchive } from "../orchestration/worker-lifecycle.js";
@@ -489,6 +490,9 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       if (rec === undefined || rec.supervisorId !== req.params.id) {
         return reply.code(404).send({ error: "worker_not_linked" });
       }
+      await bridgeWorkerEvent(req.params.wid, "worker.detached", {
+        wasLive: getSession(req.params.wid) !== undefined,
+      });
       await unregisterWorker(req.params.wid);
       return reply.code(204).send();
     },

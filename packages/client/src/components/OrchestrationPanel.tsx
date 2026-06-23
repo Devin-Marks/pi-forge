@@ -460,6 +460,8 @@ function inboxTypeLabel(t: InboxItemType): string {
       return "process";
     case "worker.deleted":
       return "deleted";
+    case "worker.detached":
+      return "detached";
   }
 }
 

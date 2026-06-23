@@ -52,6 +52,7 @@ function workerStateForInboxType(type: InboxEventType): string {
   if (type === "worker.ended") return "ended";
   if (type === "worker.execution_stopped_without_agent_end") return "failed";
   if (type === "worker.deleted") return "deleted";
+  if (type === "worker.detached") return "detached";
   if (type === "worker.ask_user") return "awaiting_question";
   if (type === "worker.process_alert") return "process_alert";
   return type.replace(/^worker\./, "");
@@ -102,7 +103,7 @@ function summarizeWorkerEventData(type: InboxEventType, data: Record<string, unk
     const lastStart = typeof data.lastAgentStartAt === "string" ? data.lastAgentStartAt : "";
     return `reason: ${reason}${lastStart !== "" ? `\nlastAgentStartAt: ${lastStart}` : ""}`;
   }
-  if (type === "worker.deleted") {
+  if (type === "worker.deleted" || type === "worker.detached") {
     return `wasLive: ${data.wasLive === true ? "true" : "false"}`;
   }
   try {
