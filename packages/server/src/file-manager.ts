@@ -1,4 +1,6 @@
 import {
+  lchown,
+  lstat,
   mkdir,
   open as fsOpen,
   readFile as fsReadFile,
@@ -17,6 +19,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { createHash, randomUUID } from "node:crypto";
 import { create as tarCreate } from "tar";
 import type { Readable } from "node:stream";
+import { config } from "./config.js";
 
 /**
  * Filesystem operations bounded by a per-call project root.
@@ -221,6 +224,57 @@ async function verifyPathSafe(target: string, root: string): Promise<string> {
       }
       cursor = parent;
     }
+  }
+}
+
+function sandboxOwnershipEnabled(): boolean {
+  return config.agentToolSandbox.enabled;
+}
+
+async function applySandboxOwnership(path: string): Promise<void> {
+  if (!sandboxOwnershipEnabled()) return;
+  const uid = config.agentToolSandbox.uid!;
+  const gid = config.agentToolSandbox.gid!;
+  const currentUid = typeof process.getuid === "function" ? process.getuid() : undefined;
+  const currentGid = typeof process.getgid === "function" ? process.getgid() : undefined;
+  if (currentUid === uid && currentGid === gid) return;
+  // lchown deliberately avoids following a malicious symlink if a path is
+  // swapped between creation and ownership fix-up. File writes chown their
+  // private temp file before the atomic rename, so the final visible file is
+  // never server-owned in sandbox mode.
+  await lchown(path, uid, gid);
+}
+
+async function missingDirectoryChain(dir: string, root: string): Promise<string[]> {
+  const resolvedDir = assertInsideRoot(dir, root);
+  const missing: string[] = [];
+  let cursor = resolvedDir;
+  while (true) {
+    try {
+      await lstat(cursor);
+      return missing.reverse();
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      missing.push(cursor);
+      const parent = dirname(cursor);
+      if (parent === cursor) throw new PathOutsideRootError(dir, root);
+      cursor = parent;
+    }
+  }
+}
+
+async function mkdirWithSandboxOwnership(dir: string, root: string): Promise<void> {
+  const missing = sandboxOwnershipEnabled() ? await missingDirectoryChain(dir, root) : [];
+  await mkdir(dir, { recursive: true });
+  try {
+    for (const created of missing) {
+      await applySandboxOwnership(created);
+    }
+  } catch (err) {
+    for (const created of [...missing].reverse()) {
+      await rmdir(created).catch(() => undefined);
+    }
+    throw err;
   }
 }
 
@@ -505,13 +559,19 @@ export async function writeFile(absPath: string, root: string, content: string):
   // succeed (`/foo/bar/baz.ts` works even if `/foo/bar` doesn't exist).
   // Safe AFTER verifyPathSafe: the deepest existing ancestor was
   // proven inside `root`, so any dirs we create are under it.
-  await mkdir(dirname(resolved), { recursive: true });
+  await mkdirWithSandboxOwnership(dirname(resolved), root);
   // Atomic-ish write. tmp + rename keeps a partially-written file from
   // ever existing under the target name; same pattern config-manager and
   // project-manager use.
   const tmp = `${resolved}.${randomUUID()}.tmp`;
-  await fsWriteFile(tmp, content, "utf8");
-  await fsRename(tmp, resolved);
+  try {
+    await fsWriteFile(tmp, content, "utf8");
+    await applySandboxOwnership(tmp);
+    await fsRename(tmp, resolved);
+  } catch (err) {
+    await unlink(tmp).catch(() => undefined);
+    throw err;
+  }
 }
 
 /**
@@ -638,7 +698,7 @@ async function writeFileBytesAtPath(
     if (opts?.overwrite !== true) throw new TargetExistsError(target);
     if (!existing.isFile()) throw new InvalidNameError("target is a directory");
   }
-  await mkdir(dirname(target), { recursive: true });
+  await mkdirWithSandboxOwnership(dirname(target), root);
   const tmp = `${target}.${randomUUID()}.upload.tmp`;
   const hash = createHash("sha256");
   let size = 0;
@@ -663,7 +723,13 @@ async function writeFileBytesAtPath(
     await unlink(tmp).catch(() => undefined);
     throw new ChecksumMismatchError(target, expected, actual);
   }
-  await fsRename(tmp, target);
+  try {
+    await applySandboxOwnership(tmp);
+    await fsRename(tmp, target);
+  } catch (err) {
+    await unlink(tmp).catch(() => undefined);
+    throw err;
+  }
   return { path: target, size, sha256: actual };
 }
 
@@ -682,6 +748,12 @@ export async function makeDirectory(
   const exists = await stat(target).catch(() => undefined);
   if (exists !== undefined) throw new TargetExistsError(target);
   await mkdir(target, { recursive: false });
+  try {
+    await applySandboxOwnership(target);
+  } catch (err) {
+    await rmdir(target).catch(() => undefined);
+    throw err;
+  }
   return target;
 }
 

@@ -271,7 +271,10 @@ docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
 ```
 
 The base compose file already drops all capabilities. The sandbox overlay adds
-back `SETUID` / `SETGID` and runs the server container as root.
+back `CHOWN`, `SETUID`, and `SETGID` and runs the server container as root.
+`SETUID` / `SETGID` let pi-forge spawn model/user tool processes as
+`pi-tools`; `CHOWN` lets browser upload and new-file APIs hand newly created
+workspace files/directories to that same sandbox identity.
 
 If OrbStack/Docker Desktop shows `.pi-forge` as `1000:1000 0700` inside the
 pi-forge container even after the helper volume init chowns it to `root:root`,
@@ -279,6 +282,7 @@ add `DAC_OVERRIDE` for local testing:
 
 ```yaml
 cap_add:
+  - CHOWN
   - SETUID
   - SETGID
   - DAC_OVERRIDE # local OrbStack/Docker Desktop workaround only

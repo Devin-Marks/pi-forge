@@ -246,10 +246,12 @@ SSE-buffering and WebSocket-upgrade settings live in
   Keep secrets out of `/workspace`; workspace content is intentionally
   readable by the agent.
 - **Minimal capabilities.** Regular compose starts as `pi`, drops all
-  capabilities, and does not need `SETUID` / `SETGID`. The optional
+  capabilities, and does not need `CHOWN`, `SETUID`, or `SETGID`. The optional
   `docker-compose.sandbox.yml` overlay starts as root and adds back
-  only `SETUID` / `SETGID`, which are required for the sandbox identity
-  switch. No privileged mode or host PID is needed.
+  only `CHOWN`, `SETUID`, and `SETGID`: `SETUID` / `SETGID` are required for
+  the sandbox identity switch, and `CHOWN` is required so browser upload and
+  new-file APIs can hand created workspace files/directories to `pi-tools`.
+  No privileged mode or host PID is needed.
 - **Secret mounts.** Mount Pi config, forge data, LDAP/UI secret files,
   and cloud credentials so they are readable by the root server but not
   by `pi-tools` (for example mode `0600` root-owned files or `0700`

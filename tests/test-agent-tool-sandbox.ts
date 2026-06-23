@@ -137,11 +137,129 @@ try {
       files: { filename: string; buffer: Buffer }[],
     ) => Promise<{ imported: string[]; skipped: { name: string; reason: string }[] }>;
   };
+  const { makeDirectory, writeFile, writeFileBytesRelative } = (await import(
+    resolve(repoRoot, "packages/server/dist/file-manager.js")
+  )) as {
+    makeDirectory: (parentAbsPath: string, root: string, name: string) => Promise<string>;
+    writeFile: (absPath: string, root: string, content: string) => Promise<void>;
+    writeFileBytesRelative: (
+      parentAbsPath: string,
+      relativePath: string,
+      root: string,
+      source: AsyncIterable<Buffer | Uint8Array>,
+      opts?: { expectedSha256?: string; overwrite?: boolean },
+    ) => Promise<{ path: string; size: number; sha256: string }>;
+  };
 
   console.log("\nsandbox shell env");
   const shellEnv = toolShellEnv({ ...process.env, HOME: "/home/pi", USER: "pi", LOGNAME: "pi" });
   assert("sandbox shell HOME uses AGENT_TOOL_HOME", shellEnv.HOME === toolHome, shellEnv.HOME);
   assert("sandbox shell USER uses tool identity", shellEnv.USER === "pi-tools", shellEnv.USER);
+
+  async function* bufferSource(content: string): AsyncIterable<Buffer> {
+    yield Buffer.from(content);
+  }
+
+  console.log("\nsandbox file-manager ownership");
+  await writeFile(resolve(project, "created", "from-write.txt"), project, "created\n");
+  const uploadResult = await writeFileBytesRelative(
+    project,
+    "uploaded/nested/from-upload.txt",
+    project,
+    bufferSource("uploaded\n"),
+  );
+  const mkdirResult = await makeDirectory(project, project, "browser-dir");
+  const expectedUid = Number(process.env.AGENT_TOOL_UID);
+  const expectedGid = Number(process.env.AGENT_TOOL_GID);
+  for (const ownedPath of [
+    resolve(project, "created"),
+    resolve(project, "created", "from-write.txt"),
+    resolve(project, "uploaded"),
+    resolve(project, "uploaded", "nested"),
+    uploadResult.path,
+    mkdirResult,
+  ]) {
+    const st = statSync(ownedPath);
+    assert(
+      `sandbox-created path owned by tool identity: ${ownedPath.slice(project.length + 1)}`,
+      st.uid === expectedUid && st.gid === expectedGid,
+      `${st.uid}:${st.gid}`,
+    );
+  }
+
+  if ((process.getuid?.() ?? 0) === 0) {
+    const ownershipProject = resolve(tmp, "ownership-root-project");
+    const ownershipWorkspace = resolve(tmp, "ownership-root-workspace");
+    const ownershipPiConfig = resolve(tmp, "ownership-root-pi");
+    const ownershipData = resolve(tmp, "ownership-root-data");
+    mkdirSync(ownershipProject, { recursive: true });
+    mkdirSync(ownershipWorkspace, { recursive: true });
+    mkdirSync(ownershipPiConfig, { recursive: true });
+    mkdirSync(ownershipData, { recursive: true });
+    const ownership = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+          import { statSync } from "node:fs";
+          import { resolve } from "node:path";
+          const { writeFile, writeFileBytesRelative } = await import(${JSON.stringify(
+            resolve(repoRoot, "packages/server/dist/file-manager.js"),
+          )});
+          const project = ${JSON.stringify(ownershipProject)};
+          async function* bufferSource(content) { yield Buffer.from(content); }
+          await writeFile(resolve(project, "new", "file.txt"), project, "x");
+          const uploaded = await writeFileBytesRelative(project, "drop/inner/upload.txt", project, bufferSource("y"));
+          const statOwner = (path) => {
+            const st = statSync(path);
+            return { uid: st.uid, gid: st.gid };
+          };
+          console.log(JSON.stringify({
+            writeDir: statOwner(resolve(project, "new")),
+            writeFile: statOwner(resolve(project, "new", "file.txt")),
+            uploadDir: statOwner(resolve(project, "drop", "inner")),
+            uploadFile: statOwner(uploaded.path),
+          }));
+        `,
+      ],
+      {
+        env: {
+          ...process.env,
+          NODE_ENV: "test",
+          WORKSPACE_PATH: ownershipWorkspace,
+          PI_CONFIG_DIR: ownershipPiConfig,
+          FORGE_DATA_DIR: ownershipData,
+          SESSION_DIR: resolve(ownershipWorkspace, ".pi", "sessions"),
+          AGENT_TOOL_SANDBOX_ENABLED: "true",
+          AGENT_TOOL_UID: "1",
+          AGENT_TOOL_GID: "1",
+          AGENT_TOOL_HOME: toolHome,
+          SERVE_CLIENT: "false",
+        },
+        encoding: "utf8",
+      },
+    );
+    assert(
+      "root can chown file-manager creates to configured UID/GID",
+      ownership.status === 0,
+      ownership.stderr,
+    );
+    const ownershipJson = ownership.stdout.trim().split(/\r?\n/).at(-1) ?? "{}";
+    const ownershipStats = JSON.parse(ownershipJson) as Record<
+      string,
+      { uid: number; gid: number }
+    >;
+    for (const [label, st] of Object.entries(ownershipStats)) {
+      assert(
+        `root-created ${label} owned by 1:1`,
+        st.uid === 1 && st.gid === 1,
+        `${st.uid}:${st.gid}`,
+      );
+    }
+  } else {
+    assert("root-only ownership coverage skipped as non-root", true);
+  }
 
   console.log("\nskills import permissions");
   const skillsImport = await importSkillsFromFiles([
