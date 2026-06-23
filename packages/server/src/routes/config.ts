@@ -512,7 +512,8 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
     "/config/theme",
     {
       schema: {
-        description: "Reset the global server-side UI color theme to built-in defaults and disable it.",
+        description:
+          "Reset the global server-side UI color theme to built-in defaults and disable it.",
         tags: ["config"],
         response: { 200: themeConfigSchema, 500: errorSchema },
       },

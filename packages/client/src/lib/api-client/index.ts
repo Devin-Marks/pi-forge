@@ -160,7 +160,8 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
     version,
     passwordAuthEnabled,
     orchestrationEnabled,
-    serverTheme: value.serverTheme === undefined ? undefined : vServerThemeConfig(value.serverTheme, status),
+    serverTheme:
+      value.serverTheme === undefined ? undefined : vServerThemeConfig(value.serverTheme, status),
   };
 }
 
@@ -1927,8 +1928,7 @@ export const api = {
   getServerTheme: () => request("/api/v1/config/theme", vServerThemeConfig),
   updateServerTheme: (theme: { enabled: boolean; colors: ServerThemeColors }) =>
     request("/api/v1/config/theme", vServerThemeConfig, { method: "PUT", body: theme }),
-  resetServerTheme: () =>
-    request("/api/v1/config/theme", vServerThemeConfig, { method: "DELETE" }),
+  resetServerTheme: () => request("/api/v1/config/theme", vServerThemeConfig, { method: "DELETE" }),
   getAuthSummary: () => request("/api/v1/config/auth", vAuthSummary),
   setApiKey: (provider: string, apiKey: string) =>
     request(
