@@ -8,8 +8,9 @@
  * Delivery policy:
  *   - If the supervisor is active, every worker update is delivered as
  *     `steer` so it can enter the current run at the next model step.
- *   - If the supervisor is idle, every update except delete/unregister
- *     starts a new turn; delete/unregister only appends a visible card.
+ *   - If the supervisor is idle, every external worker update starts a
+ *     new turn. Orchestration-initiated worker deletion is filtered before
+ *     it reaches this bridge.
  */
 import { sendCustomLifecycleMessage } from "../lifecycle-notifications.js";
 import { getSession } from "../session-registry.js";
@@ -43,14 +44,15 @@ function logInbox(level: "info" | "warn", payload: Record<string, unknown>): voi
 export const ORCHESTRATION_WAKE_PREFIX = "[orchestration]";
 export const ORCHESTRATION_NOTIFY_TYPE = "orchestration-notify";
 
-export function shouldTriggerWorkerTurn(type: InboxEventType): boolean {
-  return type !== "worker.deleted";
+export function shouldTriggerWorkerTurn(_type: InboxEventType): boolean {
+  return true;
 }
 
 function workerStateForInboxType(type: InboxEventType): string {
   if (type === "worker.ended") return "ended";
   if (type === "worker.execution_stopped_without_agent_end") return "failed";
   if (type === "worker.deleted") return "deleted";
+  if (type === "worker.detached") return "detached";
   if (type === "worker.ask_user") return "awaiting_question";
   if (type === "worker.process_alert") return "process_alert";
   return type.replace(/^worker\./, "");
@@ -101,7 +103,7 @@ function summarizeWorkerEventData(type: InboxEventType, data: Record<string, unk
     const lastStart = typeof data.lastAgentStartAt === "string" ? data.lastAgentStartAt : "";
     return `reason: ${reason}${lastStart !== "" ? `\nlastAgentStartAt: ${lastStart}` : ""}`;
   }
-  if (type === "worker.deleted") {
+  if (type === "worker.deleted" || type === "worker.detached") {
     return `wasLive: ${data.wasLive === true ? "true" : "false"}`;
   }
   try {

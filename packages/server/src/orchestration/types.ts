@@ -34,6 +34,7 @@ export const INBOX_EVENT_TYPES = [
   "worker.auto_retry_failed",
   "worker.process_alert",
   "worker.deleted",
+  "worker.detached",
 ] as const;
 
 export type InboxEventType = (typeof INBOX_EVENT_TYPES)[number];

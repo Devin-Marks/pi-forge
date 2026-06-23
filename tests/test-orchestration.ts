@@ -25,7 +25,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:net";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -127,7 +127,11 @@ interface EventBridgeModule {
   ) => Promise<void>;
   bridgeWorkerDeleted: (
     sessionId: string,
-    meta: { wasLive: boolean; reason?: "deleted" | "killed" | "disposed" | "aborted" },
+    meta: {
+      wasLive: boolean;
+      reason?: "deleted" | "killed" | "disposed" | "aborted";
+      notifySupervisor?: boolean;
+    },
   ) => Promise<void>;
 }
 
@@ -313,6 +317,20 @@ async function jsend(
 }
 
 async function main(): Promise<void> {
+  const orchestrationPanelSource = await readFile(
+    resolve(repoRoot, "packages/client/src/components/OrchestrationPanel.tsx"),
+    "utf8",
+  );
+  assert(
+    "Web UI worker kill uses session DELETE route so supervisor is notified",
+    orchestrationPanelSource.includes("await api.disposeSession(workerId)") &&
+      !orchestrationPanelSource.includes("await api.killWorker(link.sessionId, workerId)"),
+  );
+  assert(
+    "Web UI worker detach uses orchestration detach route",
+    orchestrationPanelSource.includes("await api.detachWorker(link.sessionId, workerId)"),
+  );
+
   // The store + inbox modules read `FORGE_DATA_DIR` from `config.ts`
   // at module-import time. Plant the env BEFORE the first dynamic
   // import so the in-test calls share a data dir with the spawned
@@ -432,8 +450,8 @@ async function main(): Promise<void> {
     inbox.shouldTriggerWorkerTurn("worker.ended"),
   );
   assert(
-    "worker deletion does NOT trigger supervisor turn",
-    !inbox.shouldTriggerWorkerTurn("worker.deleted"),
+    "external worker deletion triggers supervisor turn",
+    inbox.shouldTriggerWorkerTurn("worker.deleted"),
   );
   assert(
     "worker ask_user triggers supervisor turn",
@@ -593,6 +611,25 @@ async function main(): Promise<void> {
     "explicit stop clears open turn and records deleted state",
     (await store.getWorkerRecord("w-state"))?.turnOpen === false &&
       (await store.getWorkerRecord("w-state"))?.state === "deleted",
+  );
+
+  await store.clearInbox("sup-1");
+  await eventBridge.bridgeWorkerAgentEvent(
+    { sessionId: "w-state", session: fakeSession },
+    { type: "agent_start" },
+  );
+  await eventBridge.bridgeWorkerDeleted("w-state", {
+    wasLive: true,
+    reason: "killed",
+    notifySupervisor: false,
+  });
+  lifecycleItems = await store.readAllInbox("sup-1");
+  assert(
+    "orchestrator-initiated delete updates state without notifying supervisor",
+    lifecycleItems.length === 0 &&
+      (await store.getWorkerRecord("w-state"))?.turnOpen === false &&
+      (await store.getWorkerRecord("w-state"))?.state === "deleted",
+    JSON.stringify(lifecycleItems),
   );
 
   // Clear worker-event history
@@ -969,28 +1006,9 @@ async function main(): Promise<void> {
       JSON.stringify(killRes.body),
     );
     const killInboxItems = await store.readAllInbox(realSid);
-    const killStopItem = killInboxItems.find(
-      (item) =>
-        item.workerId === realWorkerId &&
-        item.type === "worker.execution_stopped_without_agent_end",
-    );
     assert(
-      "kill worker records stopped-without-agent_end reason=killed",
-      killStopItem?.data.reason === "killed",
-      JSON.stringify(killInboxItems),
-    );
-    const killNotify = await waitForMessage(onSrv.base, realSid, (message) => {
-      const details = message.details as { workerId?: unknown; state?: unknown } | undefined;
-      return (
-        message.role === "custom" &&
-        message.customType === "orchestration-notify" &&
-        details?.workerId === realWorkerId &&
-        details.state === "failed"
-      );
-    });
-    assert(
-      "worker failure posts orchestration-notify custom card",
-      killNotify !== undefined,
+      "orchestration kill does not notify supervisor about its own deletion",
+      !killInboxItems.some((item) => item.workerId === realWorkerId),
       JSON.stringify(killInboxItems),
     );
     const afterKillList = await jsend(
@@ -1096,6 +1114,23 @@ async function main(): Promise<void> {
     );
     const deleteWorkerRes = await jsend(onSrv.base, "DELETE", `/api/v1/sessions/${deleteWorkerId}`);
     assert("DELETE /sessions/:id for worker returns 204", deleteWorkerRes.status === 204);
+    const deleteNotify = await waitForMessage(onSrv.base, realSid, (message) => {
+      const details = message.details as
+        | { workerId?: unknown; state?: unknown; eventType?: unknown }
+        | undefined;
+      return (
+        message.role === "custom" &&
+        message.customType === "orchestration-notify" &&
+        details?.workerId === deleteWorkerId &&
+        details.state === "deleted" &&
+        details.eventType === "worker.deleted"
+      );
+    });
+    assert(
+      "direct web UI/session delete notifies supervisor",
+      deleteNotify !== undefined,
+      `workerId=${deleteWorkerId}`,
+    );
     const afterDeleteWorkerList = await jsend(
       onSrv.base,
       "GET",
@@ -1156,6 +1191,50 @@ async function main(): Promise<void> {
     } catch {
       // ignore — body cancel after abort can throw
     }
+
+    const detachWorker = await jsend(onSrv.base, "POST", "/api/v1/sessions", {
+      projectId: realProjectId,
+    });
+    assert(
+      "create detach-route worker session → 201",
+      detachWorker.status === 201 &&
+        typeof (detachWorker.body as { sessionId: string }).sessionId === "string",
+    );
+    const detachWorkerId = (detachWorker.body as { sessionId: string }).sessionId;
+    await store.registerWorker({ supervisorId: realSid, workerId: detachWorkerId });
+    const detachRes = await jsend(
+      onSrv.base,
+      "POST",
+      `/api/v1/orchestration/sessions/${realSid}/workers/${detachWorkerId}/detach`,
+    );
+    assert("Web UI/API detach route returns 204", detachRes.status === 204);
+    const detachNotify = await waitForMessage(onSrv.base, realSid, (message) => {
+      const details = message.details as
+        | { workerId?: unknown; state?: unknown; eventType?: unknown }
+        | undefined;
+      return (
+        message.role === "custom" &&
+        message.customType === "orchestration-notify" &&
+        details?.workerId === detachWorkerId &&
+        details.state === "detached" &&
+        details.eventType === "worker.detached"
+      );
+    });
+    assert(
+      "Web UI/API detach notifies supervisor before unlinking",
+      detachNotify !== undefined,
+      `workerId=${detachWorkerId}`,
+    );
+    const detachLink = await jsend(
+      onSrv.base,
+      "GET",
+      `/api/v1/orchestration/sessions/${detachWorkerId}`,
+    );
+    assert(
+      "detached worker becomes standalone after notifying",
+      detachLink.status === 200 && (detachLink.body as { role?: string }).role === "standalone",
+      JSON.stringify(detachLink.body),
+    );
 
     // Deleting the supervisor itself should cascade through the same worker
     // cleanup path: registered workers (and their subagent children) are

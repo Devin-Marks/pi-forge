@@ -123,7 +123,8 @@ types:
 | `worker.ask_user` | Worker called `ask_user_question` |
 | `worker.auto_retry_failed` | Worker's SDK auto-retry exhausted on a provider error |
 | `worker.process_alert` | Not enqueued for worker process alerts; process success/failure/kill notifications stay in the worker session and do not wake the supervisor |
-| `worker.deleted` | Worker's session was deleted (cold or live) |
+| `worker.deleted` | Worker's session was deleted externally (cold or live); kills initiated through orchestration tools/UI controls update worker state but do not notify the supervisor about its own action. |
+| `worker.detached` | Worker's supervisor link was detached by a human Web UI/API action; `orchestrate_detach_worker` remains a self-action and does not notify the supervisor. |
 
 When an event lands, the bridge enqueues it AND tries to wake the
 supervisor with a small `[orchestration] N pending events…` prompt.
@@ -133,6 +134,8 @@ The wake-up only fires when:
 2. The supervisor is **idle** (not currently mid-turn), AND
 3. There isn't already an in-flight wake-up for the current idle
    window (per-supervisor dedupe flag).
+
+Orchestration-initiated kills are filtered before they reach the inbox, so the supervisor is not woken for its own worker-deletion tool/UI action.
 
 If the supervisor is mid-turn, the items wait on the queue.
 Recovery fires another wake-up when the supervisor's own
@@ -195,8 +198,8 @@ MINIMAL_UI hard gate — they return `403 orchestration_disabled` or
 | `GET /api/v1/orchestration/sessions/:id/workers` | Live worker list for a supervisor (drives the Workers panel). |
 | `GET /api/v1/orchestration/sessions/:id/inbox` | Full inbox history (delivered + pending), newest first. |
 | `POST /api/v1/orchestration/sessions/:id/inbox/clear` | Wipe inbox. |
-| `POST /api/v1/orchestration/sessions/:id/workers/:wid/detach` | UI detach. |
-| `POST /api/v1/orchestration/sessions/:id/workers/:wid/kill` | UI kill (transcript stays on disk; use `DELETE /sessions/:id` to remove it). |
+| `POST /api/v1/orchestration/sessions/:id/workers/:wid/detach` | Web UI/API detach. Notifies the supervisor before unlinking because a human detached the worker externally. |
+| `POST /api/v1/orchestration/sessions/:id/workers/:wid/kill` | Programmatic orchestration kill that suppresses self-notification to the supervisor. The Web UI worker Kill button uses generic `DELETE /sessions/:id` instead so a human-initiated deletion notifies the supervisor. |
 | `POST /api/v1/orchestration/sessions/:id/workers/:wid/resume` | Force-resume a cold worker into the registry. |
 
 Full schemas: open `/api/docs` in your deploy.

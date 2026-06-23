@@ -739,7 +739,11 @@ function createKillWorker(supervisorId: string): ToolDefinition {
       const p = params as { workerId: string; deleteOnDisk?: boolean };
       const guard = await assertOwns(supervisorId, p.workerId);
       if (guard !== undefined) return guard;
-      const result = await killWorkerAndArchive({ supervisorId, workerId: p.workerId });
+      const result = await killWorkerAndArchive({
+        supervisorId,
+        workerId: p.workerId,
+        notifySupervisor: false,
+      });
       return ok(
         {
           workerId: p.workerId,

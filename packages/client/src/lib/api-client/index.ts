@@ -905,7 +905,8 @@ export type InboxItemType =
   | "worker.ask_user"
   | "worker.auto_retry_failed"
   | "worker.process_alert"
-  | "worker.deleted";
+  | "worker.deleted"
+  | "worker.detached";
 
 export interface InboxItemWire {
   id: string;
