@@ -529,7 +529,11 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       if (rec === undefined || rec.supervisorId !== req.params.id) {
         return reply.code(404).send({ error: "worker_not_linked" });
       }
-      return killWorkerAndArchive({ supervisorId: req.params.id, workerId: req.params.wid });
+      return killWorkerAndArchive({
+        supervisorId: req.params.id,
+        workerId: req.params.wid,
+        notifySupervisor: false,
+      });
     },
   );
 

@@ -123,7 +123,7 @@ types:
 | `worker.ask_user` | Worker called `ask_user_question` |
 | `worker.auto_retry_failed` | Worker's SDK auto-retry exhausted on a provider error |
 | `worker.process_alert` | Not enqueued for worker process alerts; process success/failure/kill notifications stay in the worker session and do not wake the supervisor |
-| `worker.deleted` | Worker's session was deleted (cold or live) |
+| `worker.deleted` | Worker's session was deleted externally (cold or live); kills initiated through orchestration tools/UI controls update worker state but do not notify the supervisor about its own action. |
 
 When an event lands, the bridge enqueues it AND tries to wake the
 supervisor with a small `[orchestration] N pending events…` prompt.
@@ -133,6 +133,8 @@ The wake-up only fires when:
 2. The supervisor is **idle** (not currently mid-turn), AND
 3. There isn't already an in-flight wake-up for the current idle
    window (per-supervisor dedupe flag).
+
+Orchestration-initiated kills are filtered before they reach the inbox, so the supervisor is not woken for its own worker-deletion tool/UI action.
 
 If the supervisor is mid-turn, the items wait on the queue.
 Recovery fires another wake-up when the supervisor's own

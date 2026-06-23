@@ -53,6 +53,7 @@ function notifySupervisorSessionListChanged(args: {
 export async function killWorkerAndArchive(args: {
   supervisorId: string;
   workerId: string;
+  notifySupervisor?: boolean;
 }): Promise<KillWorkerResult> {
   const projectId =
     (await findProjectIdForSession(args.workerId)) ??
@@ -66,7 +67,11 @@ export async function killWorkerAndArchive(args: {
   }
 
   // Fire before unregistering so the bridge can still resolve the supervisor.
-  await bridgeWorkerDeleted(args.workerId, { wasLive, reason: "killed" }).catch(() => undefined);
+  await bridgeWorkerDeleted(args.workerId, {
+    wasLive,
+    reason: "killed",
+    ...(args.notifySupervisor !== undefined ? { notifySupervisor: args.notifySupervisor } : {}),
+  }).catch(() => undefined);
   await unregisterWorker(args.workerId);
   notifySupervisorSessionListChanged({
     supervisorId: args.supervisorId,
@@ -92,7 +97,11 @@ export async function cleanupWorkersForDeletedSupervisor(
   const workerIds = await getWorkerIds(supervisorId);
   const results: Record<string, KillWorkerResult> = {};
   for (const workerId of workerIds) {
-    results[workerId] = await killWorkerAndArchive({ supervisorId, workerId });
+    results[workerId] = await killWorkerAndArchive({
+      supervisorId,
+      workerId,
+      notifySupervisor: false,
+    });
   }
   await disableSupervisor(supervisorId);
   return { workerIds, results };

@@ -182,17 +182,25 @@ export async function bridgeWorkerExecutionStopped(
 
 export async function bridgeWorkerDeleted(
   sessionId: string,
-  meta: { wasLive: boolean; reason?: "deleted" | "killed" | "disposed" | "aborted" },
+  meta: {
+    wasLive: boolean;
+    reason?: "deleted" | "killed" | "disposed" | "aborted";
+    notifySupervisor?: boolean;
+  },
 ): Promise<void> {
   const reason = meta.reason ?? "deleted";
-  await bridgeWorkerExecutionStopped(sessionId, { wasLive: meta.wasLive, reason });
+  if (meta.notifySupervisor !== false) {
+    await bridgeWorkerExecutionStopped(sessionId, { wasLive: meta.wasLive, reason });
+  }
   await updateWorkerLifecycle(sessionId, {
     state: "deleted",
     turnOpen: false,
     lastStateAt: new Date().toISOString(),
     stopReason: reason,
   });
-  await bridgeWorkerEvent(sessionId, "worker.deleted", {
-    wasLive: meta.wasLive,
-  });
+  if (meta.notifySupervisor !== false) {
+    await bridgeWorkerEvent(sessionId, "worker.deleted", {
+      wasLive: meta.wasLive,
+    });
+  }
 }
