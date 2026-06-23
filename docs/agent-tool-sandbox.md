@@ -539,18 +539,23 @@ by `AGENT_TOOL_UID:GID`.
 
 ## OpenShift
 
-OpenShift `restricted-v2` random UID does not support this mode. Use `anyuid`
-for a simple deployment, or a custom SCC that allows:
+OpenShift `restricted-v2` random UID does not support this mode because the
+pi-forge server must start as UID 0 before it drops tool children to
+`AGENT_TOOL_UID:GID`. Use `anyuid` for a simple deployment, or create a custom
+SCC that is scoped to the pi-forge ServiceAccount and allows only the extra
+identity-switch behavior pi-forge needs:
 
 - UID 0 for the server container
-- `SETUID`
-- `SETGID`
+- `SETUID` and `SETGID` for the app container's sandbox UID/GID switch
+- `CHOWN` and `FOWNER` for the initContainer's PVC permission bootstrap
 - no privileged mode
+- no host namespaces or host networking
 
-Keep SCC RoleBindings in namespace/security bootstrap, not in the
-DeploymentConfig.
+Keep SCC, ClusterRole, and ClusterRoleBinding resources in cluster or namespace
+security bootstrap, not in the DeploymentConfig. Replace `pi-forge` in the
+examples with your namespace and ServiceAccount names if they differ.
 
-Example RoleBinding for `anyuid`:
+Example RoleBinding for the built-in `anyuid` SCC:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -568,9 +573,108 @@ subjects:
     namespace: pi-forge
 ```
 
-Use the Kubernetes initContainer permission commands above, plus the OpenShift
-SCC binding. If you build a custom SCC, it needs UID 0 plus `SETUID`/`SETGID`;
-it does not need privileged mode.
+For tighter sandbox deployments, prefer a dedicated SCC and RBAC grant instead
+of binding `anyuid`. This example permits the shipped OpenShift manifest's
+root-running server container, `SETUID`/`SETGID`, the initContainer's
+`CHOWN`/`FOWNER` volume-permission bootstrap, PVC/Secret/ConfigMap-style
+volumes, and `runtime/default` seccomp profile, while continuing to deny
+privileged containers, host namespaces, host ports, and arbitrary Linux
+capabilities:
+
+```yaml
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: pi-forge-sandbox
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities:
+  - SETUID
+  - SETGID
+  - CHOWN
+  - FOWNER
+defaultAddCapabilities: []
+requiredDropCapabilities:
+  - ALL
+readOnlyRootFilesystem: false
+runAsUser:
+  type: MustRunAs
+  uid: 0
+seLinuxContext:
+  type: MustRunAs
+fsGroup:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+seccompProfiles:
+  - runtime/default
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret
+users: []
+groups: []
+```
+
+Bind that SCC through an RBAC `ClusterRole` plus `ClusterRoleBinding`:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pi-forge-sandbox-scc
+rules:
+  - apiGroups:
+      - security.openshift.io
+    resources:
+      - securitycontextconstraints
+    resourceNames:
+      - pi-forge-sandbox
+    verbs:
+      - use
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pi-forge-sandbox-scc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pi-forge-sandbox-scc
+subjects:
+  - kind: ServiceAccount
+    name: pi-forge
+    namespace: pi-forge
+```
+
+Security trade-offs:
+
+- The SCC intentionally allows UID 0 in the container. Keep the grant scoped to
+  only the pi-forge ServiceAccount.
+- `SETUID` and `SETGID` are required so the server can switch shell-like tool
+  surfaces to `AGENT_TOOL_UID:GID`; `CHOWN` and `FOWNER` are required by the
+  initContainer that fixes PVC ownership/modes before startup. Do not add
+  broader capabilities unless your own storage or platform policy requires
+  them.
+- `readOnlyRootFilesystem` is not forced by the SCC so operators can use
+  overlays, but the shipped pi-forge container should keep
+  `readOnlyRootFilesystem: true` and mount `/tmp` as `emptyDir`.
+- Do not use `fsGroup` to make sensitive volumes group-readable. The sandbox
+  relies on `.pi-forge` and protected Pi config files staying unreadable by
+  `AGENT_TOOL_UID:GID`.
+
+Use the Kubernetes initContainer permission commands above, plus either the
+`anyuid` RoleBinding or the custom SCC/RBAC resources. The custom SCC still
+needs UID 0 plus `SETUID`/`SETGID` for the app container and `CHOWN`/`FOWNER`
+for the initContainer; it does not need privileged mode.
 
 ## pi-subagents package disabled in sandbox mode
 
