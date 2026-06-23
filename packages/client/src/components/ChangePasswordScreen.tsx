@@ -1,5 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
+import { authColorStyle } from "../lib/auth-colors";
 import { useAuthStore } from "../store/auth-store";
+import { useUiConfigStore } from "../store/ui-config-store";
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -24,6 +26,9 @@ export function ChangePasswordScreen() {
   const pending = useAuthStore((s) => s.changePasswordPending);
   const remoteError = useAuthStore((s) => s.changePasswordError);
   const logout = useAuthStore((s) => s.logout);
+  const authLogoUrl = useUiConfigStore((s) => s.authLogoUrl);
+  const authColorScheme = useUiConfigStore((s) => s.authColorScheme);
+  const colors = useMemo(() => authColorStyle(authColorScheme), [authColorScheme]);
 
   const onSubmit = (e: FormEvent<HTMLFormElement>): void => {
     e.preventDefault();
@@ -46,52 +51,60 @@ export function ChangePasswordScreen() {
   const error = localError ?? friendlyRemote(remoteError);
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4">
+    <main
+      className="flex min-h-screen items-center justify-center bg-[var(--auth-page-bg)] px-4 text-[var(--auth-text)]"
+      style={colors}
+    >
       <form
         onSubmit={onSubmit}
-        className="w-full max-w-sm space-y-4 rounded-lg border border-neutral-800 bg-neutral-900 p-6 shadow-lg"
+        className="w-full max-w-sm space-y-4 rounded-lg border border-[var(--auth-border)] bg-[var(--auth-card-bg)] p-6 text-[var(--auth-text)] shadow-lg"
       >
         <header className="space-y-1">
           <div className="flex items-center gap-2">
-            <img src="/icons/icon.svg" alt="" className="h-6 w-6" aria-hidden="true" />
+            <img
+              src={authLogoUrl ?? "/icons/icon.svg"}
+              alt=""
+              className="max-h-6 max-w-24 object-contain"
+              aria-hidden="true"
+            />
             <h1 className="text-xl font-semibold tracking-tight">Set a new password</h1>
           </div>
-          <p className="text-sm text-neutral-400">
+          <p className="text-sm text-[var(--auth-muted-text)]">
             You signed in with the deployment-supplied initial password. Pick a new one before
             continuing — it will be stored as a hash on the pi-forge data volume.
           </p>
         </header>
         <label className="block space-y-1.5">
-          <span className="text-sm font-medium text-neutral-300">Current password</span>
+          <span className="text-sm font-medium text-[var(--auth-text)]">Current password</span>
           <input
             type="password"
             value={current}
             onChange={(e) => setCurrent(e.target.value)}
             autoFocus
             autoComplete="current-password"
-            className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-neutral-500"
+            className="w-full rounded-md border border-[var(--auth-border)] bg-[var(--auth-input-bg)] px-3 py-2 text-sm text-[var(--auth-input-text)] caret-[var(--auth-input-text)] outline-none placeholder:text-[var(--auth-placeholder-text)] focus:border-[var(--auth-muted-text)] [-webkit-text-fill-color:var(--auth-input-text)]"
           />
         </label>
         <label className="block space-y-1.5">
-          <span className="text-sm font-medium text-neutral-300">New password</span>
+          <span className="text-sm font-medium text-[var(--auth-text)]">New password</span>
           <input
             type="password"
             value={next}
             onChange={(e) => setNext(e.target.value)}
             autoComplete="new-password"
             minLength={MIN_PASSWORD_LENGTH}
-            className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-neutral-500"
+            className="w-full rounded-md border border-[var(--auth-border)] bg-[var(--auth-input-bg)] px-3 py-2 text-sm text-[var(--auth-input-text)] caret-[var(--auth-input-text)] outline-none placeholder:text-[var(--auth-placeholder-text)] focus:border-[var(--auth-muted-text)] [-webkit-text-fill-color:var(--auth-input-text)]"
           />
         </label>
         <label className="block space-y-1.5">
-          <span className="text-sm font-medium text-neutral-300">Confirm new password</span>
+          <span className="text-sm font-medium text-[var(--auth-text)]">Confirm new password</span>
           <input
             type="password"
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
             autoComplete="new-password"
             minLength={MIN_PASSWORD_LENGTH}
-            className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-neutral-500"
+            className="w-full rounded-md border border-[var(--auth-border)] bg-[var(--auth-input-bg)] px-3 py-2 text-sm text-[var(--auth-input-text)] caret-[var(--auth-input-text)] outline-none placeholder:text-[var(--auth-placeholder-text)] focus:border-[var(--auth-muted-text)] [-webkit-text-fill-color:var(--auth-input-text)]"
           />
         </label>
         {error !== undefined && (
@@ -102,14 +115,14 @@ export function ChangePasswordScreen() {
         <button
           type="submit"
           disabled={pending || current.length === 0 || next.length === 0}
-          className="w-full rounded-md bg-neutral-100 px-3 py-2 text-sm font-medium text-neutral-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+          className="w-full rounded-md bg-[var(--auth-button-bg)] px-3 py-2 text-sm font-medium text-[var(--auth-button-text)] transition hover:bg-[var(--auth-button-hover-bg)] disabled:cursor-not-allowed disabled:opacity-50"
         >
           {pending ? "Saving…" : "Set new password"}
         </button>
         <button
           type="button"
           onClick={logout}
-          className="w-full rounded-md border border-neutral-700 px-3 py-2 text-xs text-neutral-400 hover:border-neutral-500 hover:text-neutral-200"
+          className="w-full rounded-md border border-[var(--auth-border)] px-3 py-2 text-xs text-[var(--auth-muted-text)] hover:border-[var(--auth-muted-text)] hover:text-[var(--auth-text)]"
         >
           Sign out
         </button>

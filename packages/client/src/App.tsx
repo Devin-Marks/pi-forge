@@ -352,6 +352,7 @@ export function App() {
   // disappear).
   const loadUiConfig = useUiConfigStore((s) => s.load);
   const minimal = useUiConfigStore((s) => s.minimal);
+  const authLogoUrl = useUiConfigStore((s) => s.authLogoUrl);
   useEffect(() => {
     void loadUiConfig();
   }, [loadUiConfig]);
@@ -429,7 +430,12 @@ export function App() {
               keeps the logo + wordmark visually paired (tighter than
               the parent gap-3 used between brand and project picker). */}
           <div className="flex items-center gap-1.5">
-            <img src="/icons/icon.svg" alt="" className="h-8 w-8" aria-hidden="true" />
+            <img
+              src={authLogoUrl ?? "/icons/icon.svg"}
+              alt=""
+              className="max-h-8 max-w-28 object-contain"
+              aria-hidden="true"
+            />
             <span className="text-sm font-semibold tracking-tight">pi-forge</span>
           </div>
         </div>

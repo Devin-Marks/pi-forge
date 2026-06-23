@@ -78,6 +78,89 @@ function readBool(key: string, fallback: boolean): boolean {
   throw new Error(`config: ${key} must be a boolean-ish value (got ${v})`);
 }
 
+function readUiText(key: string): string | undefined {
+  const v = readEnv(key);
+  if (v === undefined) return undefined;
+  // Let operators put multiline text in single-line env/CLI surfaces
+  // while preserving literal CR/LF when an env provider supports them.
+  return v.replace(/\\r/g, "\r").replace(/\\n/g, "\n");
+}
+
+function readHttpUrl(key: string): string | undefined {
+  const v = readEnv(key);
+  if (v === undefined) return undefined;
+  let url: URL;
+  try {
+    url = new URL(v);
+  } catch {
+    throw new Error(`config: ${key} must be an absolute http(s) URL`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`config: ${key} must use http: or https: (got ${url.protocol})`);
+  }
+  return url.toString();
+}
+
+const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
+function normalizeHexColor(key: string, value: string, index: number): string {
+  const color = value.trim();
+  if (!HEX_COLOR_RE.test(color)) {
+    throw new Error(
+      `config: ${key} item ${index + 1} must be a hex color like #0f172a or #fff (got ${value})`,
+    );
+  }
+  if (color.length === 4) {
+    const r = color[1];
+    const g = color[2];
+    const b = color[3];
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  return color.toLowerCase();
+}
+
+function readAuthColorScheme(key: string):
+  | {
+      pageBackground: string;
+      cardBackground: string;
+      border: string;
+      text: string;
+      mutedText: string;
+      buttonBackground: string;
+      buttonText: string;
+      buttonHoverBackground: string;
+    }
+  | undefined {
+  const v = readEnv(key);
+  if (v === undefined) return undefined;
+  const colors = v.split(",").map((s, i) => normalizeHexColor(key, s, i));
+  if (colors.length !== 8) {
+    throw new Error(
+      `config: ${key} must contain exactly 8 comma-separated hex colors: page background, card background, border, text, muted text, button background, button text, button hover background`,
+    );
+  }
+  const [
+    pageBackground,
+    cardBackground,
+    border,
+    text,
+    mutedText,
+    buttonBackground,
+    buttonText,
+    buttonHoverBackground,
+  ] = colors as [string, string, string, string, string, string, string, string];
+  return {
+    pageBackground,
+    cardBackground,
+    border,
+    text,
+    mutedText,
+    buttonBackground,
+    buttonText,
+    buttonHoverBackground,
+  };
+}
+
 function readBoundedInt(key: string, fallback: number, min: number, max: number): number {
   const v = readEnv(key);
   if (v === undefined) return fallback;
@@ -254,6 +337,16 @@ export const config = Object.freeze({
    * where provider config is managed at the deploy level.
    */
   minimalUi: readBool("MINIMAL_UI", false),
+  /**
+   * Public login-screen customization. These values are exposed via
+   * `GET /api/v1/ui-config` before auth, so they must never contain
+   * secrets. `authBannerHtml` is an explicit opt-in; the client still
+   * sanitizes before rendering.
+   */
+  authBannerText: readUiText("AUTH_BANNER_TEXT"),
+  authBannerHtml: readBool("AUTH_BANNER_HTML", false),
+  authLogoUrl: readHttpUrl("AUTH_LOGO_URL"),
+  authColorScheme: readAuthColorScheme("AUTH_COLOR_SCHEME"),
   /**
    * When true, `GET /config/providers` filters out provider entries
    * whose name does NOT appear as a key in `models.json`. Built-in

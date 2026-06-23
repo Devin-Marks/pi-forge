@@ -288,6 +288,17 @@ export interface SandboxSettingsResponse {
   toolEnv: Record<string, string>;
 }
 
+export interface AuthColorScheme {
+  pageBackground: string;
+  cardBackground: string;
+  border: string;
+  text: string;
+  mutedText: string;
+  buttonBackground: string;
+  buttonText: string;
+  buttonHoverBackground: string;
+}
+
 export interface UiConfigResponse {
   /** Frontend "minimal" mode — see server config.minimalUi. */
   minimal: boolean;
@@ -311,6 +322,14 @@ export interface UiConfigResponse {
   orchestrationEnabled: boolean;
   /** Global server-side color overrides for broad UI surfaces. */
   serverTheme: ServerThemeConfigResponse | undefined;
+  /** Optional public banner shown on the login screen. */
+  authBannerText: string | undefined;
+  /** True when the banner should render as sanitized HTML. */
+  authBannerHtml: boolean;
+  /** Optional login/auth page color scheme. */
+  authColorScheme: AuthColorScheme | undefined;
+  /** Optional absolute http(s) URL for the login-screen logo. */
+  authLogoUrl: string | undefined;
 }
 
 export interface UnifiedSession {

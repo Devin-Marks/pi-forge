@@ -119,6 +119,10 @@ async function main(): Promise<void> {
       FORGE_DATA_DIR: dataDir,
       SESSION_DIR: join(workspacePath, ".pi", "sessions"),
       API_KEY: apiKey,
+      AUTH_BANNER_TEXT: "Welcome\\nRead <b>the policy</b>",
+      AUTH_BANNER_HTML: "true",
+      AUTH_LOGO_URL: "https://example.com/pi-forge-logo.png",
+      AUTH_COLOR_SCHEME: "#08111f,#102033,#3b82f6,#f8fafc,#cbd5e1,#38bdf8,#082f49,#7dd3fc",
       UI_PASSWORD: undefined,
       JWT_SECRET: undefined,
     },
@@ -152,6 +156,38 @@ async function main(): Promise<void> {
       assert(
         "auth/status reports authEnabled=true",
         (status.body as { authEnabled: boolean }).authEnabled === true,
+      );
+
+      const uiConfig = await jget(`${base}/api/v1/ui-config`);
+      assert("/api/v1/ui-config → 200 with no auth", uiConfig.status === 200);
+      const uiBody = uiConfig.body as {
+        authBannerText?: string;
+        authBannerHtml?: boolean;
+        authLogoUrl?: string;
+        authColorScheme?: {
+          pageBackground: string;
+          cardBackground: string;
+          border: string;
+          text: string;
+          mutedText: string;
+          buttonBackground: string;
+          buttonText: string;
+          buttonHoverBackground: string;
+        };
+      };
+      assert(
+        "ui-config decodes banner newlines",
+        uiBody.authBannerText === "Welcome\nRead <b>the policy</b>",
+      );
+      assert("ui-config reports banner HTML opt-in", uiBody.authBannerHtml === true);
+      assert(
+        "ui-config reports custom logo URL",
+        uiBody.authLogoUrl === "https://example.com/pi-forge-logo.png",
+      );
+      assert(
+        "ui-config reports auth color scheme",
+        uiBody.authColorScheme?.pageBackground === "#08111f" &&
+          uiBody.authColorScheme.buttonHoverBackground === "#7dd3fc",
       );
     }
 

@@ -3,6 +3,7 @@ import { clearStoredToken, getStoredToken } from "../auth-client";
 import {
   ApiError,
   UNAUTHORIZED_EVENT,
+  type AuthColorScheme,
   type AuthStatusResponse,
   type LoginResponse,
   type ChangePasswordResponse,
@@ -133,36 +134,29 @@ function vChangePassword(value: unknown, status: number): ChangePasswordResponse
   return vLogin(value, status);
 }
 
-function vUiConfig(value: unknown, status: number): UiConfigResponse {
-  if (
-    !isObject(value) ||
-    typeof value.minimal !== "boolean" ||
-    typeof value.workspaceRoot !== "string"
-  ) {
-    fail(status, "expected { minimal: boolean, workspaceRoot: string }");
+const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
+function vAuthColorScheme(value: unknown, status: number): AuthColorScheme | undefined {
+  if (value === undefined) return undefined;
+  if (!isObject(value)) fail(status, "authColorScheme: expected object");
+  const keys = [
+    "pageBackground",
+    "cardBackground",
+    "border",
+    "text",
+    "mutedText",
+    "buttonBackground",
+    "buttonText",
+    "buttonHoverBackground",
+  ] as const;
+  const out = {} as AuthColorScheme;
+  for (const key of keys) {
+    const color = value[key];
+    if (typeof color !== "string") fail(status, `authColorScheme.${key}: expected string`);
+    if (!HEX_COLOR_RE.test(color)) fail(status, `authColorScheme.${key}: expected hex color`);
+    out[key] = color;
   }
-  // `version` and `passwordAuthEnabled` are forward-compatible: older
-  // servers without the fields fall through to safe defaults.
-  // - version → "unknown" so the General tab still renders.
-  // - passwordAuthEnabled → true so the password section still shows
-  //   (the worst case is a confusing 400 on submit; better than
-  //   silently hiding the form on a server that does support it).
-  const version = typeof value.version === "string" ? value.version : "unknown";
-  const passwordAuthEnabled =
-    typeof value.passwordAuthEnabled === "boolean" ? value.passwordAuthEnabled : true;
-  // Default to false on older servers that predate the field — those
-  // builds kept orchestration behind an explicit opt-in flag.
-  const orchestrationEnabled =
-    typeof value.orchestrationEnabled === "boolean" ? value.orchestrationEnabled : false;
-  return {
-    minimal: value.minimal,
-    workspaceRoot: value.workspaceRoot,
-    version,
-    passwordAuthEnabled,
-    orchestrationEnabled,
-    serverTheme:
-      value.serverTheme === undefined ? undefined : vServerThemeConfig(value.serverTheme, status),
-  };
+  return out;
 }
 
 function isHexColor(value: unknown): value is string {
@@ -188,6 +182,47 @@ function vServerThemeConfig(value: unknown, status: number): ServerThemeConfigRe
     enabled: value.enabled,
     colors: vServerThemeColors(value.colors, status, "colors"),
     defaults: vServerThemeColors(value.defaults, status, "defaults"),
+  };
+}
+
+function vUiConfig(value: unknown, status: number): UiConfigResponse {
+  if (
+    !isObject(value) ||
+    typeof value.minimal !== "boolean" ||
+    typeof value.workspaceRoot !== "string"
+  ) {
+    fail(status, "expected { minimal: boolean, workspaceRoot: string }");
+  }
+  // `version` and `passwordAuthEnabled` are forward-compatible: older
+  // servers without the fields fall through to safe defaults.
+  // - version → "unknown" so the General tab still renders.
+  // - passwordAuthEnabled → true so the password section still shows
+  //   (the worst case is a confusing 400 on submit; better than
+  //   silently hiding the form on a server that does support it).
+  const version = typeof value.version === "string" ? value.version : "unknown";
+  const passwordAuthEnabled =
+    typeof value.passwordAuthEnabled === "boolean" ? value.passwordAuthEnabled : true;
+  // Default to false on older servers that predate the field — those
+  // builds kept orchestration behind an explicit opt-in flag.
+  const orchestrationEnabled =
+    typeof value.orchestrationEnabled === "boolean" ? value.orchestrationEnabled : false;
+  const authBannerText =
+    typeof value.authBannerText === "string" ? value.authBannerText : undefined;
+  const authBannerHtml = typeof value.authBannerHtml === "boolean" ? value.authBannerHtml : false;
+  const authLogoUrl = typeof value.authLogoUrl === "string" ? value.authLogoUrl : undefined;
+  const authColorScheme = vAuthColorScheme(value.authColorScheme, status);
+  return {
+    minimal: value.minimal,
+    workspaceRoot: value.workspaceRoot,
+    version,
+    passwordAuthEnabled,
+    orchestrationEnabled,
+    serverTheme:
+      value.serverTheme === undefined ? undefined : vServerThemeConfig(value.serverTheme, status),
+    authBannerText,
+    authBannerHtml,
+    authColorScheme,
+    authLogoUrl,
   };
 }
 
