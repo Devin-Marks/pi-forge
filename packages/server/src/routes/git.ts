@@ -208,11 +208,8 @@ function mapError(reply: FastifyReply, err: unknown): FastifyReply {
 
 /**
  * Resolve the project for a request. On miss, sends 404 + returns
- * undefined; caller MUST `return reply` immediately. Returning bare
- * `undefined` trips Fastify's `FST_ERR_REP_ALREADY_SENT` because the
- * route handler's resolved `undefined` is interpreted as "send this,"
- * which races the 404 the helper already sent. See
- * files.ts:resolveProject for the same contract.
+ * undefined; caller MUST stop immediately. Returning a payload after
+ * this helper has sent the 404 makes Fastify attempt a second send.
  */
 async function resolveProject(
   projectId: string,
@@ -234,11 +231,11 @@ async function resolveProject(
  * to a one-liner.
  *
  * On project-not-found the resolveProject helper has already sent the
- * 404 reply; we return its `undefined` so the route handler short-
- * circuits without trying to return a value Fastify would re-send.
- * On runner success the result is returned verbatim (Fastify
- * serializes via the response schema). On runner throw we route to
- * mapError for the typed-error → wire-shape mapping.
+ * 404 reply; return bare `undefined` so Fastify observes that the reply
+ * is already sent and does not try to serialize a returned payload. On
+ * runner success the result is returned verbatim (Fastify serializes
+ * via the response schema). On runner throw we route to mapError for
+ * the typed-error → wire-shape mapping.
  */
 async function withProject<T>(
   projectId: string,
@@ -246,10 +243,7 @@ async function withProject<T>(
   fn: (project: { id: string; path: string }) => Promise<T>,
 ): Promise<T | FastifyReply | undefined> {
   const project = await resolveProject(projectId, reply);
-  // resolveProject already called reply.send for the 404 path —
-  // returning the reply here tells Fastify the response was handled,
-  // avoiding the FST_ERR_REP_ALREADY_SENT double-send error.
-  if (project === undefined) return reply;
+  if (project === undefined) return undefined;
   try {
     return await fn(project);
   } catch (err) {
@@ -275,7 +269,7 @@ async function withGitCwd<T>(
   fn: (cwd: string) => Promise<T>,
 ): Promise<T | FastifyReply | undefined> {
   const project = await resolveProject(projectId, reply);
-  if (project === undefined) return reply;
+  if (project === undefined) return undefined;
   try {
     const cwd = await resolveGitCwd(project, worktreePath);
     return await fn(cwd);
@@ -331,7 +325,7 @@ export const gitRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       const project = await resolveProject(req.body.projectId, reply);
-      if (project === undefined) return reply;
+      if (project === undefined) return undefined;
       try {
         if (await isGitRepo(project.path)) {
           return { alreadyInitialised: true, isGitRepo: true };
