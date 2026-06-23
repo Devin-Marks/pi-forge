@@ -229,10 +229,14 @@ export function App() {
   const openFilesCount = useFileStore((s) => s.openFiles.length);
   const editorVisible = editorOpen && openFilesCount > 0;
 
-  // Drives the modified-file count badge on the Git tab. Polls every
-  // 5s via the hook regardless of which tab is currently visible —
-  // we want the badge to update even when the user is on Files.
-  const gitStatus = useGitStatus(active?.id);
+  // Drives the modified-file count badge on the Git tab. Polls via
+  // the hook regardless of which tab is currently visible — we want
+  // the badge to update even when the user is on Files. Gate the
+  // project id on auth so a stale active project from the previous
+  // session does not keep polling protected git routes on the login
+  // or change-password screens.
+  const canPollGit = ready && isAuthenticated && !mustChangePassword;
+  const gitStatus = useGitStatus(canPollGit ? active?.id : undefined);
   const gitChangedCount = gitStatus.status?.files.length ?? 0;
   // Running-process count drives the Processes tab badge and the
   // chat-input top-right Activity icon. Reads the SSE-hydrated
