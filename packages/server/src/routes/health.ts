@@ -125,6 +125,7 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
               "passwordAuthEnabled",
               "orchestrationEnabled",
               "serverTheme",
+              "authBannerHtml",
             ],
             properties: {
               // True when MINIMAL_UI is set: hides terminal, git pane,
@@ -152,6 +153,35 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
               orchestrationEnabled: { type: "boolean" },
               // Global server-side color overrides for broad UI surfaces.
               serverTheme: themeConfigSchema,
+              // Public login-screen customization. Banner text and
+              // logo URL are optional; HTML rendering is explicit and
+              // client-sanitized.
+              authBannerText: { type: "string" },
+              authBannerHtml: { type: "boolean" },
+              authLogoUrl: { type: "string" },
+              authColorScheme: {
+                type: "object",
+                required: [
+                  "pageBackground",
+                  "cardBackground",
+                  "border",
+                  "text",
+                  "mutedText",
+                  "buttonBackground",
+                  "buttonText",
+                  "buttonHoverBackground",
+                ],
+                properties: {
+                  pageBackground: { type: "string" },
+                  cardBackground: { type: "string" },
+                  border: { type: "string" },
+                  text: { type: "string" },
+                  mutedText: { type: "string" },
+                  buttonBackground: { type: "string" },
+                  buttonText: { type: "string" },
+                  buttonHoverBackground: { type: "string" },
+                },
+              },
             },
           },
         },
@@ -166,6 +196,10 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
         passwordAuthEnabled: passwordAuthEnabled(),
         orchestrationEnabled: isOrchestrationEnabled(),
         serverTheme: { ...serverTheme, defaults: DEFAULT_THEME_COLORS },
+        authBannerText: config.authBannerText,
+        authBannerHtml: config.authBannerHtml,
+        authLogoUrl: config.authLogoUrl,
+        authColorScheme: config.authColorScheme,
       };
     },
   );

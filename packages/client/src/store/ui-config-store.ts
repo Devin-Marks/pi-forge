@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api, ApiError, type ServerThemeConfigResponse } from "../lib/api-client";
+import type { AuthColorScheme } from "../lib/api-client/types";
 import { applyServerTheme } from "../lib/server-theme";
 
 /**
@@ -39,6 +40,14 @@ interface UiConfigState {
   orchestrationEnabled: boolean;
   /** Global server-side color overrides for broad UI surfaces. */
   serverTheme: ServerThemeConfigResponse | undefined;
+  /** Optional public banner shown below the login prompt. */
+  authBannerText: string | undefined;
+  /** True when the banner should render as sanitized HTML. */
+  authBannerHtml: boolean;
+  /** Optional login/auth page color scheme. */
+  authColorScheme: AuthColorScheme | undefined;
+  /** Optional absolute http(s) URL for the login-screen logo. */
+  authLogoUrl: string | undefined;
   /** Last load error (sticky until a retry succeeds), for diagnostics. */
   error: string | undefined;
   load: () => Promise<void>;
@@ -53,6 +62,10 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
   passwordAuthEnabled: true,
   orchestrationEnabled: false,
   serverTheme: undefined,
+  authBannerText: undefined,
+  authBannerHtml: false,
+  authColorScheme: undefined,
+  authLogoUrl: undefined,
   error: undefined,
   setServerTheme: (theme) => {
     applyServerTheme(theme);
@@ -70,6 +83,10 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
         passwordAuthEnabled: cfg.passwordAuthEnabled,
         orchestrationEnabled: cfg.orchestrationEnabled,
         serverTheme: cfg.serverTheme,
+        authBannerText: cfg.authBannerText,
+        authBannerHtml: cfg.authBannerHtml,
+        authColorScheme: cfg.authColorScheme,
+        authLogoUrl: cfg.authLogoUrl,
         error: undefined,
       });
     } catch (err) {
