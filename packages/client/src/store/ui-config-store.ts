@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { api, ApiError } from "../lib/api-client";
+import { api, ApiError, type ServerThemeConfigResponse } from "../lib/api-client";
+import { applyServerTheme } from "../lib/server-theme";
 
 /**
  * Server-driven UI configuration. Fetched once at boot from the
@@ -36,9 +37,12 @@ interface UiConfigState {
    * expose the field keep the old hidden posture.
    */
   orchestrationEnabled: boolean;
+  /** Global server-side color overrides for broad UI surfaces. */
+  serverTheme: ServerThemeConfigResponse | undefined;
   /** Last load error (sticky until a retry succeeds), for diagnostics. */
   error: string | undefined;
   load: () => Promise<void>;
+  setServerTheme: (theme: ServerThemeConfigResponse) => void;
 }
 
 export const useUiConfigStore = create<UiConfigState>((set) => ({
@@ -48,10 +52,16 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
   version: "",
   passwordAuthEnabled: true,
   orchestrationEnabled: false,
+  serverTheme: undefined,
   error: undefined,
+  setServerTheme: (theme) => {
+    applyServerTheme(theme);
+    set({ serverTheme: theme });
+  },
   load: async () => {
     try {
       const cfg = await api.uiConfig();
+      applyServerTheme(cfg.serverTheme);
       set({
         loaded: true,
         minimal: cfg.minimal,
@@ -59,6 +69,7 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
         version: cfg.version,
         passwordAuthEnabled: cfg.passwordAuthEnabled,
         orchestrationEnabled: cfg.orchestrationEnabled,
+        serverTheme: cfg.serverTheme,
         error: undefined,
       });
     } catch (err) {

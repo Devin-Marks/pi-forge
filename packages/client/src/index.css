@@ -54,8 +54,8 @@
   --color-neutral-100: #171717;
   --color-neutral-200: #1f2937;
   --color-neutral-300: #374151;
-  --color-neutral-400: #6b7280;
-  --color-neutral-500: #9ca3af;
+  --color-neutral-400: #4b5563;
+  --color-neutral-500: #64748b;
   --color-neutral-600: #cbd5e1;
   --color-neutral-700: #e2e8f0;
   --color-neutral-800: #e5e7eb;
@@ -118,6 +118,102 @@
   --pi-editor-bg: #1e1e2e;
   --pi-terminal-bg: #11111b;
   --pi-terminal-fg: #cdd6f4;
+}
+
+:root {
+  --forge-app-bg: var(--color-neutral-950);
+  --forge-panel-bg: var(--color-neutral-900);
+  --forge-user-bubble-bg: var(--color-neutral-800);
+  --forge-assistant-bubble-bg: var(--color-neutral-900);
+  --forge-text-primary: var(--color-neutral-100);
+  --forge-text-secondary: var(--color-neutral-300);
+  --forge-text-muted: var(--color-neutral-500);
+  --forge-highlight-bg: #facc15;
+  --forge-highlight-text: #111827;
+  --forge-selection-bg: var(--color-neutral-600);
+}
+
+[data-server-theme="on"] body,
+[data-server-theme="on"] .forge-app-shell,
+[data-server-theme="on"] .forge-chat-column,
+[data-server-theme="on"] .forge-chat-input-root {
+  background: var(--forge-app-bg);
+  color: var(--forge-text-primary);
+}
+
+[data-server-theme="on"] .text-neutral-50,
+[data-server-theme="on"] .text-neutral-100,
+[data-server-theme="on"] .text-neutral-200 {
+  color: var(--forge-text-primary);
+}
+
+[data-server-theme="on"] .text-neutral-300,
+[data-server-theme="on"] .text-neutral-400 {
+  color: var(--forge-text-secondary);
+}
+
+[data-server-theme="on"] .text-neutral-500,
+[data-server-theme="on"] .text-neutral-600 {
+  color: var(--forge-text-muted);
+}
+
+[data-server-theme="on"] .forge-chat-input-root textarea,
+[data-server-theme="on"] .forge-chat-input-root button,
+[data-server-theme="on"] .forge-chat-input-root [role="menu"] {
+  background-color: var(--forge-panel-bg);
+  color: var(--forge-text-primary);
+}
+
+[data-server-theme="on"] .message-bubble[data-message-role="user"] {
+  background: var(--forge-user-bubble-bg);
+  color: var(--forge-text-primary);
+}
+
+[data-server-theme="on"] .message-bubble[data-message-role="assistant"] {
+  background: var(--forge-assistant-bubble-bg);
+  color: var(--forge-text-primary);
+}
+
+[data-server-theme="on"] .message-bubble ::selection {
+  background: var(--forge-selection-bg);
+  color: var(--forge-text-primary);
+}
+
+[data-server-theme="on"] mark {
+  background: var(--forge-highlight-bg) !important;
+  color: var(--forge-highlight-text) !important;
+}
+
+/* `light:text-neutral-*` classes are separate escaped class names,
+   not plain `text-neutral-*`, so standardize them explicitly too. */
+[data-theme="light"] .light\:text-neutral-400,
+[data-theme="light"] .light\:text-neutral-500,
+[data-theme="light"] .light\:text-neutral-600 {
+  color: #475569;
+}
+
+[data-theme="light"] .light\:text-neutral-700,
+[data-theme="light"] .light\:text-neutral-800 {
+  color: #334155;
+}
+
+[data-theme="light"] .light\:text-neutral-900 {
+  color: #111827;
+}
+
+[data-server-theme="on"] .light\:text-neutral-400,
+[data-server-theme="on"] .light\:text-neutral-500,
+[data-server-theme="on"] .light\:text-neutral-600 {
+  color: var(--forge-text-muted);
+}
+
+[data-server-theme="on"] .light\:text-neutral-700,
+[data-server-theme="on"] .light\:text-neutral-800 {
+  color: var(--forge-text-secondary);
+}
+
+[data-server-theme="on"] .light\:text-neutral-900 {
+  color: var(--forge-text-primary);
 }
 
 /* react-diff-view dark-theme overrides. The library declares its

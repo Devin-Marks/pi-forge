@@ -393,7 +393,7 @@ export function App() {
   if (mustChangePassword) return <ChangePasswordScreen />;
 
   return (
-    <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
+    <div className="forge-app-shell flex h-screen flex-col bg-neutral-950 text-neutral-100">
       {/* Top-of-viewport chrome respects iOS Dynamic Island / notch
           and Android cutouts via safe-area-inset-top. The viewport
           meta in index.html already opts in with `viewport-fit=cover`
@@ -613,7 +613,7 @@ export function App() {
                 re-open chat from the header to reach the picker, or
                 use the sidebar's "+ New project" button. */}
             {chatOpen && (
-              <div className="flex flex-1 flex-col overflow-hidden">
+              <div className="forge-chat-column flex flex-1 flex-col overflow-hidden">
                 {projectsLoaded && projects.length === 0 ? (
                   setupPickerDismissed ? (
                     // Picker dismissed — show a friendly empty state

@@ -258,6 +258,28 @@ export interface HealthResponse {
   activePtys: number;
 }
 
+export const SERVER_THEME_COLOR_KEYS = [
+  "appBackground",
+  "panelBackground",
+  "userBubbleBackground",
+  "assistantBubbleBackground",
+  "primaryText",
+  "secondaryText",
+  "mutedText",
+  "highlightBackground",
+  "highlightText",
+  "selectionBackground",
+] as const;
+
+export type ServerThemeColorKey = (typeof SERVER_THEME_COLOR_KEYS)[number];
+export type ServerThemeColors = Record<ServerThemeColorKey, string>;
+
+export interface ServerThemeConfigResponse {
+  enabled: boolean;
+  colors: ServerThemeColors;
+  defaults: ServerThemeColors;
+}
+
 export interface SandboxSettingsResponse {
   enabled: boolean;
   uid?: number;
@@ -287,6 +309,8 @@ export interface UiConfigResponse {
    * render at all. Defaults to false on older servers (forward-compatible).
    */
   orchestrationEnabled: boolean;
+  /** Global server-side color overrides for broad UI surfaces. */
+  serverTheme: ServerThemeConfigResponse | undefined;
 }
 
 export interface UnifiedSession {

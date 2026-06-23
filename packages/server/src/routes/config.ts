@@ -50,6 +50,15 @@ import {
   validateSandboxToolEnv,
   writeSandboxSettings,
 } from "../sandbox-settings.js";
+import {
+  DEFAULT_THEME_COLORS,
+  readThemeConfig,
+  resetThemeConfig,
+  THEME_COLOR_KEYS,
+  validateThemeConfig,
+  writeThemeConfig,
+  type ServerThemeConfig,
+} from "../theme-config.js";
 import { errorSchema } from "./_schemas.js";
 
 const modelsJsonSchema = {
@@ -99,6 +108,36 @@ const sandboxSettingsBodySchema = {
   additionalProperties: false,
   properties: {
     toolEnv: { type: "object", additionalProperties: { type: "string" } },
+  },
+} as const;
+
+const themeColorsSchema = {
+  type: "object",
+  required: [...THEME_COLOR_KEYS],
+  additionalProperties: false,
+  properties: Object.fromEntries(
+    THEME_COLOR_KEYS.map((key) => [key, { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }]),
+  ),
+} as const;
+
+const themeConfigSchema = {
+  type: "object",
+  required: ["enabled", "colors", "defaults"],
+  additionalProperties: false,
+  properties: {
+    enabled: { type: "boolean" },
+    colors: themeColorsSchema,
+    defaults: themeColorsSchema,
+  },
+} as const;
+
+const themeConfigBodySchema = {
+  type: "object",
+  required: ["enabled", "colors"],
+  additionalProperties: false,
+  properties: {
+    enabled: { type: "boolean" },
+    colors: themeColorsSchema,
   },
 } as const;
 
@@ -412,6 +451,76 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
           home: config.agentToolSandbox.home,
           toolEnv: settings.toolEnv,
         };
+      } catch (err) {
+        return internalError(reply, err);
+      }
+    },
+  );
+
+  // ---------------------- global UI theme ----------------------
+  fastify.get(
+    "/config/theme",
+    {
+      schema: {
+        description:
+          "Read the global server-side UI color theme. Colors are 6-digit hex values and apply to broad chat/chrome surfaces.",
+        tags: ["config"],
+        response: { 200: themeConfigSchema, 500: errorSchema },
+      },
+    },
+    async (_req, reply) => {
+      try {
+        const theme = await readThemeConfig();
+        return { ...theme, defaults: DEFAULT_THEME_COLORS };
+      } catch (err) {
+        return internalError(reply, err);
+      }
+    },
+  );
+
+  fastify.put<{ Body: ServerThemeConfig }>(
+    "/config/theme",
+    {
+      schema: {
+        description:
+          "Replace the global server-side UI color theme. Colors are 6-digit hex values and affect future and current browser tabs after reload/save.",
+        tags: ["config"],
+        body: themeConfigBodySchema,
+        response: { 200: themeConfigSchema, 400: errorSchema, 500: errorSchema },
+      },
+    },
+    async (req, reply) => {
+      let theme: ServerThemeConfig;
+      try {
+        theme = validateThemeConfig(req.body);
+      } catch (err) {
+        return reply.code(400).send({
+          error: "invalid_theme_config",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+      try {
+        const saved = await writeThemeConfig(theme);
+        return { ...saved, defaults: DEFAULT_THEME_COLORS };
+      } catch (err) {
+        return internalError(reply, err);
+      }
+    },
+  );
+
+  fastify.delete(
+    "/config/theme",
+    {
+      schema: {
+        description: "Reset the global server-side UI color theme to built-in defaults and disable it.",
+        tags: ["config"],
+        response: { 200: themeConfigSchema, 500: errorSchema },
+      },
+    },
+    async (_req, reply) => {
+      try {
+        const reset = await resetThemeConfig();
+        return { ...reset, defaults: DEFAULT_THEME_COLORS };
       } catch (err) {
         return internalError(reply, err);
       }
