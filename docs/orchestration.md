@@ -198,7 +198,7 @@ MINIMAL_UI hard gate — they return `403 orchestration_disabled` or
 | `GET /api/v1/orchestration/sessions/:id/inbox` | Full inbox history (delivered + pending), newest first. |
 | `POST /api/v1/orchestration/sessions/:id/inbox/clear` | Wipe inbox. |
 | `POST /api/v1/orchestration/sessions/:id/workers/:wid/detach` | UI detach. |
-| `POST /api/v1/orchestration/sessions/:id/workers/:wid/kill` | UI kill (transcript stays on disk; use `DELETE /sessions/:id` to remove it). |
+| `POST /api/v1/orchestration/sessions/:id/workers/:wid/kill` | Programmatic orchestration kill that suppresses self-notification to the supervisor. The Web UI worker Kill button uses generic `DELETE /sessions/:id` instead so a human-initiated deletion notifies the supervisor. |
 | `POST /api/v1/orchestration/sessions/:id/workers/:wid/resume` | Force-resume a cold worker into the registry. |
 
 Full schemas: open `/api/docs` in your deploy.

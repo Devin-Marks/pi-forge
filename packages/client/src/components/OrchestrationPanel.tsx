@@ -275,7 +275,12 @@ function SupervisorControls({
     setBusy(true);
     setError(undefined);
     try {
-      await api.killWorker(link.sessionId, workerId);
+      // Human-initiated worker deletion from the Web UI is an external
+      // session delete from the supervisor agent's perspective, so use the
+      // generic session DELETE route. The orchestration kill endpoint stays
+      // reserved for supervisor/tool-initiated self-actions and suppresses
+      // redundant notifications back to that same supervisor.
+      await api.disposeSession(workerId);
       await onAfter();
     } catch (err) {
       setError(err instanceof ApiError ? err.code : (err as Error).message);

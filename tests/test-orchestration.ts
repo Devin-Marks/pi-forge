@@ -25,7 +25,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:net";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -317,6 +317,16 @@ async function jsend(
 }
 
 async function main(): Promise<void> {
+  const orchestrationPanelSource = await readFile(
+    resolve(repoRoot, "packages/client/src/components/OrchestrationPanel.tsx"),
+    "utf8",
+  );
+  assert(
+    "Web UI worker kill uses session DELETE route so supervisor is notified",
+    orchestrationPanelSource.includes("await api.disposeSession(workerId)") &&
+      !orchestrationPanelSource.includes("await api.killWorker(link.sessionId, workerId)"),
+  );
+
   // The store + inbox modules read `FORGE_DATA_DIR` from `config.ts`
   // at module-import time. Plant the env BEFORE the first dynamic
   // import so the in-test calls share a data dir with the spawned
