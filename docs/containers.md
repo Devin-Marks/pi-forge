@@ -150,6 +150,7 @@ when you need them.
 | `AGENT_TOOL_SANDBOX_ENABLED` | `false` by default; set `true` to run tool children as `pi-tools` |
 | `AGENT_TOOL_UID` / `AGENT_TOOL_GID` | `1001` / `1001` in compose defaults |
 | `AGENT_TOOL_HOME` | `/home/pi-tools`; writable home injected as `HOME` for sandboxed terminals/processes/model bash |
+| `AGENT_TOOL_SANDBOX_CHOWN_PATHS` | unset by default; optional comma/whitespace list of existing non-secret paths that the root sandbox server recursively chowns to `AGENT_TOOL_UID:GID` on startup |
 
 Set `UI_PASSWORD` and / or `API_KEY` in `.env` for any non-loopback
 deploy — without them, auth is disabled. `JWT_SECRET` is intentionally
@@ -251,7 +252,9 @@ SSE-buffering and WebSocket-upgrade settings live in
   only `CHOWN`, `SETUID`, and `SETGID`: `SETUID` / `SETGID` are required for
   the sandbox identity switch, and `CHOWN` is required so browser upload and
   new-file APIs can hand created workspace files/directories to `pi-tools`.
-  No privileged mode or host PID is needed.
+  `CHOWN` is also required when `AGENT_TOOL_SANDBOX_CHOWN_PATHS` is set;
+  deployments that remove `CHOWN` must leave that env var unset or startup
+  fails on the first chown. No privileged mode or host PID is needed.
 - **Secret mounts.** Mount Pi config, forge data, LDAP/UI secret files,
   and cloud credentials so they are readable by the root server but not
   by `pi-tools` (for example mode `0600` root-owned files or `0700`

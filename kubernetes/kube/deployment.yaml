@@ -74,7 +74,10 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-              add: ["SETUID", "SETGID"]
+              # SETUID/SETGID are required for sandbox user switching.
+              # CHOWN is required only when AGENT_TOOL_SANDBOX_CHOWN_PATHS
+              # is set; without CHOWN, startup fails on the chown step.
+              add: ["SETUID", "SETGID", "CHOWN"]
             readOnlyRootFilesystem: true
             seccompProfile:
               type: RuntimeDefault
@@ -104,6 +107,11 @@ spec:
               value: "1001"
             - name: AGENT_TOOL_GID
               value: "1001"
+            # Optional: comma/space-separated existing non-secret paths
+            # to chown to AGENT_TOOL_UID:GID at startup. Requires CHOWN
+            # in the container capabilities above.
+            - name: AGENT_TOOL_SANDBOX_CHOWN_PATHS
+              value: ""
             - name: LOG_LEVEL
               value: info
             - name: TRUST_PROXY

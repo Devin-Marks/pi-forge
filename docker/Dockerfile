@@ -182,6 +182,9 @@ WORKDIR /app
 # manifests + built artifacts is enough; module resolution walks up
 # from packages/server/dist into /app/node_modules.
 COPY --from=builder --chown=pi:pi /app/node_modules ./node_modules
+RUN if [ -d /app/node_modules/@earendil-works/pi-coding-agent ]; then \
+      chmod -R a+rX,u+w,go-w /app/node_modules/@earendil-works/pi-coding-agent; \
+    fi
 COPY --from=builder --chown=pi:pi /app/package.json ./package.json
 COPY --from=builder --chown=pi:pi /app/packages/server/package.json ./packages/server/package.json
 COPY --from=builder --chown=pi:pi /app/packages/server/dist ./packages/server/dist
@@ -221,6 +224,7 @@ case "$(printf '%s' "${AGENT_TOOL_SANDBOX_ENABLED:-false}" | tr '[:upper:]' '[:l
     # selected. Compose starts as pi directly so regular mode does not
     # need SETUID/SETGID capabilities; the root fallback preserves
     # compatibility for `docker run` invocations without --user.
+    # Sandbox startup chown paths are skipped here because sandbox is off.
     if [ "$(id -u)" = "0" ]; then
       exec gosu pi "$@"
     fi

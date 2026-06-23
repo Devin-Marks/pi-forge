@@ -404,6 +404,14 @@ const FLAGS: readonly FlagDef[] = [
     desc: "Writable HOME for sandboxed model/user shell processes",
     defaultText: "/home/pi-tools",
   },
+  {
+    name: "agent-tool-sandbox-chown-paths",
+    env: "AGENT_TOOL_SANDBOX_CHOWN_PATHS",
+    type: "list",
+    group: "sandbox",
+    desc: "Existing paths to recursively chown to the sandbox UID:GID at startup",
+    defaultText: "(empty)",
+  },
   // rate limits
   {
     name: "rate-limit-login-max",

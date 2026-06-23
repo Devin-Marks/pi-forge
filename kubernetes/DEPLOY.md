@@ -98,7 +98,8 @@ oc apply -f kubernetes/openshift/deployment.yaml
 #    OpenShift restricted-v2 assigns a random non-root UID and cannot
 #    support pi-forge's UID/GID-switching identity sandbox. For quick
 #    testing, bind anyuid. For tighter deployments, apply the custom SCC,
-#    ClusterRole, and ClusterRoleBinding shown below instead.
+#    ClusterRole, and ClusterRoleBinding shown below instead. The custom
+#    SCC must include CHOWN if AGENT_TOOL_SANDBOX_CHOWN_PATHS is configured.
 oc adm policy add-scc-to-user anyuid -z pi-forge -n pi-forge
 
 # 5. Verify
@@ -145,8 +146,11 @@ in [`docs/configuration.md`](../docs/configuration.md) and
   env value; it does not expand `@/path`. See `docs/configuration.md#ldap-browser-login`.
 - **Agent tool identity sandbox.** `AGENT_TOOL_SANDBOX_ENABLED=false`
   by default. To enable it on vanilla Kubernetes, the container security
-  context must run the server as root and permit only the identity-switch
-  capabilities:
+  context must run the server as root and permit the sandbox capabilities.
+  `SETUID`/`SETGID` are required for the identity switch. `CHOWN` is required
+  for browser-created workspace ownership handoff and when using
+  `AGENT_TOOL_SANDBOX_CHOWN_PATHS`; without it, startup fails on the first
+  ownership change.
 
   ```yaml
   securityContext:
@@ -155,7 +159,7 @@ in [`docs/configuration.md`](../docs/configuration.md) and
     allowPrivilegeEscalation: false
     capabilities:
       drop: ["ALL"]
-      add: ["SETUID", "SETGID"]
+      add: ["SETUID", "SETGID", "CHOWN"]
   ```
 
   The workspace PVC must be writable by `AGENT_TOOL_UID:GID`; Pi config,
@@ -168,9 +172,10 @@ in [`docs/configuration.md`](../docs/configuration.md) and
 - **OpenShift SCC.** restricted-v2 random UID will not support identity
   sandbox. Use `anyuid` for a simple deployment, or a custom SCC that
   allows UID 0 plus `SETUID`/`SETGID` for the app container and
-  `CHOWN`/`FOWNER` for the initContainer; privileged mode is not required.
-  Keep SCC grants with namespace/security bootstrap, not inside the
-  `DeploymentConfig`. Replace `pi-forge` with your namespace and
+  `CHOWN`/`FOWNER` for the initContainer. `CHOWN` is also required by the app
+  container when `AGENT_TOOL_SANDBOX_CHOWN_PATHS` is configured; privileged
+  mode is not required. Keep SCC grants with namespace/security bootstrap, not
+  inside the `DeploymentConfig`. Replace `pi-forge` with your namespace and
   ServiceAccount names if they differ.
 
   Declarative example for the built-in `anyuid` SCC:
@@ -269,9 +274,11 @@ in [`docs/configuration.md`](../docs/configuration.md) and
   ```
 
   Security trade-offs: the custom SCC intentionally allows UID 0,
-  `SETUID`/`SETGID`, and the initContainer's `CHOWN`/`FOWNER`, so bind it
-  only to pi-forge's ServiceAccount. Do not add broader capabilities unless
-  your storage or platform policy requires them. Keep
+  `SETUID`/`SETGID`, and `CHOWN`/`FOWNER`, so bind it only to pi-forge's
+  ServiceAccount. `CHOWN` is needed by the initContainer, by browser-created
+  workspace ownership handoff, and by `AGENT_TOOL_SANDBOX_CHOWN_PATHS` when
+  configured. Do not add broader capabilities unless your storage or platform
+  policy requires them. Keep
   `readOnlyRootFilesystem: true` in the pi-forge container and
   mount `/tmp` as `emptyDir`; the SCC above does not force it so operators
   can use overlays. Do not use `fsGroup` to make sensitive volumes broadly
