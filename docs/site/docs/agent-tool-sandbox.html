@@ -78,10 +78,12 @@ data, and secret mounts cannot be owned/mode-bit split as described below.</p>
 <pre><code class="language-txt">AGENT_TOOL_SANDBOX_ENABLED=true
 AGENT_TOOL_UID=&lt;numeric uid&gt;
 AGENT_TOOL_GID=&lt;numeric gid&gt;
+AGENT_TOOL_HOME=&lt;writable sandbox tool home&gt;
 </code></pre>
 <p>In the Docker image defaults, <code>pi-tools</code> is:</p>
 <pre><code class="language-txt">AGENT_TOOL_UID=1001
 AGENT_TOOL_GID=1001
+AGENT_TOOL_HOME=/home/pi-tools
 </code></pre>
 <p>When enabled:</p>
 <ul>
@@ -93,6 +95,9 @@ AGENT_TOOL_GID=1001
 <li>quick-action command chips run as <code>AGENT_TOOL_UID:GID</code></li>
 <li>chat <code>!</code> / <code>!!</code> exec commands run as <code>AGENT_TOOL_UID:GID</code></li>
 <li>shell/process/terminal env is scrubbed</li>
+<li>shell/process/terminal <code>HOME</code> points at <code>AGENT_TOOL_HOME</code> (the Docker
+default is <code>/home/pi-tools</code>) so CLIs such as <code>gh</code> can create sandbox-owned
+config without writing the server user&#39;s <code>/home/pi</code></li>
 </ul>
 <h2>What is protected</h2>
 <p>The sandbox is intended to protect server-side secrets from model/user tool
@@ -150,12 +155,20 @@ the container or pod</strong>.</p>
 <td>Writable by <code>AGENT_TOOL_UID</code> and traversable/readable by the root server without <code>DAC_OVERRIDE</code>. Recommended: <code>AGENT_TOOL_UID:0</code> with group rwX (<code>1001:0</code> in the Docker examples). Secrets in the workspace are readable by the agent.</td>
 </tr>
 <tr>
+<td><code>/home/pi</code> when the entire home directory is mounted</td>
+<td>Traversable by <code>AGENT_TOOL_UID:GID</code>, not writable by it. Recommended: <code>root:pi-tools</code> <code>0710</code>. Do this only for a dedicated container home mount, not your normal host login home.</td>
+</tr>
+<tr>
 <td><code>/home/pi/.pi</code></td>
 <td>Traversable by <code>AGENT_TOOL_UID:GID</code> so package skills and non-secret resources can be loaded. Recommended: <code>root:pi-tools</code> <code>0750</code>.</td>
 </tr>
 <tr>
 <td><code>/home/pi/.pi/agent</code></td>
 <td>Traversable/readable by <code>AGENT_TOOL_UID:GID</code> for non-secret resources. Recommended: <code>root:pi-tools</code> <code>0750</code>.</td>
+</tr>
+<tr>
+<td><code>/home/pi/.pi/agent/{skills,npm,git,extensions,prompts,themes}</code></td>
+<td>Writable by <code>AGENT_TOOL_UID</code>/<code>pi-tools</code> as needed for agent resource installs and updates. Create these directories before applying ownership because <code>pi-tools</code> cannot create missing children under a non-writable <code>/home/pi/.pi/agent</code>. Recommended: <code>1001:1001</code> with owner rwX and no other access.</td>
 </tr>
 <tr>
 <td><code>/home/pi/.pi/agent/auth.json</code></td>
@@ -174,6 +187,10 @@ the container or pod</strong>.</p>
 <td>Not readable by <code>AGENT_TOOL_UID:GID</code>. Recommended: <code>root:root</code> <code>0700</code>.</td>
 </tr>
 <tr>
+<td><code>/home/pi-tools</code> (<code>AGENT_TOOL_HOME</code>)</td>
+<td>Writable by <code>AGENT_TOOL_UID:GID</code>; this is where sandbox terminals/processes/model bash create per-user CLI config such as <code>~/.config/gh</code>. Treat credentials stored here as available to model/user shell surfaces.</td>
+</tr>
+<tr>
 <td>mounted secret dirs/files</td>
 <td>Not readable by <code>AGENT_TOOL_UID:GID</code>; prefer root-owned <code>0700</code> dirs and <code>0600</code> files.</td>
 </tr>
@@ -181,11 +198,15 @@ the container or pod</strong>.</p>
 <p>Why <code>.pi</code> is partially readable: pi package skills and other non-secret pi
 resources may live under the Pi config/home tree. The sandbox blocks the known
 secret Pi config files by policy and filesystem mode, while leaving non-secret
-resources loadable.</p>
+resources loadable and the selected agent resource directories writable by
+<code>pi-tools</code>.</p>
 <p>The Docker image&#39;s built-in directory ownership remains optimized for regular
-mode (<code>pi</code> owns <code>/home/pi/.pi/agent</code> and <code>/home/pi/.pi-forge</code>). Enabling sandbox
-with bind mounts or persistent volumes is an explicit operator step: adjust the
-mount permissions to the table above before relying on filesystem isolation.
+mode (<code>pi</code> owns <code>/home/pi</code> plus <code>/home/pi/.pi/agent</code> and <code>/home/pi/.pi-forge</code>) so
+non-sandbox tools can create ordinary per-user config such as <code>~/.config/gh</code>.
+Enabling sandbox with bind mounts or persistent volumes is an explicit operator
+step: adjust the mount permissions to the table above before relying on
+filesystem isolation. Sandbox tool children should still run as a different
+<code>AGENT_TOOL_UID:GID</code> so they cannot write the <code>pi</code> user&#39;s home by default.
 Switching an existing deployment between regular and sandbox mode may require
 changing volume ownership/modes.</p>
 <h2>Docker Compose: native Linux bind mounts</h2>
@@ -221,20 +242,33 @@ sudo chmod 0750 ~/.pi
 sudo chown root:1001 ~/.pi/agent
 sudo chmod 0750 ~/.pi/agent
 
-# Existing non-secret Pi resources: readable/traversable by pi-tools.
-# This is required for previously installed skills/packages that may still be
-# 1000:1000 from regular mode. Keep execute bits where they already exist.
-for path in \
-  ~/.pi/agent/skills \
-  ~/.pi/agent/npm \
-  ~/.pi/agent/git \
-  ~/.pi/agent/extensions \
-  ~/.pi/agent/prompts \
-  ~/.pi/agent/themes; do
-  [ -e &quot;$path&quot; ] || continue
-  sudo chown -R root:1001 &quot;$path&quot;
-  sudo chmod -R u+rwX,g+rX,o-rwx &quot;$path&quot;
-done
+# If you mount an entire dedicated container home directory at /home/pi, make
+# that mounted home traversable but not writable by pi-tools. Do not run this
+# against your normal host login home.
+# sudo chown root:1001 /path/to/dedicated/container-home
+# sudo chmod 0710 /path/to/dedicated/container-home
+
+# Agent resource directories: create missing children first because pi-tools
+# cannot create them under a non-writable ~/.pi/agent. Then make these
+# non-secret trees writable by UID/user 1001 (pi-tools) for installs/updates.
+sudo mkdir -p ~/.pi/agent/skills
+sudo mkdir -p ~/.pi/agent/npm
+sudo mkdir -p ~/.pi/agent/git
+sudo mkdir -p ~/.pi/agent/extensions
+sudo mkdir -p ~/.pi/agent/prompts
+sudo mkdir -p ~/.pi/agent/themes
+sudo chown -R 1001:1001 ~/.pi/agent/skills
+sudo chown -R 1001:1001 ~/.pi/agent/npm
+sudo chown -R 1001:1001 ~/.pi/agent/git
+sudo chown -R 1001:1001 ~/.pi/agent/extensions
+sudo chown -R 1001:1001 ~/.pi/agent/prompts
+sudo chown -R 1001:1001 ~/.pi/agent/themes
+sudo chmod -R u+rwX,go-rwx ~/.pi/agent/skills
+sudo chmod -R u+rwX,go-rwx ~/.pi/agent/npm
+sudo chmod -R u+rwX,go-rwx ~/.pi/agent/git
+sudo chmod -R u+rwX,go-rwx ~/.pi/agent/extensions
+sudo chmod -R u+rwX,go-rwx ~/.pi/agent/prompts
+sudo chmod -R u+rwX,go-rwx ~/.pi/agent/themes
 
 # Pi config secrets/settings: server-only. Re-run this after broad permission
 # changes so pi-tools cannot read provider auth, model config, or settings.
@@ -245,6 +279,7 @@ sudo chmod 0600 ~/.pi/agent/auth.json ~/.pi/agent/models.json ~/.pi/agent/settin
 <pre><code class="language-txt">AGENT_TOOL_SANDBOX_ENABLED=true
 AGENT_TOOL_UID=1001
 AGENT_TOOL_GID=1001
+AGENT_TOOL_HOME=/home/pi-tools
 </code></pre>
 <p>Start sandbox mode with the sandbox compose overlay. The base compose file runs
 regular mode as <code>pi</code> with no Linux capabilities; the overlay switches the server
@@ -331,11 +366,30 @@ find /home/pi/.pi-forge -type d -exec chmod 0700 {} +
 find /home/pi/.pi-forge -type f -exec chmod 0600 {} +
 
 # Pi config: pi-tools can traverse/read non-secret resources.
-# This includes existing skills, managed npm/git packages, extensions,
-# prompts, and themes copied into the named volume.
-chown -R root:1001 /home/pi/.pi/agent
-chmod -R u+rwX,g+rX,o-rwx /home/pi/.pi/agent
+chown root:1001 /home/pi/.pi/agent
 chmod 0750 /home/pi/.pi/agent
+
+# Agent resource directories: create missing children first because pi-tools
+# cannot create them under a non-writable /home/pi/.pi/agent. Then make these
+# non-secret trees writable by UID/user 1001 (pi-tools) for installs/updates.
+mkdir -p /home/pi/.pi/agent/skills
+mkdir -p /home/pi/.pi/agent/npm
+mkdir -p /home/pi/.pi/agent/git
+mkdir -p /home/pi/.pi/agent/extensions
+mkdir -p /home/pi/.pi/agent/prompts
+mkdir -p /home/pi/.pi/agent/themes
+chown -R 1001:1001 /home/pi/.pi/agent/skills
+chown -R 1001:1001 /home/pi/.pi/agent/npm
+chown -R 1001:1001 /home/pi/.pi/agent/git
+chown -R 1001:1001 /home/pi/.pi/agent/extensions
+chown -R 1001:1001 /home/pi/.pi/agent/prompts
+chown -R 1001:1001 /home/pi/.pi/agent/themes
+chmod -R u+rwX,go-rwx /home/pi/.pi/agent/skills
+chmod -R u+rwX,go-rwx /home/pi/.pi/agent/npm
+chmod -R u+rwX,go-rwx /home/pi/.pi/agent/git
+chmod -R u+rwX,go-rwx /home/pi/.pi/agent/extensions
+chmod -R u+rwX,go-rwx /home/pi/.pi/agent/prompts
+chmod -R u+rwX,go-rwx /home/pi/.pi/agent/themes
 
 # Pi config secrets/settings: server-only. Re-run this after broad permission
 # changes so pi-tools cannot read provider auth, model config, or settings.
@@ -355,6 +409,7 @@ stat -c &quot;%u:%g %a %n&quot; /home/pi/.pi/agent /home/pi/.pi-forge
 <pre><code class="language-txt">AGENT_TOOL_SANDBOX_ENABLED=true
 AGENT_TOOL_UID=1001
 AGENT_TOOL_GID=1001
+AGENT_TOOL_HOME=/home/pi-tools
 </code></pre>
 <p>Start pi-forge with the sandbox overlay:</p>
 <pre><code class="language-bash">docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
@@ -401,6 +456,8 @@ pi-forge app container starts.</p>
     value: &quot;1001&quot;
   - name: AGENT_TOOL_GID
     value: &quot;1001&quot;
+  - name: AGENT_TOOL_HOME
+    value: /home/pi-tools
 </code></pre>
 <h3>Init container</h3>
 <p>This example assumes default IDs (<code>pi=1000</code>, <code>pi-tools=1001</code>) and the shipped
@@ -428,6 +485,13 @@ volume names/mount paths:</p>
         find /home/pi/.pi-forge -type d -exec chmod 0700 {} +
         find /home/pi/.pi-forge -type f -exec chmod 0600 {} +
 
+        # If this deployment mounts the entire /home/pi home directory, keep
+        # it traversable but not writable by pi-tools. Leave these commented
+        # when only the child volumes below are mounted.
+        # mkdir -p /home/pi
+        # chown 0:1001 /home/pi
+        # chmod 0710 /home/pi
+
         # Pi config parent: traversable by pi-tools so non-secret resources
         # can load.
         mkdir -p /home/pi/.pi/agent
@@ -436,21 +500,28 @@ volume names/mount paths:</p>
         chown 0:1001 /home/pi/.pi/agent
         chmod 0750 /home/pi/.pi/agent
 
-        # Existing non-secret Pi resources: readable/traversable by pi-tools.
-        # This is required for previously installed skills/packages that may
-        # still be 1000:1000 from regular mode. Keep execute bits where they
-        # already exist.
-        for path in \
-          /home/pi/.pi/agent/skills \
-          /home/pi/.pi/agent/npm \
-          /home/pi/.pi/agent/git \
-          /home/pi/.pi/agent/extensions \
-          /home/pi/.pi/agent/prompts \
-          /home/pi/.pi/agent/themes; do
-          [ -e &quot;$path&quot; ] || continue
-          chown -R 0:1001 &quot;$path&quot;
-          chmod -R u+rwX,g+rX,o-rwx &quot;$path&quot;
-        done
+        # Agent resource directories: create missing children first because
+        # pi-tools cannot create them under a non-writable /home/pi/.pi/agent.
+        # Then make these non-secret trees writable by UID/user 1001
+        # (pi-tools) for installs/updates.
+        mkdir -p /home/pi/.pi/agent/skills
+        mkdir -p /home/pi/.pi/agent/npm
+        mkdir -p /home/pi/.pi/agent/git
+        mkdir -p /home/pi/.pi/agent/extensions
+        mkdir -p /home/pi/.pi/agent/prompts
+        mkdir -p /home/pi/.pi/agent/themes
+        chown -R 1001:1001 /home/pi/.pi/agent/skills
+        chown -R 1001:1001 /home/pi/.pi/agent/npm
+        chown -R 1001:1001 /home/pi/.pi/agent/git
+        chown -R 1001:1001 /home/pi/.pi/agent/extensions
+        chown -R 1001:1001 /home/pi/.pi/agent/prompts
+        chown -R 1001:1001 /home/pi/.pi/agent/themes
+        chmod -R u+rwX,go-rwx /home/pi/.pi/agent/skills
+        chmod -R u+rwX,go-rwx /home/pi/.pi/agent/npm
+        chmod -R u+rwX,go-rwx /home/pi/.pi/agent/git
+        chmod -R u+rwX,go-rwx /home/pi/.pi/agent/extensions
+        chmod -R u+rwX,go-rwx /home/pi/.pi/agent/prompts
+        chmod -R u+rwX,go-rwx /home/pi/.pi/agent/themes
 
         # Pi config secrets/settings: server-only. Re-run this after resource
         # permission changes so pi-tools cannot read provider auth, model
@@ -485,17 +556,22 @@ volume names/mount paths:</p>
 sandbox relies on <code>.pi-forge</code> and protected Pi config files staying unreadable
 by <code>AGENT_TOOL_UID:GID</code>.</p>
 <h2>OpenShift</h2>
-<p>OpenShift <code>restricted-v2</code> random UID does not support this mode. Use <code>anyuid</code>
-for a simple deployment, or a custom SCC that allows:</p>
+<p>OpenShift <code>restricted-v2</code> random UID does not support this mode because the
+pi-forge server must start as UID 0 before it drops tool children to
+<code>AGENT_TOOL_UID:GID</code>. Use <code>anyuid</code> for a simple deployment, or create a custom
+SCC that is scoped to the pi-forge ServiceAccount and allows only the extra
+identity-switch behavior pi-forge needs:</p>
 <ul>
 <li>UID 0 for the server container</li>
 <li><code>SETUID</code></li>
 <li><code>SETGID</code></li>
 <li>no privileged mode</li>
+<li>no host namespaces or host networking</li>
 </ul>
-<p>Keep SCC RoleBindings in namespace/security bootstrap, not in the
-DeploymentConfig.</p>
-<p>Example RoleBinding for <code>anyuid</code>:</p>
+<p>Keep SCC, ClusterRole, and ClusterRoleBinding resources in cluster or namespace
+security bootstrap, not in the DeploymentConfig. Replace <code>pi-forge</code> in the
+examples with your namespace and ServiceAccount names if they differ.</p>
+<p>Example RoleBinding for the built-in <code>anyuid</code> SCC:</p>
 <pre><code class="language-yaml">apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -510,9 +586,96 @@ subjects:
     name: pi-forge
     namespace: pi-forge
 </code></pre>
-<p>Use the Kubernetes initContainer permission commands above, plus the OpenShift
-SCC binding. If you build a custom SCC, it needs UID 0 plus <code>SETUID</code>/<code>SETGID</code>;
-it does not need privileged mode.</p>
+<p>For tighter sandbox deployments, prefer a dedicated SCC and RBAC grant instead
+of binding <code>anyuid</code>. This example permits the shipped OpenShift manifest&#39;s
+root-running server container, <code>SETUID</code>/<code>SETGID</code>, PVC/Secret/ConfigMap-style
+volumes, and <code>runtime/default</code> seccomp profile, while continuing to deny
+privileged containers, host namespaces, host ports, and arbitrary Linux
+capabilities:</p>
+<pre><code class="language-yaml">apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: pi-forge-sandbox
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities:
+  - SETUID
+  - SETGID
+defaultAddCapabilities: []
+requiredDropCapabilities:
+  - ALL
+readOnlyRootFilesystem: false
+runAsUser:
+  type: MustRunAs
+  uid: 0
+seLinuxContext:
+  type: MustRunAs
+fsGroup:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+seccompProfiles:
+  - runtime/default
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret
+users: []
+groups: []
+</code></pre>
+<p>Bind that SCC through an RBAC <code>ClusterRole</code> plus <code>ClusterRoleBinding</code>:</p>
+<pre><code class="language-yaml">apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pi-forge-sandbox-scc
+rules:
+  - apiGroups:
+      - security.openshift.io
+    resources:
+      - securitycontextconstraints
+    resourceNames:
+      - pi-forge-sandbox
+    verbs:
+      - use
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pi-forge-sandbox-scc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pi-forge-sandbox-scc
+subjects:
+  - kind: ServiceAccount
+    name: pi-forge
+    namespace: pi-forge
+</code></pre>
+<p>Security trade-offs:</p>
+<ul>
+<li>The SCC intentionally allows UID 0 in the container. Keep the grant scoped to
+only the pi-forge ServiceAccount.</li>
+<li><code>SETUID</code> and <code>SETGID</code> are required so the server can switch shell-like tool
+surfaces to <code>AGENT_TOOL_UID:GID</code>. Do not add broader capabilities unless your
+own storage or platform policy requires them.</li>
+<li><code>readOnlyRootFilesystem</code> is not forced by the SCC so operators can use
+overlays, but the shipped pi-forge container should keep
+<code>readOnlyRootFilesystem: true</code> and mount <code>/tmp</code> as <code>emptyDir</code>.</li>
+<li>Do not use <code>fsGroup</code> to make sensitive volumes group-readable. The sandbox
+relies on <code>.pi-forge</code> and protected Pi config files staying unreadable by
+<code>AGENT_TOOL_UID:GID</code>.</li>
+</ul>
+<p>Use the Kubernetes initContainer permission commands above, plus either the
+<code>anyuid</code> RoleBinding or the custom SCC/RBAC resources. The custom SCC still
+needs UID 0 plus <code>SETUID</code>/<code>SETGID</code>; it does not need privileged mode.</p>
 <h2>pi-subagents package disabled in sandbox mode</h2>
 <p>The <code>pi-subagents</code> package/extension is disabled while
 <code>AGENT_TOOL_SANDBOX_ENABLED=true</code>. The package shells out to the <code>pi</code> CLI and
@@ -572,10 +735,17 @@ model file tools reject the path even if the server process could read it.</p>
 </thead>
 <tbody><tr>
 <td><code>/home/pi</code></td>
-<td><code>r-x</code>; home parent is not general scratch space</td>
+<td><code>rwx</code>; regular CLIs can create per-user config such as <code>~/.config/gh</code></td>
 <td><code>rwx</code></td>
-<td><code>r-x</code></td>
+<td><code>r-x</code> when <code>AGENT_TOOL_UID</code> differs from <code>pi</code>; not used as HOME</td>
 <td>usually not used directly</td>
+</tr>
+<tr>
+<td><code>/home/pi-tools</code> (<code>AGENT_TOOL_HOME</code>)</td>
+<td>not used</td>
+<td><code>rwx</code></td>
+<td><code>rwx</code>; sandbox CLIs create <code>~/.config</code>, <code>~/.gitconfig</code>, caches here</td>
+<td>outside allowed roots</td>
 </tr>
 <tr>
 <td><code>/home/pi/.npm</code></td>
@@ -656,8 +826,9 @@ existing resource ownership. Previously installed trees often remain
 <li><code>${PI_CONFIG_DIR}/prompts</code></li>
 <li><code>${PI_CONFIG_DIR}/themes</code></li>
 </ul>
-<p>Those directories must be traversable/readable by <code>AGENT_TOOL_GID</code> while
-<code>${PI_CONFIG_DIR}/auth.json</code>, <code>models.json</code>, and <code>settings.json</code> stay <code>0600</code>.</p>
+<p>Those directories must exist and be writable by UID/user <code>1001</code> (<code>pi-tools</code>)
+while <code>${PI_CONFIG_DIR}/auth.json</code>, <code>models.json</code>, and <code>settings.json</code> stay
+<code>0600</code>.</p>
 <h2>Suggested verification prompts</h2>
 <p>Ask the model:</p>
 <pre><code class="language-txt">Use your file tools, not bash, to test sandbox file access.

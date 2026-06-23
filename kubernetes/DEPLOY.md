@@ -96,8 +96,9 @@ oc apply -f kubernetes/openshift/deployment.yaml
 
 # 4. Allow the pod to run as UID 0 when using the identity sandbox.
 #    OpenShift restricted-v2 assigns a random non-root UID and cannot
-#    support pi-forge's UID/GID-switching identity sandbox. Bind an SCC
-#    that allows UID 0 and SETUID/SETGID for the ServiceAccount.
+#    support pi-forge's UID/GID-switching identity sandbox. For quick
+#    testing, bind anyuid. For tighter deployments, apply the custom SCC,
+#    ClusterRole, and ClusterRoleBinding shown below instead.
 oc adm policy add-scc-to-user anyuid -z pi-forge -n pi-forge
 
 # 5. Verify
@@ -167,8 +168,11 @@ in [`docs/configuration.md`](../docs/configuration.md) and
 - **OpenShift SCC.** restricted-v2 random UID will not support identity
   sandbox. Use `anyuid` for a simple deployment, or a custom SCC that
   allows UID 0 plus `SETUID`/`SETGID`; privileged mode is not required.
-  Keep the SCC RoleBinding with namespace/security bootstrap, not inside
-  the `DeploymentConfig`. Declarative example:
+  Keep SCC grants with namespace/security bootstrap, not inside the
+  `DeploymentConfig`. Replace `pi-forge` with your namespace and
+  ServiceAccount names if they differ.
+
+  Declarative example for the built-in `anyuid` SCC:
 
   ```yaml
   apiVersion: rbac.authorization.k8s.io/v1
@@ -185,6 +189,89 @@ in [`docs/configuration.md`](../docs/configuration.md) and
       name: pi-forge
       namespace: pi-forge
   ```
+
+  For tighter deployments, create a dedicated SCC plus RBAC grant. This
+  permits the shipped OpenShift manifest's root-running server container,
+  `SETUID`/`SETGID`, PVC/Secret/ConfigMap-style volumes, and the
+  `runtime/default` seccomp profile, while continuing to deny privileged
+  containers, host namespaces, host ports, and arbitrary Linux capabilities:
+
+  ```yaml
+  apiVersion: security.openshift.io/v1
+  kind: SecurityContextConstraints
+  metadata:
+    name: pi-forge-sandbox
+  allowHostDirVolumePlugin: false
+  allowHostIPC: false
+  allowHostNetwork: false
+  allowHostPID: false
+  allowHostPorts: false
+  allowPrivilegeEscalation: false
+  allowPrivilegedContainer: false
+  allowedCapabilities:
+    - SETUID
+    - SETGID
+  defaultAddCapabilities: []
+  requiredDropCapabilities:
+    - ALL
+  readOnlyRootFilesystem: false
+  runAsUser:
+    type: MustRunAs
+    uid: 0
+  seLinuxContext:
+    type: MustRunAs
+  fsGroup:
+    type: RunAsAny
+  supplementalGroups:
+    type: RunAsAny
+  seccompProfiles:
+    - runtime/default
+  volumes:
+    - configMap
+    - downwardAPI
+    - emptyDir
+    - persistentVolumeClaim
+    - projected
+    - secret
+  users: []
+  groups: []
+  ---
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRole
+  metadata:
+    name: pi-forge-sandbox-scc
+  rules:
+    - apiGroups:
+        - security.openshift.io
+      resources:
+        - securitycontextconstraints
+      resourceNames:
+        - pi-forge-sandbox
+      verbs:
+        - use
+  ---
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRoleBinding
+  metadata:
+    name: pi-forge-sandbox-scc
+  roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: ClusterRole
+    name: pi-forge-sandbox-scc
+  subjects:
+    - kind: ServiceAccount
+      name: pi-forge
+      namespace: pi-forge
+  ```
+
+  Security trade-offs: the custom SCC intentionally allows UID 0 and
+  `SETUID`/`SETGID`, so bind it only to pi-forge's ServiceAccount. Do not
+  add broader capabilities unless your storage or platform policy requires
+  them. Keep `readOnlyRootFilesystem: true` in the pi-forge container and
+  mount `/tmp` as `emptyDir`; the SCC above does not force it so operators
+  can use overlays. Do not use `fsGroup` to make sensitive volumes broadly
+  group-readable because sandbox isolation relies on `.pi-forge` and
+  protected Pi config files staying unreadable by `AGENT_TOOL_UID:GID`.
 - **Resource defaults** per pod: requests 512 Mi / 250 m CPU; limits
   2 Gi / 1 CPU. Memory is the typical ceiling for long agent
   contexts or compiling inside the integrated terminal.
