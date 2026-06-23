@@ -167,7 +167,8 @@ in [`docs/configuration.md`](../docs/configuration.md) and
   pi-forge's policy hooks.
 - **OpenShift SCC.** restricted-v2 random UID will not support identity
   sandbox. Use `anyuid` for a simple deployment, or a custom SCC that
-  allows UID 0 plus `SETUID`/`SETGID`; privileged mode is not required.
+  allows UID 0 plus `SETUID`/`SETGID` for the app container and
+  `CHOWN`/`FOWNER` for the initContainer; privileged mode is not required.
   Keep SCC grants with namespace/security bootstrap, not inside the
   `DeploymentConfig`. Replace `pi-forge` with your namespace and
   ServiceAccount names if they differ.
@@ -192,7 +193,8 @@ in [`docs/configuration.md`](../docs/configuration.md) and
 
   For tighter deployments, create a dedicated SCC plus RBAC grant. This
   permits the shipped OpenShift manifest's root-running server container,
-  `SETUID`/`SETGID`, PVC/Secret/ConfigMap-style volumes, and the
+  `SETUID`/`SETGID`, the initContainer's `CHOWN`/`FOWNER`
+  volume-permission bootstrap, PVC/Secret/ConfigMap-style volumes, and the
   `runtime/default` seccomp profile, while continuing to deny privileged
   containers, host namespaces, host ports, and arbitrary Linux capabilities:
 
@@ -211,6 +213,8 @@ in [`docs/configuration.md`](../docs/configuration.md) and
   allowedCapabilities:
     - SETUID
     - SETGID
+    - CHOWN
+    - FOWNER
   defaultAddCapabilities: []
   requiredDropCapabilities:
     - ALL
@@ -264,10 +268,11 @@ in [`docs/configuration.md`](../docs/configuration.md) and
       namespace: pi-forge
   ```
 
-  Security trade-offs: the custom SCC intentionally allows UID 0 and
-  `SETUID`/`SETGID`, so bind it only to pi-forge's ServiceAccount. Do not
-  add broader capabilities unless your storage or platform policy requires
-  them. Keep `readOnlyRootFilesystem: true` in the pi-forge container and
+  Security trade-offs: the custom SCC intentionally allows UID 0,
+  `SETUID`/`SETGID`, and the initContainer's `CHOWN`/`FOWNER`, so bind it
+  only to pi-forge's ServiceAccount. Do not add broader capabilities unless
+  your storage or platform policy requires them. Keep
+  `readOnlyRootFilesystem: true` in the pi-forge container and
   mount `/tmp` as `emptyDir`; the SCC above does not force it so operators
   can use overlays. Do not use `fsGroup` to make sensitive volumes broadly
   group-readable because sandbox isolation relies on `.pi-forge` and

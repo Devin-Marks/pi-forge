@@ -563,8 +563,8 @@ SCC that is scoped to the pi-forge ServiceAccount and allows only the extra
 identity-switch behavior pi-forge needs:</p>
 <ul>
 <li>UID 0 for the server container</li>
-<li><code>SETUID</code></li>
-<li><code>SETGID</code></li>
+<li><code>SETUID</code> and <code>SETGID</code> for the app container&#39;s sandbox UID/GID switch</li>
+<li><code>CHOWN</code> and <code>FOWNER</code> for the initContainer&#39;s PVC permission bootstrap</li>
 <li>no privileged mode</li>
 <li>no host namespaces or host networking</li>
 </ul>
@@ -588,7 +588,8 @@ subjects:
 </code></pre>
 <p>For tighter sandbox deployments, prefer a dedicated SCC and RBAC grant instead
 of binding <code>anyuid</code>. This example permits the shipped OpenShift manifest&#39;s
-root-running server container, <code>SETUID</code>/<code>SETGID</code>, PVC/Secret/ConfigMap-style
+root-running server container, <code>SETUID</code>/<code>SETGID</code>, the initContainer&#39;s
+<code>CHOWN</code>/<code>FOWNER</code> volume-permission bootstrap, PVC/Secret/ConfigMap-style
 volumes, and <code>runtime/default</code> seccomp profile, while continuing to deny
 privileged containers, host namespaces, host ports, and arbitrary Linux
 capabilities:</p>
@@ -606,6 +607,8 @@ allowPrivilegedContainer: false
 allowedCapabilities:
   - SETUID
   - SETGID
+  - CHOWN
+  - FOWNER
 defaultAddCapabilities: []
 requiredDropCapabilities:
   - ALL
@@ -664,8 +667,10 @@ subjects:
 <li>The SCC intentionally allows UID 0 in the container. Keep the grant scoped to
 only the pi-forge ServiceAccount.</li>
 <li><code>SETUID</code> and <code>SETGID</code> are required so the server can switch shell-like tool
-surfaces to <code>AGENT_TOOL_UID:GID</code>. Do not add broader capabilities unless your
-own storage or platform policy requires them.</li>
+surfaces to <code>AGENT_TOOL_UID:GID</code>; <code>CHOWN</code> and <code>FOWNER</code> are required by the
+initContainer that fixes PVC ownership/modes before startup. Do not add
+broader capabilities unless your own storage or platform policy requires
+them.</li>
 <li><code>readOnlyRootFilesystem</code> is not forced by the SCC so operators can use
 overlays, but the shipped pi-forge container should keep
 <code>readOnlyRootFilesystem: true</code> and mount <code>/tmp</code> as <code>emptyDir</code>.</li>
@@ -675,7 +680,8 @@ relies on <code>.pi-forge</code> and protected Pi config files staying unreadabl
 </ul>
 <p>Use the Kubernetes initContainer permission commands above, plus either the
 <code>anyuid</code> RoleBinding or the custom SCC/RBAC resources. The custom SCC still
-needs UID 0 plus <code>SETUID</code>/<code>SETGID</code>; it does not need privileged mode.</p>
+needs UID 0 plus <code>SETUID</code>/<code>SETGID</code> for the app container and <code>CHOWN</code>/<code>FOWNER</code>
+for the initContainer; it does not need privileged mode.</p>
 <h2>pi-subagents package disabled in sandbox mode</h2>
 <p>The <code>pi-subagents</code> package/extension is disabled while
 <code>AGENT_TOOL_SANDBOX_ENABLED=true</code>. The package shells out to the <code>pi</code> CLI and

@@ -542,8 +542,8 @@ SCC that is scoped to the pi-forge ServiceAccount and allows only the extra
 identity-switch behavior pi-forge needs:
 
 - UID 0 for the server container
-- `SETUID`
-- `SETGID`
+- `SETUID` and `SETGID` for the app container's sandbox UID/GID switch
+- `CHOWN` and `FOWNER` for the initContainer's PVC permission bootstrap
 - no privileged mode
 - no host namespaces or host networking
 
@@ -571,7 +571,8 @@ subjects:
 
 For tighter sandbox deployments, prefer a dedicated SCC and RBAC grant instead
 of binding `anyuid`. This example permits the shipped OpenShift manifest's
-root-running server container, `SETUID`/`SETGID`, PVC/Secret/ConfigMap-style
+root-running server container, `SETUID`/`SETGID`, the initContainer's
+`CHOWN`/`FOWNER` volume-permission bootstrap, PVC/Secret/ConfigMap-style
 volumes, and `runtime/default` seccomp profile, while continuing to deny
 privileged containers, host namespaces, host ports, and arbitrary Linux
 capabilities:
@@ -591,6 +592,8 @@ allowPrivilegedContainer: false
 allowedCapabilities:
   - SETUID
   - SETGID
+  - CHOWN
+  - FOWNER
 defaultAddCapabilities: []
 requiredDropCapabilities:
   - ALL
@@ -653,8 +656,10 @@ Security trade-offs:
 - The SCC intentionally allows UID 0 in the container. Keep the grant scoped to
   only the pi-forge ServiceAccount.
 - `SETUID` and `SETGID` are required so the server can switch shell-like tool
-  surfaces to `AGENT_TOOL_UID:GID`. Do not add broader capabilities unless your
-  own storage or platform policy requires them.
+  surfaces to `AGENT_TOOL_UID:GID`; `CHOWN` and `FOWNER` are required by the
+  initContainer that fixes PVC ownership/modes before startup. Do not add
+  broader capabilities unless your own storage or platform policy requires
+  them.
 - `readOnlyRootFilesystem` is not forced by the SCC so operators can use
   overlays, but the shipped pi-forge container should keep
   `readOnlyRootFilesystem: true` and mount `/tmp` as `emptyDir`.
@@ -664,7 +669,8 @@ Security trade-offs:
 
 Use the Kubernetes initContainer permission commands above, plus either the
 `anyuid` RoleBinding or the custom SCC/RBAC resources. The custom SCC still
-needs UID 0 plus `SETUID`/`SETGID`; it does not need privileged mode.
+needs UID 0 plus `SETUID`/`SETGID` for the app container and `CHOWN`/`FOWNER`
+for the initContainer; it does not need privileged mode.
 
 ## pi-subagents package disabled in sandbox mode
 
