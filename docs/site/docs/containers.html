@@ -102,7 +102,7 @@ runtime (Node + native bindings), and makes deploys reproducible.</p>
 <tr>
 <td><code>runtime</code></td>
 <td><code>node-python-base</code></td>
-<td>Production deps + built artifacts only. Adds <code>git</code>, <code>ripgrep</code>, <code>bash</code>, <code>curl</code>, <code>less</code>, <code>procps</code>, <code>gosu</code>, and the C++ toolchain needed for native-module rebuilds during in-container development. Default mode drops the server to <code>pi</code>; sandbox mode keeps the server as root so it can drop model/user tool processes to <code>pi-tools</code>; <code>SHELL=/bin/bash</code> so xterm sessions land in bash, not dash</td>
+<td>Production deps + built artifacts only. Adds <code>git</code>, <code>gh</code>, <code>tea</code>, <code>ripgrep</code>, <code>bash</code>, <code>curl</code>, <code>less</code>, <code>procps</code>, <code>vim</code>, <code>gosu</code>, and the C++ toolchain needed for native-module rebuilds during in-container development. Default mode drops the server to <code>pi</code>; sandbox mode keeps the server as root so it can drop model/user tool processes to <code>pi-tools</code>; <code>SHELL=/bin/bash</code> so xterm sessions land in bash, not dash</td>
 </tr>
 </tbody></table>
 <p>Final image size varies by architecture and cache state. Debian-based
@@ -114,8 +114,11 @@ prebuilds; on musl, those packages fall back to source builds.</p>
 <li><strong>Python 3.12 + pip</strong> — callable as <code>python3</code>, <code>python</code>, or <code>py</code></li>
 <li><strong><code>tini</code></strong> — init for signal forwarding + zombie reaping</li>
 <li><strong><code>git</code></strong> — required by the agent&#39;s <code>bash</code> tool and the GitPanel routes</li>
+<li><strong><code>gh</code></strong> — GitHub CLI for working with GitHub and GitHub Enterprise</li>
+<li><strong><code>tea</code></strong> — Gitea/Forgejo CLI, pinned from the upstream Gitea release</li>
 <li><strong><code>ripgrep</code></strong> — pi&#39;s <code>grep</code> tool delegates to <code>rg</code> when present;
 silently degrades to a Node walker without it</li>
+<li><strong><code>vim</code></strong> — familiar in-terminal editor for the integrated terminal</li>
 <li><strong><code>make</code>, <code>g++</code></strong> — keeps <code>npm install</code> / <code>npm rebuild</code> working
 inside the running container when native modules such as <code>node-pty</code>
 need to compile against the container&#39;s Node ABI</li>
@@ -127,7 +130,8 @@ need to compile against the container&#39;s Node ABI</li>
 preserves legacy path/env expectations.</li>
 <li><code>pi-tools</code> (<code>AGENT_TOOL_UID</code> / <code>AGENT_TOOL_GID</code> in compose, default
 <code>1001:1001</code>) is the restricted identity used when
-<code>AGENT_TOOL_SANDBOX_ENABLED=true</code>.</li>
+<code>AGENT_TOOL_SANDBOX_ENABLED=true</code>. It has its own writable home at
+<code>/home/pi-tools</code>, exposed to sandboxed shells as <code>AGENT_TOOL_HOME</code>.</li>
 </ul>
 <p>By default (<code>AGENT_TOOL_SANDBOX_ENABLED=false</code>), compose starts the
 server as the legacy <code>pi</code> user directly and drops all Linux
@@ -209,8 +213,12 @@ bind mount.</p>
 <h2>Environment variables</h2>
 <p>The full env-var reference lives in
 <a href="./configuration.md#environment-variables"><code>configuration.md</code></a>. The
-container fixes the path-related vars; everything else is yours to set
-in <code>docker/.env</code>:</p>
+container fixes the path-related vars; the shipped <code>docker/.env.example</code>
+only includes the settings most Docker users edit on day one. Add
+less-used server knobs (LDAP, CORS pinning, minimal UI, orchestration,
+rate limits, terminal tuning, explicit JWT rotation, etc.) in your own
+compose override (or by adding them to the compose <code>environment:</code> block)
+when you need them.</p>
 <table>
 <thead>
 <tr>
@@ -243,6 +251,10 @@ in <code>docker/.env</code>:</p>
 <td><code>/home/pi/.local</code></td>
 </tr>
 <tr>
+<td><code>HOME</code></td>
+<td><code>/home/pi</code>; writable by the <code>pi</code> user in regular/non-sandbox mode so CLIs such as <code>gh</code> can create <code>~/.config</code>, <code>~/.gitconfig</code>, and similar per-user files</td>
+</tr>
+<tr>
 <td><code>AGENT_TOOL_SANDBOX_ENABLED</code></td>
 <td><code>false</code> by default; set <code>true</code> to run tool children as <code>pi-tools</code></td>
 </tr>
@@ -250,12 +262,25 @@ in <code>docker/.env</code>:</p>
 <td><code>AGENT_TOOL_UID</code> / <code>AGENT_TOOL_GID</code></td>
 <td><code>1001</code> / <code>1001</code> in compose defaults</td>
 </tr>
+<tr>
+<td><code>AGENT_TOOL_HOME</code></td>
+<td><code>/home/pi-tools</code>; writable home injected as <code>HOME</code> for sandboxed terminals/processes/model bash</td>
+</tr>
+<tr>
+<td><code>AGENT_TOOL_SANDBOX_CHOWN_PATHS</code></td>
+<td>unset by default; optional comma/whitespace list of existing non-secret paths that the root sandbox server recursively chowns to <code>AGENT_TOOL_UID:GID</code> on startup</td>
+</tr>
 </tbody></table>
 <p>Set <code>UI_PASSWORD</code> and / or <code>API_KEY</code> in <code>.env</code> for any non-loopback
-deploy — without them, auth is disabled.</p>
+deploy — without them, auth is disabled. <code>JWT_SECRET</code> is intentionally
+not in the sample <code>.env</code>; when auth is enabled, pi-forge auto-generates
+and persists it under <code>${FORGE_DATA_DIR}/jwt-secret</code> unless you choose
+to manage rotation yourself.</p>
 <h2>Compose recipe</h2>
 <p>The shipped compose file (<code>docker/docker-compose.yml</code>) covers a typical
-single-host deploy. Quickstart:</p>
+single-host deploy. Its <code>.env.example</code> is deliberately concise; advanced
+server env vars remain supported but are documented instead of being
+listed as runtime defaults. Quickstart:</p>
 <pre><code class="language-bash">cp docker/.env.example docker/.env
 # edit docker/.env — at minimum set HOST_PORT and (for any non-loopback
 # deploy) UI_PASSWORD (JWT_SECRET auto-generates), or API_KEY
@@ -323,19 +348,25 @@ as <code>pi-tools</code> and file tools / <code>@file</code> references are path
 Keep secrets out of <code>/workspace</code>; workspace content is intentionally
 readable by the agent.</li>
 <li><strong>Minimal capabilities.</strong> Regular compose starts as <code>pi</code>, drops all
-capabilities, and does not need <code>SETUID</code> / <code>SETGID</code>. The optional
+capabilities, and does not need <code>CHOWN</code>, <code>SETUID</code>, or <code>SETGID</code>. The optional
 <code>docker-compose.sandbox.yml</code> overlay starts as root and adds back
-only <code>SETUID</code> / <code>SETGID</code>, which are required for the sandbox identity
-switch. No privileged mode or host PID is needed.</li>
+only <code>CHOWN</code>, <code>SETUID</code>, and <code>SETGID</code>: <code>SETUID</code> / <code>SETGID</code> are required for
+the sandbox identity switch, and <code>CHOWN</code> is required so browser upload and
+new-file APIs can hand created workspace files/directories to <code>pi-tools</code>.
+<code>CHOWN</code> is also required when <code>AGENT_TOOL_SANDBOX_CHOWN_PATHS</code> is set;
+deployments that remove <code>CHOWN</code> must leave that env var unset or startup
+fails on the first chown. No privileged mode or host PID is needed.</li>
 <li><strong>Secret mounts.</strong> Mount Pi config, forge data, LDAP/UI secret files,
 and cloud credentials so they are readable by the root server but not
 by <code>pi-tools</code> (for example mode <code>0600</code> root-owned files or <code>0700</code>
 directories). The sandbox also blocks <code>/run/secrets</code> and
 <code>/var/run/secrets</code> from model file tools.</li>
 <li><strong>Read-only root filesystem (optional).</strong> Add <code>read_only: true</code> to
-compose with <code>tmpfs</code> mounts for <code>/tmp</code> and <code>/home/pi/.npm</code> if you
-want a hardened deploy. Native modules + node_modules live in the
-image, so they&#39;re already read-only.</li>
+compose with <code>tmpfs</code> mounts for <code>/tmp</code>, <code>/home/pi/.npm</code>, and any other
+regular-mode home/config paths you expect tools to write (for example
+<code>/home/pi/.config</code> for GitHub CLI auth) if you want a hardened deploy.
+Native modules + node_modules live in the image, so they&#39;re already
+read-only.</li>
 </ul>
 <h2>Updating</h2>
 <p>The image is <strong>not</strong> auto-updating. To pull a new release:</p>

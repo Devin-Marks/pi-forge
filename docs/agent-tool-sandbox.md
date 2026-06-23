@@ -20,6 +20,8 @@ AGENT_TOOL_SANDBOX_ENABLED=true
 AGENT_TOOL_UID=<numeric uid>
 AGENT_TOOL_GID=<numeric gid>
 AGENT_TOOL_HOME=<writable sandbox tool home>
+# Optional startup helper for non-secret writable mounts:
+AGENT_TOOL_SANDBOX_CHOWN_PATHS=<comma-or-space-separated paths>
 ```
 
 In the Docker image defaults, `pi-tools` is:
@@ -122,6 +124,26 @@ filesystem isolation. Sandbox tool children should still run as a different
 Switching an existing deployment between regular and sandbox mode may require
 changing volume ownership/modes.
 
+## Optional startup chown helper
+
+`AGENT_TOOL_SANDBOX_CHOWN_PATHS` can reduce deployment-specific init scripts
+for paths that should be owned by `pi-tools`. When sandbox mode is enabled and
+the server starts as root, pi-forge recursively `chown`s each configured
+existing path to `AGENT_TOOL_UID:AGENT_TOOL_GID` before the HTTP server starts.
+The helper deliberately accepts only non-secret roots: `WORKSPACE_PATH`,
+`AGENT_TOOL_HOME`, and the Pi resource subtrees
+`${PI_CONFIG_DIR}/{skills,npm,git,extensions,prompts,themes}`. It rejects
+`${FORGE_DATA_DIR}`, `${PI_CONFIG_DIR}` itself, and protected config files.
+
+Example:
+
+```txt
+AGENT_TOOL_SANDBOX_CHOWN_PATHS=/workspace,/home/pi/.pi/agent/skills
+```
+
+Keep using explicit init-container or host-side permissioning for server-only
+secret paths such as `${FORGE_DATA_DIR}` and `${PI_CONFIG_DIR}/auth.json`.
+
 ## Docker Compose: native Linux bind mounts
 
 Use this section for regular Docker Engine on Linux. You can keep the default
@@ -206,8 +228,10 @@ AGENT_TOOL_HOME=/home/pi-tools
 
 Start sandbox mode with the sandbox compose overlay. The base compose file runs
 regular mode as `pi` with no Linux capabilities; the overlay switches the server
-container to root and adds back only `SETUID` / `SETGID` for sandbox child
-processes:
+container to root and adds back `SETUID` / `SETGID` for sandbox child processes
+plus `CHOWN` for the optional `AGENT_TOOL_SANDBOX_CHOWN_PATHS` startup helper.
+If you remove `CHOWN`, leave `AGENT_TOOL_SANDBOX_CHOWN_PATHS` unset or startup
+will fail on the first ownership change:
 
 ```bash
 cd docker
@@ -274,7 +298,8 @@ The base compose file already drops all capabilities. The sandbox overlay adds
 back `CHOWN`, `SETUID`, and `SETGID` and runs the server container as root.
 `SETUID` / `SETGID` let pi-forge spawn model/user tool processes as
 `pi-tools`; `CHOWN` lets browser upload and new-file APIs hand newly created
-workspace files/directories to that same sandbox identity.
+workspace files/directories to that same sandbox identity, and is also required
+when `AGENT_TOOL_SANDBOX_CHOWN_PATHS` is configured.
 
 If OrbStack/Docker Desktop shows `.pi-forge` as `1000:1000 0700` inside the
 pi-forge container even after the helper volume init chowns it to `root:root`,
@@ -288,8 +313,10 @@ cap_add:
   - DAC_OVERRIDE # local OrbStack/Docker Desktop workaround only
 ```
 
-Keep production/native-Linux deployments to `SETUID` and `SETGID` when mounts
-can be permissioned normally.
+Keep production/native-Linux deployments to `CHOWN`, `SETUID`, and `SETGID` for
+sandbox mode. If you build a stricter custom overlay, `SETUID`/`SETGID` are
+required for identity switching; `CHOWN` is required for browser-created
+workspace ownership handoff and for `AGENT_TOOL_SANDBOX_CHOWN_PATHS`.
 
 ### One-shot volume init commands
 
@@ -408,7 +435,9 @@ pi-forge app container starts.
 ### App container security context
 
 The app container must start as UID 0 so the server can drop tool children to
-`AGENT_TOOL_UID:GID`:
+`AGENT_TOOL_UID:GID`. `SETUID`/`SETGID` are required for that identity switch;
+`CHOWN` is additionally required only if `AGENT_TOOL_SANDBOX_CHOWN_PATHS` is set
+(otherwise startup fails on the chown step):
 
 ```yaml
 securityContext:
@@ -417,7 +446,7 @@ securityContext:
   allowPrivilegeEscalation: false
   capabilities:
     drop: ["ALL"]
-    add: ["SETUID", "SETGID"]
+    add: ["SETUID", "SETGID", "CHOWN"]
   seccompProfile:
     type: RuntimeDefault
 ```
@@ -434,6 +463,9 @@ env:
     value: "1001"
   - name: AGENT_TOOL_HOME
     value: /home/pi-tools
+  # Optional; requires CHOWN in the app container capabilities above.
+  - name: AGENT_TOOL_SANDBOX_CHOWN_PATHS
+    value: ""
 ```
 
 ### Init container
@@ -547,6 +579,8 @@ identity-switch behavior pi-forge needs:
 
 - UID 0 for the server container
 - `SETUID` and `SETGID` for the app container's sandbox UID/GID switch
+- `CHOWN` for browser-created workspace ownership handoff and the optional
+  `AGENT_TOOL_SANDBOX_CHOWN_PATHS` startup helper
 - `CHOWN` and `FOWNER` for the initContainer's PVC permission bootstrap
 - no privileged mode
 - no host namespaces or host networking
@@ -660,10 +694,12 @@ Security trade-offs:
 - The SCC intentionally allows UID 0 in the container. Keep the grant scoped to
   only the pi-forge ServiceAccount.
 - `SETUID` and `SETGID` are required so the server can switch shell-like tool
-  surfaces to `AGENT_TOOL_UID:GID`; `CHOWN` and `FOWNER` are required by the
-  initContainer that fixes PVC ownership/modes before startup. Do not add
-  broader capabilities unless your own storage or platform policy requires
-  them.
+  surfaces to `AGENT_TOOL_UID:GID`; `CHOWN` lets the app hand browser-created
+  workspace files to the tool identity and is required when
+  `AGENT_TOOL_SANDBOX_CHOWN_PATHS` is configured. `CHOWN` and `FOWNER` are also
+  required by the initContainer that fixes PVC ownership/modes before startup.
+  Do not add broader capabilities unless your own storage or platform policy
+  requires them.
 - `readOnlyRootFilesystem` is not forced by the SCC so operators can use
   overlays, but the shipped pi-forge container should keep
   `readOnlyRootFilesystem: true` and mount `/tmp` as `emptyDir`.
@@ -674,7 +710,8 @@ Security trade-offs:
 Use the Kubernetes initContainer permission commands above, plus either the
 `anyuid` RoleBinding or the custom SCC/RBAC resources. The custom SCC still
 needs UID 0 plus `SETUID`/`SETGID` for the app container and `CHOWN`/`FOWNER`
-for the initContainer; it does not need privileged mode.
+for app startup chown support and the initContainer; it does not need privileged
+mode.
 
 ## pi-subagents package disabled in sandbox mode
 

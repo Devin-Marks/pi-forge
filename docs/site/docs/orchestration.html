@@ -213,7 +213,11 @@ types:</p>
 </tr>
 <tr>
 <td><code>worker.deleted</code></td>
-<td>Worker&#39;s session was deleted (cold or live)</td>
+<td>Worker&#39;s session was deleted externally (cold or live); kills initiated through orchestration tools/UI controls update worker state but do not notify the supervisor about its own action.</td>
+</tr>
+<tr>
+<td><code>worker.detached</code></td>
+<td>Worker&#39;s supervisor link was detached by a human Web UI/API action; <code>orchestrate_detach_worker</code> remains a self-action and does not notify the supervisor.</td>
 </tr>
 </tbody></table>
 <p>When an event lands, the bridge enqueues it AND tries to wake the
@@ -225,6 +229,7 @@ The wake-up only fires when:</p>
 <li>There isn&#39;t already an in-flight wake-up for the current idle
 window (per-supervisor dedupe flag).</li>
 </ol>
+<p>Orchestration-initiated kills are filtered before they reach the inbox, so the supervisor is not woken for its own worker-deletion tool/UI action.</p>
 <p>If the supervisor is mid-turn, the items wait on the queue.
 Recovery fires another wake-up when the supervisor&#39;s own
 <code>agent_end</code> lands — closing the &quot;supervisor finished a turn
@@ -321,11 +326,11 @@ MINIMAL_UI hard gate — they return <code>403 orchestration_disabled</code> or
 </tr>
 <tr>
 <td><code>POST /api/v1/orchestration/sessions/:id/workers/:wid/detach</code></td>
-<td>UI detach.</td>
+<td>Web UI/API detach. Notifies the supervisor before unlinking because a human detached the worker externally.</td>
 </tr>
 <tr>
 <td><code>POST /api/v1/orchestration/sessions/:id/workers/:wid/kill</code></td>
-<td>UI kill (transcript stays on disk; use <code>DELETE /sessions/:id</code> to remove it).</td>
+<td>Programmatic orchestration kill that suppresses self-notification to the supervisor. The Web UI worker Kill button uses generic <code>DELETE /sessions/:id</code> instead so a human-initiated deletion notifies the supervisor.</td>
 </tr>
 <tr>
 <td><code>POST /api/v1/orchestration/sessions/:id/workers/:wid/resume</code></td>

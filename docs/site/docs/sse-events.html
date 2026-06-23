@@ -212,27 +212,33 @@ subscribe to this counter rather than the raw event.</p>
 </thead>
 <tbody><tr>
 <td><code>text_delta</code></td>
-<td><code>{ type: &quot;text_delta&quot;, delta: &quot;...&quot; }</code> — append to streaming text</td>
+<td><code>{ type: &quot;text_delta&quot;, contentIndex, delta: &quot;...&quot;, partial }</code> — append to streaming text</td>
 </tr>
 <tr>
 <td><code>thinking_delta</code></td>
-<td><code>{ type: &quot;thinking_delta&quot;, delta: &quot;...&quot; }</code> — thinking-block token</td>
+<td><code>{ type: &quot;thinking_delta&quot;, contentIndex, delta: &quot;...&quot;, partial }</code> — thinking-block token</td>
 </tr>
 <tr>
-<td><code>tool_use_start</code></td>
-<td><code>{ type: &quot;tool_use_start&quot;, toolCallId, name, input: {} }</code> — tool call begins</td>
+<td><code>toolcall_start</code></td>
+<td><code>{ type: &quot;toolcall_start&quot;, contentIndex, partial }</code> — tool-call block began</td>
 </tr>
 <tr>
-<td><code>tool_use_input_delta</code></td>
-<td><code>{ type: &quot;tool_use_input_delta&quot;, toolCallId, partialInput: &quot;...&quot; }</code> — JSON args streaming</td>
+<td><code>toolcall_delta</code></td>
+<td><code>{ type: &quot;toolcall_delta&quot;, contentIndex, delta: &quot;...&quot;, partial }</code> — JSON args streaming, when the provider exposes them</td>
 </tr>
 <tr>
-<td><code>usage</code></td>
-<td><code>{ type: &quot;usage&quot;, usage: { input, output, cacheRead, cacheWrite, ... } }</code> — token + cost update</td>
+<td><code>toolcall_end</code></td>
+<td><code>{ type: &quot;toolcall_end&quot;, contentIndex, toolCall, partial }</code> — tool-call block complete</td>
 </tr>
 </tbody></table>
 <p>The UI renders streaming text by accumulating <code>text_delta</code> deltas into
-<code>streamingTextBySession[id]</code> (see <code>session-store.ts</code>).</p>
+<code>streamingTextBySession[id]</code> (see <code>session-store.ts</code>). It also reads the
+<code>partial</code> assistant message on <code>toolcall_*</code> updates to show an explicit
+&quot;generating tool call&quot; indicator and any partial JSON args the SDK/provider
+has exposed. Providers differ: Anthropic streams input JSON deltas, Google
+currently emits the function-call args as a complete payload, and other
+adapters may do either. pi-forge forwards what the SDK emits and does not
+invent argument text before it exists.</p>
 <h3><code>message_end</code></h3>
 <pre><code class="language-json">{ &quot;type&quot;: &quot;message_end&quot;, &quot;sessionId&quot;: &quot;01J7...&quot; }
 </code></pre>

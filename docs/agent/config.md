@@ -31,8 +31,10 @@ users log in with the password, scripts use the API key.
 `AGENT_TOOL_SANDBOX_ENABLED` defaults false. When true, config startup requires
 numeric `AGENT_TOOL_UID` and `AGENT_TOOL_GID`, sandbox shell surfaces receive
 `HOME=${AGENT_TOOL_HOME}` (default `/home/pi-tools`), and LDAP bind-password file
-references are rejected. Keep sandbox env parsing in `config.ts` and the CLI
-surface in `cli.ts` together.
+references are rejected. `AGENT_TOOL_SANDBOX_CHOWN_PATHS` is a comma/whitespace
+list of existing non-secret paths that startup may recursively chown to the tool
+UID/GID; keep its allowed scope narrow. Keep sandbox env parsing in `config.ts`
+and the CLI surface in `cli.ts` together.
 
 ---
 

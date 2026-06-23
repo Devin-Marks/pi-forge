@@ -31,6 +31,9 @@ const piConfig = resolve(workspace, ".pi", "agent");
 const forgeData = resolve(tmp, "forge-data");
 const toolHome = resolve(tmp, "pi-tools-home");
 const outside = resolve(tmp, "outside");
+const chownWorkspaceTarget = resolve(workspace, "chown-me");
+const chownAttemptTarget = resolve(workspace, "chown-attempt");
+const chownSkillsTarget = resolve(piConfig, "skills", "startup-owned");
 mkdirSync(workspace, { recursive: true });
 mkdirSync(project, { recursive: true });
 mkdirSync(shared, { recursive: true });
@@ -38,6 +41,11 @@ mkdirSync(piConfig, { recursive: true });
 mkdirSync(forgeData, { recursive: true });
 mkdirSync(toolHome, { recursive: true });
 mkdirSync(outside, { recursive: true });
+mkdirSync(chownWorkspaceTarget, { recursive: true });
+mkdirSync(chownAttemptTarget, { recursive: true });
+mkdirSync(chownSkillsTarget, { recursive: true });
+writeFileSync(resolve(chownWorkspaceTarget, "nested.txt"), "startup chown workspace\n");
+writeFileSync(resolve(chownSkillsTarget, "skill.txt"), "startup chown skill\n");
 writeFileSync(resolve(project, "hello.txt"), "hello workspace\n");
 writeFileSync(resolve(shared, "shared.txt"), "hello shared workspace\n");
 writeFileSync(resolve(outside, "secret.txt"), "outside secret\n");
@@ -55,6 +63,7 @@ process.env.AGENT_TOOL_SANDBOX_ENABLED = "true";
 process.env.AGENT_TOOL_UID = String(process.getuid?.() ?? 1000);
 process.env.AGENT_TOOL_GID = String(process.getgid?.() ?? 1000);
 process.env.AGENT_TOOL_HOME = toolHome;
+process.env.AGENT_TOOL_SANDBOX_CHOWN_PATHS = `${chownWorkspaceTarget},${chownSkillsTarget}`;
 process.env.SERVE_CLIENT = "false";
 
 try {
@@ -114,6 +123,82 @@ try {
       },
     );
     assert("LDAP file refs rejected", ldapFile.status !== 0, ldapFile.stderr);
+
+    const badChown = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+          const { applySandboxStartupChowns } = await import(${JSON.stringify(
+            resolve(repoRoot, "packages/server/dist/sandbox-startup-permissions.js"),
+          )});
+          await applySandboxStartupChowns();
+        `,
+      ],
+      {
+        env: {
+          ...baseEnv,
+          AGENT_TOOL_UID: String(process.getuid?.() ?? 1000),
+          AGENT_TOOL_GID: String(process.getgid?.() ?? 1000),
+          AGENT_TOOL_HOME: toolHome,
+          AGENT_TOOL_SANDBOX_CHOWN_PATHS: outside,
+        },
+        encoding: "utf8",
+      },
+    );
+    assert(
+      "startup chown outside allowed roots is rejected",
+      badChown.status !== 0,
+      badChown.stderr,
+    );
+
+    const currentUid = process.getuid?.() ?? 1000;
+    const currentGid = process.getgid?.() ?? 1000;
+    const targetUid = currentUid === 1 ? 2 : 1;
+    const targetGid = currentGid === 1 ? 2 : 1;
+    const chownAttempt = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+          import { statSync } from "node:fs";
+          const { applySandboxStartupChowns } = await import(${JSON.stringify(
+            resolve(repoRoot, "packages/server/dist/sandbox-startup-permissions.js"),
+          )});
+          await applySandboxStartupChowns();
+          const st = statSync(${JSON.stringify(chownAttemptTarget)});
+          console.log(JSON.stringify({ uid: st.uid, gid: st.gid }));
+        `,
+      ],
+      {
+        env: {
+          ...baseEnv,
+          AGENT_TOOL_UID: String(targetUid),
+          AGENT_TOOL_GID: String(targetGid),
+          AGENT_TOOL_HOME: toolHome,
+          AGENT_TOOL_SANDBOX_CHOWN_PATHS: chownAttemptTarget,
+        },
+        encoding: "utf8",
+      },
+    );
+    if (currentUid === 0) {
+      const statJson = chownAttempt.stdout.trim().split(/\r?\n/).at(-1) ?? "{}";
+      const changed = JSON.parse(statJson) as { uid?: number; gid?: number };
+      assert("startup chown changes ownership when privileged", chownAttempt.status === 0);
+      assert(
+        "startup chown target has requested owner/group",
+        changed.uid === targetUid && changed.gid === targetGid,
+        chownAttempt.stdout,
+      );
+    } else {
+      assert(
+        "startup chown attempts ownership change and fails without privilege",
+        chownAttempt.status !== 0 && /EPERM|operation not permitted/i.test(chownAttempt.stderr),
+        chownAttempt.stderr || chownAttempt.stdout,
+      );
+    }
   }
 
   const { resolveAgentToolPath } = (await import(
@@ -150,6 +235,21 @@ try {
       opts?: { expectedSha256?: string; overwrite?: boolean },
     ) => Promise<{ path: string; size: number; sha256: string }>;
   };
+  const { applySandboxStartupChowns } = (await import(
+    resolve(repoRoot, "packages/server/dist/sandbox-startup-permissions.js")
+  )) as { applySandboxStartupChowns: () => Promise<void> };
+
+  console.log("\nsandbox startup chown");
+  await applySandboxStartupChowns();
+  assert(
+    "startup chown workspace target still exists",
+    statSync(chownWorkspaceTarget).isDirectory(),
+  );
+  assert(
+    "startup chown nested file still exists",
+    statSync(resolve(chownWorkspaceTarget, "nested.txt")).isFile(),
+  );
+  assert("startup chown skills target still exists", statSync(chownSkillsTarget).isDirectory());
 
   console.log("\nsandbox shell env");
   const shellEnv = toolShellEnv({ ...process.env, HOME: "/home/pi", USER: "pi", LOGNAME: "pi" });

@@ -45,6 +45,7 @@ import { disposeAllSessions } from "./session-registry.js";
 import { cleanupArchivedSessions } from "./session-archive.js";
 import { disposeAllPtys, installPtyExitHandler } from "./pty-manager.js";
 import { logSecretHygieneState } from "./agent-resource-loader.js";
+import { applySandboxStartupChowns } from "./sandbox-startup-permissions.js";
 
 /**
  * Per-route auth metadata. Routes that should skip the auth preHandler set
@@ -542,6 +543,13 @@ export async function start(): Promise<void> {
       process.exit(1);
     }
   }
+  try {
+    await applySandboxStartupChowns();
+  } catch (err) {
+    console.error("[pi-forge] failed to apply sandbox startup chowns:", (err as Error).message);
+    process.exit(1);
+  }
+
   const fastify = await buildServer();
   // One-line confirmation of optional security knobs that are easy to
   // typo or forget to wire through. If you add another opt-in

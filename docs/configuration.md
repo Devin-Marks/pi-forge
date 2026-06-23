@@ -77,6 +77,7 @@ or shell environment. The most-touched ones:
 | `AGENT_TOOL_UID` | (unset) | Numeric UID used for sandboxed bash/process/terminal/quick-action/exec children. Required only when sandbox is enabled. |
 | `AGENT_TOOL_GID` | (unset) | Numeric GID used for sandboxed bash/process/terminal/quick-action/exec children. Required only when sandbox is enabled. |
 | `AGENT_TOOL_HOME` | `/home/pi-tools` | Writable HOME injected into sandboxed bash/process/terminal/quick-action/exec children. The Docker image creates this directory owned by `pi-tools`. |
+| `AGENT_TOOL_SANDBOX_CHOWN_PATHS` | (empty) | Comma- or whitespace-separated existing paths to recursively `chown` to `AGENT_TOOL_UID:AGENT_TOOL_GID` at server startup when sandbox mode is enabled. Paths are limited to `/workspace`, `AGENT_TOOL_HOME`, and non-secret Pi resource subtrees (`skills`, `npm`, `git`, `extensions`, `prompts`, `themes`). |
 
 Production-tuning knobs (rate limits, JWT lifetime, TLS / proxy posture)
 are documented in [`deployment.md`](./deployment.md).
@@ -94,6 +95,13 @@ When this mode is enabled, LDAP bind password file references are
 rejected (`LDAP_BIND_PASSWORD_FILE` and CLI/env `@file` forms). Use a
 literal environment value or an external secret broker instead; child
 tool processes receive the scrubbed env and do not inherit it.
+
+`AGENT_TOOL_SANDBOX_CHOWN_PATHS` is an optional startup helper for
+container or pod volume ownership. Use it only for non-secret paths that
+should belong to the tool identity (for example `/workspace` or
+`${PI_CONFIG_DIR}/skills`). Pi-forge refuses protected paths such as
+`${FORGE_DATA_DIR}`, `${PI_CONFIG_DIR}` itself, and known secret config
+files.
 
 ### LDAP browser login
 

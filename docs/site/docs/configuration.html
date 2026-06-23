@@ -95,7 +95,10 @@ single source of truth — adding a new env var means adding one row to
 the <code>FLAGS</code> table there.</p>
 <h2>Environment variables</h2>
 <p>The exhaustive list lives in <code>pi-forge --help</code> (and the <code>FLAGS</code> table
-in <code>cli.ts</code>). The most-touched ones:</p>
+in <code>cli.ts</code>). Docker&#39;s <code>.env.example</code> intentionally mirrors only a
+small common subset; use this section when adding advanced values to a
+compose override (or compose <code>environment:</code> block), Kubernetes manifest,
+or shell environment. The most-touched ones:</p>
 <table>
 <thead>
 <tr>
@@ -138,6 +141,11 @@ in <code>cli.ts</code>). The most-touched ones:</p>
 <td><code>UI_PASSWORD_FILE</code></td>
 <td>(unset)</td>
 <td>File containing the browser login password (for Kubernetes/OpenShift mounted Secrets). Takes precedence over <code>UI_PASSWORD</code>. Equivalent CLI: <code>--ui-password-file</code>; CLI <code>--ui-password @/path</code> is also supported.</td>
+</tr>
+<tr>
+<td><code>FORGE_LOCAL_ADMIN_USERNAME</code></td>
+<td><code>admin</code></td>
+<td>Username that selects the local admin password when LDAP login is enabled. Equivalent CLI: <code>--local-admin-username</code>. Must be 1-256 characters using only letters, numbers, <code>.</code>, <code>_</code>, <code>@</code>, or <code>-</code>.</td>
 </tr>
 <tr>
 <td><code>API_KEY</code></td>
@@ -210,6 +218,26 @@ in <code>cli.ts</code>). The most-touched ones:</p>
 <td>Hide terminal / git / last-turn / providers / agent-settings panels. Frontend gate; server routes unchanged. ALSO hard-disables webhook configuration, session orchestration, and the quick-actions runner.</td>
 </tr>
 <tr>
+<td><code>AUTH_BANNER_TEXT</code></td>
+<td>(unset)</td>
+<td>Optional public banner shown below the login prompt. Literal newlines/carriage returns are preserved; <code>\\n</code> and <code>\\r</code> escapes are decoded for single-line env/CLI surfaces. Do not put secrets here: it is exposed by public <code>/api/v1/ui-config</code>.</td>
+</tr>
+<tr>
+<td><code>AUTH_BANNER_HTML</code></td>
+<td><code>false</code></td>
+<td>When true, renders <code>AUTH_BANNER_TEXT</code> as sanitized HTML instead of plain text. Scripts, styles, event handlers, and unsafe links are stripped client-side. Leave false unless you need links or simple formatting.</td>
+</tr>
+<tr>
+<td><code>AUTH_LOGO_URL</code></td>
+<td>(unset)</td>
+<td>Optional absolute <code>http://</code> or <code>https://</code> URL for the login/auth logo (and app header logo). Exposed as public UI config.</td>
+</tr>
+<tr>
+<td><code>AUTH_COLOR_SCHEME</code></td>
+<td>(unset)</td>
+<td>Optional comma-separated list of exactly 8 hex colors for login/auth pages only: page background, card background, border, text, muted text, button background, button text, button hover background. Example: <code>#ffffff,#2563eb,#1d4ed8,#ffffff,#dbeafe,#2563eb,#ffffff,#1d4ed8</code>. Only <code>#rgb</code> and <code>#rrggbb</code> forms are accepted; invalid values fail startup rather than becoming CSS.</td>
+</tr>
+<tr>
 <td><code>TRUST_PROXY</code></td>
 <td><code>false</code></td>
 <td>Set when behind a reverse proxy so <code>req.ip</code> is the real client (required for per-user login rate limits).</td>
@@ -244,6 +272,16 @@ in <code>cli.ts</code>). The most-touched ones:</p>
 <td>(unset)</td>
 <td>Numeric GID used for sandboxed bash/process/terminal/quick-action/exec children. Required only when sandbox is enabled.</td>
 </tr>
+<tr>
+<td><code>AGENT_TOOL_HOME</code></td>
+<td><code>/home/pi-tools</code></td>
+<td>Writable HOME injected into sandboxed bash/process/terminal/quick-action/exec children. The Docker image creates this directory owned by <code>pi-tools</code>.</td>
+</tr>
+<tr>
+<td><code>AGENT_TOOL_SANDBOX_CHOWN_PATHS</code></td>
+<td>(empty)</td>
+<td>Comma- or whitespace-separated existing paths to recursively <code>chown</code> to <code>AGENT_TOOL_UID:AGENT_TOOL_GID</code> at server startup when sandbox mode is enabled. Paths are limited to <code>/workspace</code>, <code>AGENT_TOOL_HOME</code>, and non-secret Pi resource subtrees (<code>skills</code>, <code>npm</code>, <code>git</code>, <code>extensions</code>, <code>prompts</code>, <code>themes</code>).</td>
+</tr>
 </tbody></table>
 <p>Production-tuning knobs (rate limits, JWT lifetime, TLS / proxy posture)
 are documented in <a href="./deployment.md"><code>deployment.md</code></a>.</p>
@@ -251,19 +289,26 @@ are documented in <a href="./deployment.md"><code>deployment.md</code></a>.</p>
 <p>The identity sandbox is off by default and has a strict mount-permission
 contract. Read <a href="./agent-tool-sandbox.md"><code>agent-tool-sandbox.md</code></a> before
 enabling it. In short: pi-forge runs the server as root, drops
-model/user shell surfaces to <code>AGENT_TOOL_UID:GID</code>, scopes model file
-access, and requires workspace / Pi config / forge data mounts to have
-specific ownership and mode bits.</p>
+model/user shell surfaces to <code>AGENT_TOOL_UID:GID</code>, points their <code>HOME</code>
+at <code>AGENT_TOOL_HOME</code>, scopes model file access, and requires workspace /
+Pi config / forge data mounts to have specific ownership and mode bits.</p>
 <p>When this mode is enabled, LDAP bind password file references are
 rejected (<code>LDAP_BIND_PASSWORD_FILE</code> and CLI/env <code>@file</code> forms). Use a
 literal environment value or an external secret broker instead; child
 tool processes receive the scrubbed env and do not inherit it.</p>
+<p><code>AGENT_TOOL_SANDBOX_CHOWN_PATHS</code> is an optional startup helper for
+container or pod volume ownership. Use it only for non-secret paths that
+should belong to the tool identity (for example <code>/workspace</code> or
+<code>${PI_CONFIG_DIR}/skills</code>). Pi-forge refuses protected paths such as
+<code>${FORGE_DATA_DIR}</code>, <code>${PI_CONFIG_DIR}</code> itself, and known secret config
+files.</p>
 <h3>LDAP browser login</h3>
 <p>LDAP is opt-in and off by default. When <code>LDAP_ENABLED=true</code>, pi-forge&#39;s
-login form asks for a username and password. Username <code>admin</code> (and
-password-only API calls) always use the local pi-forge admin password
-from <code>UI_PASSWORD</code>, <code>UI_PASSWORD_FILE</code>, or the persisted password hash;
-all other usernames use LDAP. The server binds with the
+login form asks for a username and password. The configured local admin
+username (default <code>admin</code>, set with <code>FORGE_LOCAL_ADMIN_USERNAME</code> or
+<code>--local-admin-username</code>) and password-only API calls always use the
+local pi-forge admin password from <code>UI_PASSWORD</code>, <code>UI_PASSWORD_FILE</code>, or
+the persisted password hash; all other usernames use LDAP. The server binds with the
 configured service account, searches under <code>LDAP_BASE_DN</code> using
 <code>LDAP_USER_FILTER</code>, optionally checks the returned user&#39;s <code>memberOf</code>
 (or <code>LDAP_GROUP_ATTRIBUTE</code>) against <code>LDAP_REQUIRED_GROUP_DN</code>, and then
@@ -290,12 +335,13 @@ service-account passwords in container images or command-line history;
 use a mounted secret file or the CLI <code>--ldap-bind-password @/path/to/file</code>
 form instead.</p>
 <p>If both LDAP and local <code>UI_PASSWORD</code> / <code>UI_PASSWORD_FILE</code> / stored-password
-auth are present, username <code>admin</code> and password-only login use the local
-pi-forge password. Other usernames use LDAP. The username <code>admin</code> is
-reserved for local pi-forge admin auth while LDAP is enabled; an LDAP
-account named <code>admin</code> cannot be used unless this policy changes later.
-This preserves existing single-tenant admin access while allowing LDAP
-to be enabled during migration. LDAP login attempts write sanitized
+auth are present, the configured local admin username and password-only
+login use the local pi-forge password. Other usernames use LDAP. The
+local admin username is reserved for local pi-forge admin auth while
+LDAP is enabled; an LDAP account with that name cannot be used unless
+you choose a different <code>FORGE_LOCAL_ADMIN_USERNAME</code>. This preserves
+existing single-tenant admin access while allowing LDAP to be enabled
+during migration. LDAP login attempts write sanitized
 <code>[ldap]</code> lines to the server logs with the URL, base DN, username, TLS
 validation mode, and failure category; passwords are not logged.</p>
 <h2>Pi SDK config files</h2>
@@ -525,8 +571,18 @@ or render path).</p>
 <td>User code; sessions under <code>.pi/sessions/</code> here</td>
 </tr>
 </tbody></table>
-<p>See <a href="./containers.md"><code>containers.md</code></a> for UID/GID handling, image
-internals, and override env vars.</p>
+<p><code>docker/.env.example</code> intentionally keeps to common values (host port,
+UID/GID, bind mounts, auth, logging/proxy hints). Less-used values such
+as <code>JWT_SECRET</code>, <code>CORS_ORIGIN</code>, <code>MINIMAL_UI</code>, LDAP settings,
+orchestration toggles, rate limits, terminal tuning, and sandbox mode
+remain supported; add them to your own compose override or compose
+<code>environment:</code> block using the reference above when needed.</p>
+<p>In regular/non-sandbox containers, <code>$HOME</code> is <code>/home/pi</code> and is writable by the
+<code>pi</code> user so terminal/tool CLIs can create per-user files (<code>~/.config/gh</code>,
+<code>~/.gitconfig</code>, caches, and similar). In sandbox mode, tool/terminal children
+instead receive <code>HOME=${AGENT_TOOL_HOME}</code> (<code>/home/pi-tools</code> in the Docker image).
+See <a href="./containers.md"><code>containers.md</code></a> for UID/GID handling, image internals,
+sandbox-mode differences, and override env vars.</p>
 <h2>See also</h2>
 <ul>
 <li><a href="./deployment.md"><code>deployment.md</code></a> — production deploy with TLS at a
