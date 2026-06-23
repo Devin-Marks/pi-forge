@@ -6,6 +6,7 @@ import { sessionCount } from "../session-registry.js";
 import { ptyCount } from "../pty-manager.js";
 import { config, passwordAuthEnabled } from "../config.js";
 import { isOrchestrationEnabled } from "../orchestration/config.js";
+import { DEFAULT_THEME_COLORS, readThemeConfig, THEME_COLOR_KEYS } from "../theme-config.js";
 
 /**
  * Read the server's own package.json once at module load. Used by the
@@ -50,6 +51,26 @@ const SERVER_VERSION: string = (() => {
   }
   return "0.0.0";
 })();
+
+const themeColorsSchema = {
+  type: "object",
+  required: [...THEME_COLOR_KEYS],
+  additionalProperties: false,
+  properties: Object.fromEntries(
+    THEME_COLOR_KEYS.map((key) => [key, { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }]),
+  ),
+} as const;
+
+const themeConfigSchema = {
+  type: "object",
+  required: ["enabled", "colors", "defaults"],
+  additionalProperties: false,
+  properties: {
+    enabled: { type: "boolean" },
+    colors: themeColorsSchema,
+    defaults: themeColorsSchema,
+  },
+} as const;
 
 export const healthRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get(
@@ -103,6 +124,7 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
               "version",
               "passwordAuthEnabled",
               "orchestrationEnabled",
+              "serverTheme",
             ],
             properties: {
               // True when MINIMAL_UI is set: hides terminal, git pane,
@@ -128,17 +150,23 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
               // by default, but false when disabled by instance config
               // OR when MINIMAL_UI is true (MINIMAL_UI is a hard gate).
               orchestrationEnabled: { type: "boolean" },
+              // Global server-side color overrides for broad UI surfaces.
+              serverTheme: themeConfigSchema,
             },
           },
         },
       },
     },
-    async () => ({
-      minimal: config.minimalUi,
-      workspaceRoot: config.workspacePath,
-      version: SERVER_VERSION,
-      passwordAuthEnabled: passwordAuthEnabled(),
-      orchestrationEnabled: isOrchestrationEnabled(),
-    }),
+    async () => {
+      const serverTheme = await readThemeConfig();
+      return {
+        minimal: config.minimalUi,
+        workspaceRoot: config.workspacePath,
+        version: SERVER_VERSION,
+        passwordAuthEnabled: passwordAuthEnabled(),
+        orchestrationEnabled: isOrchestrationEnabled(),
+        serverTheme: { ...serverTheme, defaults: DEFAULT_THEME_COLORS },
+      };
+    },
   );
 };

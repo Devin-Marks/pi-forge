@@ -7,6 +7,7 @@
  *   - `models.json`           — pi-owned custom providers
  *   - `skills-overrides.json` — pi-forge-private per-project skill enable/disable state
  *   - `tool-overrides.json`   — pi-forge-private per-project tool enable/disable state
+ *   - `theme.json`            — pi-forge-private global UI color theme
  *
  * The two `*-overrides.json` files live in `${FORGE_DATA_DIR}` (not
  * `${PI_CONFIG_DIR}` like the other three). They're included because
@@ -64,6 +65,7 @@ const ALLOWED_FILES = [
   "models.json",
   "skills-overrides.json",
   "tool-overrides.json",
+  "theme.json",
 ] as const;
 type AllowedFile = (typeof ALLOWED_FILES)[number];
 const ALLOWED_SET: ReadonlySet<string> = new Set<string>(ALLOWED_FILES);
@@ -82,6 +84,7 @@ const TARGETS: Record<AllowedFile, () => string> = {
   "models.json": () => join(config.piConfigDir, "models.json"),
   "skills-overrides.json": () => config.skillOverridesFile,
   "tool-overrides.json": () => config.toolOverridesFile,
+  "theme.json": () => join(config.forgeDataDir, "theme.json"),
 };
 
 export interface ExportResult {

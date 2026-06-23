@@ -25,7 +25,10 @@ import {
   type BrowseEntry,
   type BrowseResponse,
   type HealthResponse,
+  SERVER_THEME_COLOR_KEYS,
   type SandboxSettingsResponse,
+  type ServerThemeConfigResponse,
+  type ServerThemeColors,
   type UiConfigResponse,
   type UnifiedSession,
   type SessionSummary,
@@ -157,6 +160,34 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
     version,
     passwordAuthEnabled,
     orchestrationEnabled,
+    serverTheme:
+      value.serverTheme === undefined ? undefined : vServerThemeConfig(value.serverTheme, status),
+  };
+}
+
+function isHexColor(value: unknown): value is string {
+  return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
+}
+
+function vServerThemeColors(value: unknown, status: number, path: string): ServerThemeColors {
+  if (!isObject(value)) fail(status, `${path}: expected object`);
+  const out = {} as ServerThemeColors;
+  for (const key of SERVER_THEME_COLOR_KEYS) {
+    const color = value[key];
+    if (!isHexColor(color)) fail(status, `${path}.${key}: expected #rrggbb`);
+    out[key] = color;
+  }
+  return out;
+}
+
+function vServerThemeConfig(value: unknown, status: number): ServerThemeConfigResponse {
+  if (!isObject(value) || typeof value.enabled !== "boolean") {
+    fail(status, "expected server theme config");
+  }
+  return {
+    enabled: value.enabled,
+    colors: vServerThemeColors(value.colors, status, "colors"),
+    defaults: vServerThemeColors(value.defaults, status, "defaults"),
   };
 }
 
@@ -1894,6 +1925,10 @@ export const api = {
       method: "PUT",
       body: { toolEnv },
     }),
+  getServerTheme: () => request("/api/v1/config/theme", vServerThemeConfig),
+  updateServerTheme: (theme: { enabled: boolean; colors: ServerThemeColors }) =>
+    request("/api/v1/config/theme", vServerThemeConfig, { method: "PUT", body: theme }),
+  resetServerTheme: () => request("/api/v1/config/theme", vServerThemeConfig, { method: "DELETE" }),
   getAuthSummary: () => request("/api/v1/config/auth", vAuthSummary),
   setApiKey: (provider: string, apiKey: string) =>
     request(

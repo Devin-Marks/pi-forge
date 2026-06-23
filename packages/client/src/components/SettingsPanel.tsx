@@ -10,7 +10,11 @@ import {
   type ProvidersListing,
   type PromptSummary,
   type SkillDiagnostic,
+  SERVER_THEME_COLOR_KEYS,
   type SandboxSettingsResponse,
+  type ServerThemeColorKey,
+  type ServerThemeColors,
+  type ServerThemeConfigResponse,
   type SkillSummary,
   type ToolListing,
 } from "../lib/api-client";
@@ -2541,40 +2545,403 @@ function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => vo
 function AppearanceTab() {
   const theme = useThemeStore((s) => s.theme);
   const setTheme = useThemeStore((s) => s.setTheme);
+  const currentServerTheme = useUiConfigStore((s) => s.serverTheme);
+  const setServerTheme = useUiConfigStore((s) => s.setServerTheme);
+  const [serverThemeDraft, setServerThemeDraft] = useState<ServerThemeConfigResponse | undefined>(
+    currentServerTheme,
+  );
+  const themeImportRef = useRef<HTMLInputElement>(null);
+  const [baseThemeId, setBaseThemeId] = useState<ThemeId>(theme);
+  const [serverThemeBusy, setServerThemeBusy] = useState(false);
+  const [serverThemeError, setServerThemeError] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getServerTheme()
+      .then((next) => {
+        if (cancelled) return;
+        setServerThemeDraft(next);
+        setServerTheme(next);
+        setServerThemeError(undefined);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setServerThemeError(err instanceof ApiError ? err.code : (err as Error).message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [setServerTheme]);
+
+  const updateDraftColor = (key: ServerThemeColorKey, value: string): void => {
+    setServerThemeDraft((prev) => {
+      if (prev === undefined) return prev;
+      return { ...prev, colors: { ...prev.colors, [key]: value } };
+    });
+  };
+
+  const applyBaseTheme = (base: ThemeId): void => {
+    setServerThemeDraft((prev) => {
+      if (prev === undefined) return prev;
+      return { ...prev, enabled: true, colors: SERVER_THEME_BASE_COLORS[base] };
+    });
+  };
+
+  const exportServerTheme = (): void => {
+    if (serverThemeDraft === undefined) return;
+    const payload = {
+      kind: "pi-forge-server-theme",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      enabled: serverThemeDraft.enabled,
+      colors: serverThemeDraft.colors,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "pi-forge-theme.json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const importServerTheme = async (file: File): Promise<void> => {
+    setServerThemeBusy(true);
+    setServerThemeError(undefined);
+    try {
+      const parsed = JSON.parse(await file.text()) as unknown;
+      const imported = parseImportedServerTheme(parsed, serverThemeDraft?.defaults);
+      const saved = await api.updateServerTheme(imported);
+      setServerThemeDraft(saved);
+      setServerTheme(saved);
+    } catch (err) {
+      setServerThemeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setServerThemeBusy(false);
+      if (themeImportRef.current !== null) themeImportRef.current.value = "";
+    }
+  };
+
+  const saveServerTheme = async (): Promise<void> => {
+    if (serverThemeDraft === undefined) return;
+    setServerThemeBusy(true);
+    setServerThemeError(undefined);
+    try {
+      const saved = await api.updateServerTheme({
+        enabled: serverThemeDraft.enabled,
+        colors: serverThemeDraft.colors,
+      });
+      setServerThemeDraft(saved);
+      setServerTheme(saved);
+    } catch (err) {
+      setServerThemeError(err instanceof ApiError ? err.message : (err as Error).message);
+    } finally {
+      setServerThemeBusy(false);
+    }
+  };
+
+  const resetServerTheme = async (): Promise<void> => {
+    setServerThemeBusy(true);
+    setServerThemeError(undefined);
+    try {
+      const reset = await api.resetServerTheme();
+      setServerThemeDraft(reset);
+      setServerTheme(reset);
+    } catch (err) {
+      setServerThemeError(err instanceof ApiError ? err.message : (err as Error).message);
+    } finally {
+      setServerThemeBusy(false);
+    }
+  };
+
   return (
-    <div className="space-y-4">
-      <div>
-        <h2 className="text-sm font-semibold text-neutral-100">Theme</h2>
-        <p className="mt-1 text-xs text-neutral-400">
-          Sets the color palette for the chrome, editor, and terminal. Persisted in this browser
-          only — open in another browser to use a different theme there.
-        </p>
-      </div>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {THEME_DEFS.map((def) => {
-          const active = def.id === theme;
-          return (
-            <button
-              key={def.id}
-              onClick={() => setTheme(def.id)}
-              className={`flex items-center justify-between gap-3 rounded border px-3 py-2 text-left ${
-                active
-                  ? "border-neutral-400 bg-neutral-800"
-                  : "border-neutral-700 hover:border-neutral-500"
-              }`}
-            >
-              <div>
-                <div className="text-sm text-neutral-100">{def.label}</div>
-                <div className="text-[10px] uppercase tracking-wider text-neutral-500">
-                  {def.mode}
+    <div className="space-y-6">
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-sm font-semibold text-neutral-100">Theme</h2>
+          <p className="mt-1 text-xs text-neutral-400">
+            Sets the base color palette for the chrome, editor, and terminal. Persisted in this
+            browser only — open in another browser to use a different base theme there.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {THEME_DEFS.map((def) => {
+            const active = def.id === theme;
+            return (
+              <button
+                key={def.id}
+                onClick={() => setTheme(def.id)}
+                className={`flex items-center justify-between gap-3 rounded border px-3 py-2 text-left ${
+                  active
+                    ? "border-neutral-400 bg-neutral-800"
+                    : "border-neutral-700 hover:border-neutral-500"
+                }`}
+              >
+                <div>
+                  <div className="text-sm text-neutral-100">{def.label}</div>
+                  <div className="text-[10px] uppercase tracking-wider text-neutral-500">
+                    {def.mode}
+                  </div>
                 </div>
-              </div>
-              <ThemeSwatch id={def.id} />
-            </button>
-          );
-        })}
+                <ThemeSwatch id={def.id} />
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="space-y-3 border-t border-neutral-800 pt-4">
+        <div>
+          <h2 className="text-sm font-semibold text-neutral-100">Global custom colors</h2>
+          <p className="mt-1 text-xs text-neutral-400">
+            Server-side overrides for broad UI surfaces: app background, chat bubbles, text,
+            highlights, and selection. Applies globally to every browser using this instance.
+          </p>
+        </div>
+        {serverThemeError !== undefined && (
+          <div className="rounded border border-red-800 bg-red-950/40 px-3 py-2 text-xs text-red-200">
+            {serverThemeError}
+          </div>
+        )}
+        {serverThemeDraft === undefined ? (
+          <p className="text-xs text-neutral-500">Loading custom colors…</p>
+        ) : (
+          <>
+            <label className="flex items-center gap-2 text-sm text-neutral-200">
+              <input
+                type="checkbox"
+                checked={serverThemeDraft.enabled}
+                onChange={(e) =>
+                  setServerThemeDraft((prev) =>
+                    prev === undefined ? prev : { ...prev, enabled: e.target.checked },
+                  )
+                }
+              />
+              Enable global custom colors
+            </label>
+            <div className="flex flex-wrap items-end gap-2 rounded border border-neutral-800 bg-neutral-900/30 p-2">
+              <label className="min-w-48 flex-1 text-xs text-neutral-400">
+                Start from appearance
+                <select
+                  value={baseThemeId}
+                  onChange={(e) => setBaseThemeId(e.target.value as ThemeId)}
+                  className="mt-1 w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100"
+                >
+                  {THEME_DEFS.map((def) => (
+                    <option key={def.id} value={def.id}>
+                      {def.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                onClick={() => applyBaseTheme(baseThemeId)}
+                disabled={serverThemeBusy}
+                className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:border-neutral-500 disabled:opacity-50"
+              >
+                Copy colors
+              </button>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {SERVER_THEME_COLOR_KEYS.map((key) => (
+                <ServerThemeColorField
+                  key={key}
+                  colorKey={key}
+                  value={serverThemeDraft.colors[key]}
+                  defaultValue={serverThemeDraft.defaults[key]}
+                  onChange={(value) => updateDraftColor(key, value)}
+                />
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => void saveServerTheme()}
+                disabled={serverThemeBusy}
+                className="rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:opacity-50"
+              >
+                Save custom colors
+              </button>
+              <button
+                onClick={exportServerTheme}
+                disabled={serverThemeBusy}
+                className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:border-neutral-500 disabled:opacity-50"
+              >
+                Export theme
+              </button>
+              <button
+                onClick={() => themeImportRef.current?.click()}
+                disabled={serverThemeBusy}
+                className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:border-neutral-500 disabled:opacity-50"
+              >
+                Import theme
+              </button>
+              <input
+                ref={themeImportRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.currentTarget.files?.[0];
+                  if (file !== undefined) void importServerTheme(file);
+                }}
+              />
+              <button
+                onClick={() => void resetServerTheme()}
+                disabled={serverThemeBusy}
+                className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:border-neutral-500 disabled:opacity-50"
+              >
+                Reset
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
+  );
+}
+
+const SERVER_THEME_LABELS: Record<ServerThemeColorKey, string> = {
+  appBackground: "App background",
+  panelBackground: "Panel background",
+  userBubbleBackground: "User bubble",
+  assistantBubbleBackground: "Assistant bubble",
+  primaryText: "Text 1 — primary",
+  secondaryText: "Text 2 — secondary",
+  mutedText: "Text 3 — muted",
+  highlightBackground: "Highlight background",
+  highlightText: "Highlight text",
+  selectionBackground: "Selection background",
+};
+
+const SERVER_THEME_BASE_COLORS: Record<ThemeId, ServerThemeColors> = {
+  dark: {
+    appBackground: "#0a0a0a",
+    panelBackground: "#171717",
+    userBubbleBackground: "#262626",
+    assistantBubbleBackground: "#171717",
+    primaryText: "#f5f5f5",
+    secondaryText: "#d4d4d4",
+    mutedText: "#a3a3a3",
+    highlightBackground: "#facc15",
+    highlightText: "#111827",
+    selectionBackground: "#525252",
+  },
+  light: {
+    appBackground: "#ffffff",
+    panelBackground: "#f3f4f6",
+    userBubbleBackground: "#e5e7eb",
+    assistantBubbleBackground: "#f3f4f6",
+    primaryText: "#171717",
+    secondaryText: "#374151",
+    mutedText: "#64748b",
+    highlightBackground: "#fde68a",
+    highlightText: "#78350f",
+    selectionBackground: "#cbd5e1",
+  },
+  dracula: {
+    appBackground: "#191a21",
+    panelBackground: "#21222c",
+    userBubbleBackground: "#2a2c3d",
+    assistantBubbleBackground: "#21222c",
+    primaryText: "#f8f8f2",
+    secondaryText: "#c8c8c0",
+    mutedText: "#9c9ca0",
+    highlightBackground: "#ffb86c",
+    highlightText: "#191a21",
+    selectionBackground: "#44475a",
+  },
+  "solarized-dark": {
+    appBackground: "#002b36",
+    panelBackground: "#04212a",
+    userBubbleBackground: "#052b36",
+    assistantBubbleBackground: "#04212a",
+    primaryText: "#eee8d5",
+    secondaryText: "#93a1a1",
+    mutedText: "#839496",
+    highlightBackground: "#b58900",
+    highlightText: "#002b36",
+    selectionBackground: "#586e75",
+  },
+  "catppuccin-mocha": {
+    appBackground: "#11111b",
+    panelBackground: "#1e1e2e",
+    userBubbleBackground: "#313244",
+    assistantBubbleBackground: "#1e1e2e",
+    primaryText: "#cdd6f4",
+    secondaryText: "#9399b2",
+    mutedText: "#7f849c",
+    highlightBackground: "#f9e2af",
+    highlightText: "#11111b",
+    selectionBackground: "#585b70",
+  },
+};
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function isHexColor(value: string): boolean {
+  return /^#[0-9a-fA-F]{6}$/.test(value);
+}
+
+function parseImportedServerTheme(
+  input: unknown,
+  fallbackDefaults: ServerThemeColors | undefined,
+): { enabled: boolean; colors: ServerThemeColors } {
+  const source = isObject(input) && isObject(input.colors) ? input.colors : input;
+  if (!isObject(source)) throw new Error("Theme import must be a JSON object with colors.");
+  const defaults = fallbackDefaults ?? SERVER_THEME_BASE_COLORS.dark;
+  const colors = { ...defaults };
+  for (const key of SERVER_THEME_COLOR_KEYS) {
+    const value = source[key];
+    if (value === undefined) continue;
+    if (typeof value !== "string" || !isHexColor(value)) {
+      throw new Error(`${SERVER_THEME_LABELS[key]} must be a 6-digit hex color like #0a0a0a.`);
+    }
+    colors[key] = value;
+  }
+  return {
+    enabled: isObject(input) && typeof input.enabled === "boolean" ? input.enabled : true,
+    colors,
+  };
+}
+
+function ServerThemeColorField({
+  colorKey,
+  value,
+  defaultValue,
+  onChange,
+}: {
+  colorKey: ServerThemeColorKey;
+  value: string;
+  defaultValue: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="flex items-center justify-between gap-3 rounded border border-neutral-800 bg-neutral-900/40 px-3 py-2">
+      <div>
+        <div className="text-sm text-neutral-100">{SERVER_THEME_LABELS[colorKey]}</div>
+        <div className="font-mono text-[10px] text-neutral-500">Default {defaultValue}</div>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          type="color"
+          value={isHexColor(value) ? value : defaultValue}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-8 w-10 cursor-pointer rounded border border-neutral-700 bg-transparent p-0"
+        />
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          pattern="^#[0-9a-fA-F]{6}$"
+          className="w-24 rounded border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-100"
+        />
+      </div>
+    </label>
   );
 }
 

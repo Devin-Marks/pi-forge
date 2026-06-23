@@ -606,7 +606,10 @@ export function ChatView({ sessionId }: Props) {
               return out;
             })()}
             {streamingText.length > 0 && (
-              <div className="message-bubble rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3">
+              <div
+                className="message-bubble rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3"
+                data-message-role="assistant"
+              >
                 <div className="mb-1 text-[10px] uppercase tracking-wider text-neutral-500">
                   assistant (streaming)
                 </div>

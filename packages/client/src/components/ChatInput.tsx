@@ -1648,7 +1648,7 @@ export function ChatInput({ sessionId }: Props) {
   }, [text, isMobile, textareaHeight]);
 
   return (
-    <div className="bg-neutral-950">
+    <div className="forge-chat-input-root bg-neutral-950">
       {/*
         Drag handle that lives where the composer's top border used to
         be. Plain visual: a 1-px hairline matching the rest of the
@@ -2176,7 +2176,7 @@ export function ChatInput({ sessionId }: Props) {
             {isStreaming && (
               <button
                 onClick={() => void abortSession(sessionId)}
-                className="flex-1 rounded-md border border-red-700/60 bg-red-950/30 px-3 text-sm font-medium text-red-300 hover:bg-red-900/40 hover:text-red-100 md:flex-none md:py-2"
+                className="flex-1 rounded-md border border-red-700/60 bg-red-950/30 px-3 text-sm font-medium text-red-300 hover:bg-red-900/40 hover:text-red-100 md:flex-none md:py-2 light:border-red-700 light:bg-red-600 light:text-white light:hover:bg-red-700 light:hover:text-white"
                 title="Stop the agent (or press Esc twice in the textbox)"
               >
                 Abort
