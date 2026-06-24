@@ -4376,7 +4376,10 @@ function GeneralTab() {
   const version = useUiConfigStore((s) => s.version);
   const loaded = useUiConfigStore((s) => s.loaded);
   const passwordAuthEnabled = useUiConfigStore((s) => s.passwordAuthEnabled);
-  const ldapEnabled = useUiConfigStore((s) => s.ldapEnabled);
+  const uiConfigLdapEnabled = useUiConfigStore((s) => s.ldapEnabled);
+  const authLdapEnabled = useAuthStore((s) => s.ldapEnabled);
+  const showChangePassword =
+    loaded && passwordAuthEnabled && !uiConfigLdapEnabled && !authLdapEnabled;
   return (
     <div className="space-y-6 text-sm text-neutral-300">
       <header className="space-y-1">
@@ -4446,7 +4449,7 @@ function GeneralTab() {
         </ul>
       </section>
 
-      {passwordAuthEnabled && !ldapEnabled && <ChangePasswordSection />}
+      {showChangePassword && <ChangePasswordSection />}
     </div>
   );
 }
