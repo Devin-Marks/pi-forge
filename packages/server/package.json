@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.79.10",
-    "@earendil-works/pi-ai": "0.79.10",
+    "@earendil-works/pi-ai": "0.80.2",
     "@earendil-works/pi-coding-agent": "0.79.10",
     "@fastify/cors": "^11.0.1",
     "@fastify/multipart": "^10.0.0",
