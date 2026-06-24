@@ -328,8 +328,12 @@ export interface UiConfigResponse {
   authBannerHtml: boolean;
   /** Optional login/auth page color scheme. */
   authColorScheme: AuthColorScheme | undefined;
-  /** Optional absolute http(s) URL for the login-screen logo. */
+  /** Optional same-origin URL for the login/auth logo. */
   authLogoUrl: string | undefined;
+  /** Optional same-origin URL for the app header logo in dark-mode themes. */
+  appLogoDarkUrl: string | undefined;
+  /** Optional same-origin URL for the app header logo in light-mode themes. */
+  appLogoLightUrl: string | undefined;
 }
 
 export interface UnifiedSession {

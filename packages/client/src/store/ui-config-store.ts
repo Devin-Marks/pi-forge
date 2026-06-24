@@ -46,8 +46,12 @@ interface UiConfigState {
   authBannerHtml: boolean;
   /** Optional login/auth page color scheme. */
   authColorScheme: AuthColorScheme | undefined;
-  /** Optional absolute http(s) URL for the login-screen logo. */
+  /** Optional same-origin URL for the login/auth logo. */
   authLogoUrl: string | undefined;
+  /** Optional same-origin URL for the app header logo in dark-mode themes. */
+  appLogoDarkUrl: string | undefined;
+  /** Optional same-origin URL for the app header logo in light-mode themes. */
+  appLogoLightUrl: string | undefined;
   /** Last load error (sticky until a retry succeeds), for diagnostics. */
   error: string | undefined;
   load: () => Promise<void>;
@@ -66,6 +70,8 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
   authBannerHtml: false,
   authColorScheme: undefined,
   authLogoUrl: undefined,
+  appLogoDarkUrl: undefined,
+  appLogoLightUrl: undefined,
   error: undefined,
   setServerTheme: (theme) => {
     applyServerTheme(theme);
@@ -87,6 +93,8 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
         authBannerHtml: cfg.authBannerHtml,
         authColorScheme: cfg.authColorScheme,
         authLogoUrl: cfg.authLogoUrl,
+        appLogoDarkUrl: cfg.appLogoDarkUrl,
+        appLogoLightUrl: cfg.appLogoLightUrl,
         error: undefined,
       });
     } catch (err) {

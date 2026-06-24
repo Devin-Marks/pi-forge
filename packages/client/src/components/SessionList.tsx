@@ -457,15 +457,6 @@ function SessionRow(props: SessionRowProps) {
           className="flex-1 truncate text-left"
           title={`${s.sessionId} — double-click to rename, Cmd/Ctrl+click to select for bulk delete`}
         >
-          {s.isLive && <span className="mr-1 text-emerald-500 light:text-emerald-700">●</span>}
-          {s.isExternalLive === true && (
-            <span
-              className="mr-1 text-amber-400 light:text-amber-700"
-              title={`pi-subagents external ${s.externalState ?? "running"}`}
-            >
-              ●
-            </span>
-          )}
           {depth > 0 && (
             <span
               className="mr-1 text-purple-400 light:text-purple-700"

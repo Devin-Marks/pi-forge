@@ -189,6 +189,13 @@ export default defineConfig({
         // and the upgrade handshake fails.
         ws: true,
       },
+      "/cache": {
+        // Custom logos are cached and served by the Fastify backend under
+        // /cache/logos/*. In dev, the browser origin is Vite (:5173), so
+        // same-origin image URLs from /api/v1/ui-config must proxy here too.
+        target: devApiTarget(),
+        changeOrigin: true,
+      },
     },
   },
   build: {

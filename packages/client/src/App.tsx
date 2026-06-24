@@ -33,6 +33,7 @@ import { SearchPanel } from "./components/SearchPanel";
 import { ContextInspectorPanel } from "./components/ContextInspectorPanel";
 import { ResizableDivider } from "./components/ResizableDivider";
 import { useGitStatus } from "./hooks/useGitStatus";
+import { themeDef, useThemeStore } from "./lib/theme";
 
 type RightPaneTab = "files" | "search" | "changes" | "git" | "context" | "processes";
 
@@ -353,6 +354,13 @@ export function App() {
   const loadUiConfig = useUiConfigStore((s) => s.load);
   const minimal = useUiConfigStore((s) => s.minimal);
   const authLogoUrl = useUiConfigStore((s) => s.authLogoUrl);
+  const appLogoDarkUrl = useUiConfigStore((s) => s.appLogoDarkUrl);
+  const appLogoLightUrl = useUiConfigStore((s) => s.appLogoLightUrl);
+  const theme = useThemeStore((s) => s.theme);
+  const appLogoUrl =
+    themeDef(theme).mode === "light"
+      ? (appLogoLightUrl ?? appLogoDarkUrl ?? authLogoUrl)
+      : (appLogoDarkUrl ?? appLogoLightUrl ?? authLogoUrl);
   useEffect(() => {
     void loadUiConfig();
   }, [loadUiConfig]);
@@ -429,14 +437,14 @@ export function App() {
               from /icons/icon.svg via the public dir. The inner gap-1.5
               keeps the logo + wordmark visually paired (tighter than
               the parent gap-3 used between brand and project picker). */}
-          <div className="flex items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
             <img
-              src={authLogoUrl ?? "/icons/icon.svg"}
+              src={appLogoUrl ?? "/icons/icon.svg"}
               alt=""
-              className="max-h-8 max-w-28 object-contain"
+              className="max-h-8 max-w-28 shrink-0 object-contain"
               aria-hidden="true"
             />
-            <span className="text-sm font-semibold tracking-tight">pi-forge</span>
+            <span className="shrink-0 text-sm font-semibold tracking-tight">pi-forge</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
