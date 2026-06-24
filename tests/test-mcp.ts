@@ -201,6 +201,9 @@ async function main(): Promise<void> {
   const config = (await import(
     resolve(repoRoot, "packages/server/dist/mcp/config.js")
   )) as typeof import("../packages/server/src/mcp/config.js");
+  const toolBridge = (await import(
+    resolve(repoRoot, "packages/server/dist/mcp/tool-bridge.js")
+  )) as typeof import("../packages/server/src/mcp/tool-bridge.js");
 
   // Eager connect inside `syncScope` is fire-and-forget (`void
   // connectEntry(entry)`), so loadGlobal returns before the WS
@@ -238,6 +241,12 @@ async function main(): Promise<void> {
     });
     await manager.loadGlobal();
     await waitForState("test", {}, "connected");
+    assert(
+      "truncation default: enabled at 30k chars",
+      JSON.stringify(toolBridge.getMcpResultTruncationSettings()) ===
+        JSON.stringify({ enabled: true, maxChars: 30000 }),
+      JSON.stringify(toolBridge.getMcpResultTruncationSettings()),
+    );
     const status1 = manager.getStatus();
     assert("global load: 1 server in pool", status1.length === 1);
     assert(
@@ -312,6 +321,18 @@ async function main(): Promise<void> {
         manager.getStatus()[0]?.state === "connected",
       );
     }
+
+    // ---- Case C3: persisted truncation settings update runtime behavior ----
+    await config.setMcpTruncationConfig({ enabled: false, maxChars: 1234 });
+    await manager.reloadGlobal();
+    assert(
+      "truncation settings: persisted disable + custom cap reach tool bridge",
+      JSON.stringify(toolBridge.getMcpResultTruncationSettings()) ===
+        JSON.stringify({ enabled: false, maxChars: 1234 }),
+      JSON.stringify(toolBridge.getMcpResultTruncationSettings()),
+    );
+    await config.setMcpTruncationConfig({ enabled: true, maxChars: 30000 });
+    await manager.reloadGlobal();
 
     // ---- Case D: per-server enabled:false → server moves to disabled ----
     await config.writeMcpJson({

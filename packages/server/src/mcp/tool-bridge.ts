@@ -3,6 +3,11 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 
+export interface McpResultTruncationSettings {
+  enabled: boolean;
+  maxChars: number;
+}
+
 /**
  * Translate a single MCP tool advertised by a connected MCP server
  * into a pi `ToolDefinition` the agent can call.
@@ -225,16 +230,35 @@ export function mcpResultToAgentResult(res: unknown): AgentToolResult<unknown> {
 export const MCP_TEXT_CAP_CHARS = 30_000;
 export const MCP_TEXT_HEAD_RATIO = 0.6;
 
+let runtimeTruncationSettings: McpResultTruncationSettings = {
+  enabled: true,
+  maxChars: MCP_TEXT_CAP_CHARS,
+};
+
+export function setMcpResultTruncationSettings(settings: McpResultTruncationSettings): void {
+  runtimeTruncationSettings = {
+    enabled: settings.enabled,
+    maxChars: Math.max(1, Math.floor(settings.maxChars)),
+  };
+}
+
+export function getMcpResultTruncationSettings(): McpResultTruncationSettings {
+  return { ...runtimeTruncationSettings };
+}
+
 export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "image"; data: string; mimeType: string };
 
 export function capTextContent(blocks: ContentBlock[]): ContentBlock[] {
+  const settings = runtimeTruncationSettings;
+  if (!settings.enabled) return blocks;
+  const capChars = settings.maxChars;
   let totalText = 0;
   for (const b of blocks) {
     if (b.type === "text") totalText += b.text.length;
   }
-  if (totalText <= MCP_TEXT_CAP_CHARS) return blocks;
+  if (totalText <= capChars) return blocks;
   // Flatten all text blocks into one head+tail string. Preserves
   // image blocks in their original positions; drops in-between text
   // separators in exchange for staying under the cap.
@@ -242,8 +266,8 @@ export function capTextContent(blocks: ContentBlock[]): ContentBlock[] {
     .filter((b): b is { type: "text"; text: string } => b.type === "text")
     .map((b) => b.text)
     .join("\n\n");
-  const headLen = Math.floor(MCP_TEXT_CAP_CHARS * MCP_TEXT_HEAD_RATIO);
-  const tailLen = MCP_TEXT_CAP_CHARS - headLen;
+  const headLen = Math.floor(capChars * MCP_TEXT_HEAD_RATIO);
+  const tailLen = capChars - headLen;
   const head = flat.slice(0, headLen);
   const tail = flat.slice(flat.length - tailLen);
   const omitted = flat.length - headLen - tailLen;

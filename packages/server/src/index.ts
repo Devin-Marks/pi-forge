@@ -59,6 +59,17 @@ declare module "fastify" {
   }
 }
 
+function shouldRefreshJwtActivity(method: string): boolean {
+  const upper = method.toUpperCase();
+  // Browser background work is mostly GET (SSE connects/reconnects,
+  // status polling, git polling, static-ish diagnostics). If those
+  // refresh the idle clock, a reverse proxy that periodically drops
+  // and reopens SSE can keep a login alive forever without user
+  // activity. Mutating requests are deliberate user/app actions and
+  // extend the browser session.
+  return upper !== "GET" && upper !== "HEAD" && upper !== "OPTIONS";
+}
+
 export async function buildServer(): Promise<FastifyInstance> {
   // Install before Fastify so unhandledRejection handlers from this
   // module are first in line — they print full cause chains for
@@ -368,7 +379,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       reply.code(401).send({ error: "missing_token" });
       return;
     }
-    const tokenPayload = verifyToken(presented);
+    const tokenPayload = verifyToken(presented, { touch: shouldRefreshJwtActivity(req.method) });
     if (tokenPayload !== undefined) {
       // Initial-login tokens (issued because the user authenticated
       // with the env-supplied UI_PASSWORD and REQUIRE_PASSWORD_CHANGE

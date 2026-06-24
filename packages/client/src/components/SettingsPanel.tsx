@@ -3373,6 +3373,7 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
   const stdioTrust = useMcpStore((s) => s.byProject[project?.id ?? "__no_project__"]?.stdioTrust);
   const refreshProject = useMcpStore((s) => s.refreshProject);
   const setMcpEnabled = useMcpStore((s) => s.setMcpEnabled);
+  const setMcpTruncation = useMcpStore((s) => s.setMcpTruncation);
   const upsertServer = useMcpStore((s) => s.upsertServer);
   const deleteServer = useMcpStore((s) => s.deleteServer);
   const probeServerStore = useMcpStore((s) => s.probeServer);
@@ -3384,6 +3385,7 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
   const [editingName, setEditingName] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [probing, setProbing] = useState<string | undefined>(undefined);
+  const [truncationMaxDraft, setTruncationMaxDraft] = useState<string | undefined>(undefined);
 
   // Per-tool listing fetched alongside the server config so each
   // server row can cascade its tools (each tool gets its own
@@ -3441,6 +3443,19 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
       await refreshProject(project?.id);
     } catch (err) {
       onError(`Failed to toggle MCP: ${errorCode(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveTruncation = async (next: { enabled: boolean; maxChars: number }): Promise<void> => {
+    setBusy(true);
+    try {
+      await setMcpTruncation(next);
+      setTruncationMaxDraft(undefined);
+      onError(undefined);
+    } catch (err) {
+      onError(`Failed to update MCP truncation: ${errorCode(err)}`);
     } finally {
       setBusy(false);
     }
@@ -3619,24 +3634,81 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
         on name collision).
       </p>
 
-      <div className="flex items-center justify-between rounded border border-neutral-800 bg-neutral-900/40 p-3">
-        <div>
-          <div className="text-sm font-medium text-neutral-100">MCP tools</div>
-          <div className="text-[11px] text-neutral-500">
-            Master switch. When off, no MCP tools reach the agent regardless of per-server state.
+      <div className="space-y-3 rounded border border-neutral-800 bg-neutral-900/40 p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-medium text-neutral-100">MCP tools</div>
+            <div className="text-[11px] text-neutral-500">
+              Master switch. When off, no MCP tools reach the agent regardless of per-server state.
+            </div>
+          </div>
+          <button
+            onClick={() => void toggleMaster(!enabled)}
+            disabled={busy}
+            className={`rounded border px-3 py-1 text-xs ${
+              enabled
+                ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300 light:border-emerald-300 light:bg-emerald-50 light:text-emerald-800"
+                : "border-neutral-700 text-neutral-300 hover:border-neutral-500"
+            }`}
+          >
+            {enabled ? "Enabled" : "Disabled"}
+          </button>
+        </div>
+        <div className="flex flex-wrap items-end justify-between gap-3 border-t border-neutral-800 pt-3">
+          <div className="min-w-[240px] flex-1">
+            <div className="text-sm font-medium text-neutral-100">Result truncation</div>
+            <div className="text-[11px] text-neutral-500">
+              Caps total text returned by each MCP tool before it enters agent context. Images pass
+              through unchanged. Disable only for trusted, bounded tools.
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] text-neutral-500" htmlFor="mcp-truncation-max">
+              Max chars
+            </label>
+            <input
+              id="mcp-truncation-max"
+              type="number"
+              min={1}
+              max={1000000}
+              value={truncationMaxDraft ?? String(settings.truncation.maxChars)}
+              onChange={(e) => setTruncationMaxDraft(e.target.value)}
+              onBlur={() => {
+                const parsed = Number.parseInt(
+                  truncationMaxDraft ?? String(settings.truncation.maxChars),
+                  10,
+                );
+                if (
+                  Number.isFinite(parsed) &&
+                  parsed >= 1 &&
+                  parsed !== settings.truncation.maxChars
+                ) {
+                  void saveTruncation({ ...settings.truncation, maxChars: parsed });
+                } else {
+                  setTruncationMaxDraft(undefined);
+                }
+              }}
+              disabled={busy || !settings.truncation.enabled}
+              className="w-28 rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 disabled:opacity-50"
+            />
+            <button
+              onClick={() =>
+                void saveTruncation({
+                  ...settings.truncation,
+                  enabled: !settings.truncation.enabled,
+                })
+              }
+              disabled={busy}
+              className={`rounded border px-3 py-1 text-xs ${
+                settings.truncation.enabled
+                  ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300 light:border-emerald-300 light:bg-emerald-50 light:text-emerald-800"
+                  : "border-neutral-700 text-neutral-300 hover:border-neutral-500"
+              }`}
+            >
+              {settings.truncation.enabled ? "Truncating" : "Pass-through"}
+            </button>
           </div>
         </div>
-        <button
-          onClick={() => void toggleMaster(!enabled)}
-          disabled={busy}
-          className={`rounded border px-3 py-1 text-xs ${
-            enabled
-              ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300 light:border-emerald-300 light:bg-emerald-50 light:text-emerald-800"
-              : "border-neutral-700 text-neutral-300 hover:border-neutral-500"
-          }`}
-        >
-          {enabled ? "Enabled" : "Disabled"}
-        </button>
       </div>
 
       {project !== undefined && (

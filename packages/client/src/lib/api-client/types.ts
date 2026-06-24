@@ -103,6 +103,8 @@ export interface McpSettingsResponse {
   connected: number;
   /** Total GLOBAL servers configured. */
   total: number;
+  /** MCP text-result truncation applied before MCP results enter agent context. */
+  truncation: { enabled: boolean; maxChars: number };
 }
 
 // ---------------- processes ----------------

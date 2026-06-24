@@ -8,9 +8,15 @@ import {
   StdioClientTransport,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { isStdioConfig, readMcpJson, type McpServerConfig, type McpTransport } from "./config.js";
+import {
+  isStdioConfig,
+  normalizeMcpTruncationConfig,
+  readMcpJson,
+  type McpServerConfig,
+  type McpTransport,
+} from "./config.js";
 import { isStdioTrustedForProject } from "./stdio-trust.js";
-import { bridgeMcpTool } from "./tool-bridge.js";
+import { bridgeMcpTool, setMcpResultTruncationSettings } from "./tool-bridge.js";
 
 /** Looser-than-the-SDK transport handle — we only need close().
  *  The SDK's `Transport` interface declares `sessionId: string` (not
@@ -126,6 +132,7 @@ export async function ensureGlobalLoaded(): Promise<void> {
 async function loadGlobalNow(): Promise<void> {
   const cfg = await readMcpJson();
   globallyEnabled = cfg.disabled !== true;
+  setMcpResultTruncationSettings(normalizeMcpTruncationConfig(cfg.truncation));
   await syncScope("global", cfg.servers);
   globalLoaded = true;
 }

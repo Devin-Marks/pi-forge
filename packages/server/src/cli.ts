@@ -170,6 +170,14 @@ const FLAGS: readonly FlagDef[] = [
     defaultText: "604800 (7d)",
   },
   {
+    name: "login-inactivity-timeout-seconds",
+    env: "LOGIN_INACTIVITY_TIMEOUT_SECONDS",
+    type: "number",
+    group: "auth",
+    desc: "Expire browser JWTs after this many seconds without activity (0 disables)",
+    defaultText: "0 (disabled)",
+  },
+  {
     name: "require-password-change",
     env: "REQUIRE_PASSWORD_CHANGE",
     type: "boolean",

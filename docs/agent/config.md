@@ -26,7 +26,11 @@ For the full list with defaults and grouping, point users at:
 
 If both `UI_PASSWORD` and `API_KEY` are unset, auth is disabled entirely.
 Production deploys should set at least one. Setting both is common — browser
-users log in with the password, scripts use the API key.
+users log in with the password, scripts use the API key. Browser JWTs have an
+absolute lifetime (`JWT_EXPIRES_IN_SECONDS`) and can also enforce an idle timeout
+with `LOGIN_INACTIVITY_TIMEOUT_SECONDS` (0 disables idle expiry). Passive GETs
+such as SSE reconnects and polling must not refresh this idle timer; otherwise a
+reverse proxy that drops/reopens streams can keep a browser login alive forever.
 
 `AGENT_TOOL_SANDBOX_ENABLED` defaults false. When true, config startup requires
 numeric `AGENT_TOOL_UID` and `AGENT_TOOL_GID`, sandbox shell surfaces receive

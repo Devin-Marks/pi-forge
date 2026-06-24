@@ -18,3 +18,8 @@ Relevant scripts include:
 - `tests/test-mcp.ts`
 - `tests/test-mcp-truncation.ts`
 - `tests/test-tool-overrides.ts`
+
+MCP result truncation is a global MCP setting persisted in `FORGE_DATA_DIR/mcp.json`
+under `truncation`. The bridge defaults to enabled at 30,000 text characters and
+can be disabled or retuned from Settings → MCP; keep this contract in sync with
+`tests/test-mcp-truncation.ts`.

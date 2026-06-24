@@ -14,7 +14,13 @@ function stableJson(value: unknown): string {
 }
 
 function sameSettings(a: McpSettingsResponse | undefined, b: McpSettingsResponse): boolean {
-  return a?.enabled === b.enabled && a.connected === b.connected && a.total === b.total;
+  return (
+    a?.enabled === b.enabled &&
+    a.connected === b.connected &&
+    a.total === b.total &&
+    a.truncation.enabled === b.truncation.enabled &&
+    a.truncation.maxChars === b.truncation.maxChars
+  );
 }
 
 function sameProjectData(a: ProjectScopeData | undefined, b: ProjectScopeData): boolean {
@@ -95,6 +101,7 @@ interface McpState {
   /** Pulls global config + per-project status. Idempotent. */
   refreshProject: (projectId: string | undefined) => Promise<void>;
   setMcpEnabled: (enabled: boolean) => Promise<void>;
+  setMcpTruncation: (truncation: { enabled: boolean; maxChars: number }) => Promise<void>;
   upsertServer: (name: string, body: McpServerConfig) => Promise<void>;
   deleteServer: (name: string) => Promise<void>;
   probeServer: (name: string, projectId: string | undefined) => Promise<void>;
@@ -220,6 +227,21 @@ export const useMcpStore = create<McpState>((set, get) => ({
       set({ settings: r, error: undefined });
     } catch (err) {
       // Revert on failure so the UI doesn't drift from the server.
+      if (prior !== undefined) set({ settings: prior });
+      set({ error: describeError(err) });
+      throw err;
+    }
+  },
+
+  setMcpTruncation: async (truncation) => {
+    const prior = get().settings;
+    if (prior !== undefined) {
+      set({ settings: { ...prior, truncation } });
+    }
+    try {
+      const r = await api.setMcpTruncation(truncation);
+      set({ settings: r, error: undefined });
+    } catch (err) {
       if (prior !== undefined) set({ settings: prior });
       set({ error: describeError(err) });
       throw err;

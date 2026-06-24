@@ -57,13 +57,22 @@ interface ToolBridgeModule {
   };
   MCP_TEXT_CAP_CHARS: number;
   MCP_TEXT_HEAD_RATIO: number;
+  getMcpResultTruncationSettings: () => { enabled: boolean; maxChars: number };
+  setMcpResultTruncationSettings: (settings: { enabled: boolean; maxChars: number }) => void;
 }
 
 async function main(): Promise<void> {
   const mod = (await import(
     resolve(repoRoot, "packages/server/dist/mcp/tool-bridge.js")
   )) as unknown as ToolBridgeModule;
-  const { capTextContent, mcpResultToAgentResult, MCP_TEXT_CAP_CHARS, MCP_TEXT_HEAD_RATIO } = mod;
+  const {
+    capTextContent,
+    mcpResultToAgentResult,
+    MCP_TEXT_CAP_CHARS,
+    MCP_TEXT_HEAD_RATIO,
+    getMcpResultTruncationSettings,
+    setMcpResultTruncationSettings,
+  } = mod;
 
   const headLen = Math.floor(MCP_TEXT_CAP_CHARS * MCP_TEXT_HEAD_RATIO);
   const tailLen = MCP_TEXT_CAP_CHARS - headLen;
@@ -235,6 +244,36 @@ async function main(): Promise<void> {
         out.content[0].text.includes("[error]"),
     );
   }
+
+  // ---------- settings: disable truncation ----------
+  {
+    setMcpResultTruncationSettings({ enabled: false, maxChars: MCP_TEXT_CAP_CHARS });
+    const blocks: ContentBlock[] = [{ type: "text", text: "N".repeat(MCP_TEXT_CAP_CHARS + 1) }];
+    const out = capTextContent(blocks);
+    assert("settings disabled: pass-through", out === blocks);
+  }
+
+  // ---------- settings: custom cap ----------
+  {
+    const customCap = 120;
+    setMcpResultTruncationSettings({ enabled: true, maxChars: customCap });
+    const settings = getMcpResultTruncationSettings();
+    assert(
+      "settings custom cap: persisted in runtime",
+      settings.enabled === true && settings.maxChars === customCap,
+      JSON.stringify(settings),
+    );
+    const out = capTextContent([{ type: "text", text: "C".repeat(500) }]);
+    assert("settings custom cap: truncates", out[0]?.type === "text");
+    if (out[0]?.type === "text") {
+      assert(
+        "settings custom cap: under cap+marker overhead",
+        out[0].text.length > customCap && out[0].text.length < customCap + 1000,
+        `len=${out[0].text.length}`,
+      );
+    }
+  }
+  setMcpResultTruncationSettings({ enabled: true, maxChars: MCP_TEXT_CAP_CHARS });
 
   // ---------- 60/40 head/tail ratio honored ----------
   {

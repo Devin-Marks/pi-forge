@@ -620,14 +620,21 @@ function vMcpSettings(value: unknown, status: number): McpSettingsResponse {
     !isObject(value) ||
     typeof value.enabled !== "boolean" ||
     typeof value.connected !== "number" ||
-    typeof value.total !== "number"
+    typeof value.total !== "number" ||
+    !isObject(value.truncation) ||
+    typeof value.truncation.enabled !== "boolean" ||
+    typeof value.truncation.maxChars !== "number"
   ) {
-    fail(status, "expected { enabled, connected, total }");
+    fail(status, "expected { enabled, connected, total, truncation }");
   }
   return {
     enabled: value.enabled,
     connected: value.connected,
     total: value.total,
+    truncation: {
+      enabled: value.truncation.enabled,
+      maxChars: value.truncation.maxChars,
+    },
   };
 }
 
@@ -1988,6 +1995,11 @@ export const api = {
     request("/api/v1/mcp/settings", vMcpSettings, {
       method: "PUT",
       body: { enabled },
+    }),
+  setMcpTruncation: (truncation: { enabled: boolean; maxChars: number }) =>
+    request("/api/v1/mcp/settings", vMcpSettings, {
+      method: "PUT",
+      body: { truncation },
     }),
   /** GLOBAL servers (config + status). Pass projectId to also include
    *  status entries for the project's `.mcp.json` servers. */

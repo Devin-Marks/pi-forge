@@ -3,6 +3,7 @@ import {
   deleteMcpServer,
   readMcpJsonRedacted,
   setMcpDisabled,
+  setMcpTruncationConfig,
   upsertMcpServer,
   type McpServerConfig,
   type McpTransport,
@@ -18,6 +19,7 @@ import {
   unloadProject,
 } from "../mcp/manager.js";
 import { grantStdioTrust, isStdioTrustedForProject, revokeStdioTrust } from "../mcp/stdio-trust.js";
+import { getMcpResultTruncationSettings } from "../mcp/tool-bridge.js";
 import { getProject } from "../project-manager.js";
 import { errorSchema } from "./_schemas.js";
 
@@ -136,16 +138,25 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
           "Master MCP toggle + a compact connection summary the header " +
           "badge consumes. `enabled` mirrors `mcp.json#disabled === false`. " +
           "`connected` / `total` count GLOBAL servers only (project-scope " +
-          "counts come from /mcp/servers?projectId=...).",
+          "counts come from /mcp/servers?projectId=...). `truncation` controls " +
+          "the MCP text-result cap applied before results enter agent context.",
         tags: ["config"],
         response: {
           200: {
             type: "object",
-            required: ["enabled", "connected", "total"],
+            required: ["enabled", "connected", "total", "truncation"],
             properties: {
               enabled: { type: "boolean" },
               connected: { type: "integer", minimum: 0 },
               total: { type: "integer", minimum: 0 },
+              truncation: {
+                type: "object",
+                required: ["enabled", "maxChars"],
+                properties: {
+                  enabled: { type: "boolean" },
+                  maxChars: { type: "integer", minimum: 1 },
+                },
+              },
             },
           },
         },
@@ -156,33 +167,53 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
       const enabled = isGloballyEnabled();
       const total = status.length;
       const connected = status.filter((s) => s.state === "connected").length;
-      return { enabled, connected, total };
+      return { enabled, connected, total, truncation: getMcpResultTruncationSettings() };
     },
   );
 
-  fastify.put<{ Body: { enabled: boolean } }>(
+  fastify.put<{
+    Body: { enabled?: boolean; truncation?: { enabled?: boolean; maxChars?: number } };
+  }>(
     "/mcp/settings",
     {
       schema: {
         description:
-          "Toggle the master MCP enable/disable flag. When disabled, no " +
-          "MCP tools are passed into createAgentSession (existing live " +
-          "sessions are unaffected — start a new session to apply).",
+          "Update MCP settings. The master enabled flag controls whether MCP tools are passed " +
+          "into createAgentSession (existing live sessions are unaffected). The truncation " +
+          "setting controls whether MCP text results are capped before they enter agent context.",
         tags: ["config"],
         body: {
           type: "object",
-          required: ["enabled"],
+          minProperties: 1,
           additionalProperties: false,
-          properties: { enabled: { type: "boolean" } },
+          properties: {
+            enabled: { type: "boolean" },
+            truncation: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                enabled: { type: "boolean" },
+                maxChars: { type: "integer", minimum: 1, maximum: 1000000 },
+              },
+            },
+          },
         },
         response: {
           200: {
             type: "object",
-            required: ["enabled", "connected", "total"],
+            required: ["enabled", "connected", "total", "truncation"],
             properties: {
               enabled: { type: "boolean" },
               connected: { type: "integer", minimum: 0 },
               total: { type: "integer", minimum: 0 },
+              truncation: {
+                type: "object",
+                required: ["enabled", "maxChars"],
+                properties: {
+                  enabled: { type: "boolean" },
+                  maxChars: { type: "integer", minimum: 1 },
+                },
+              },
             },
           },
           400: errorSchema,
@@ -190,13 +221,19 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req) => {
-      await setMcpDisabled(!req.body.enabled);
+      if (req.body.enabled !== undefined) {
+        await setMcpDisabled(!req.body.enabled);
+      }
+      if (req.body.truncation !== undefined) {
+        await setMcpTruncationConfig(req.body.truncation);
+      }
       await reloadGlobal();
       const status = getStatus();
       return {
         enabled: isGloballyEnabled(),
         total: status.length,
         connected: status.filter((s) => s.state === "connected").length,
+        truncation: getMcpResultTruncationSettings(),
       };
     },
   );
