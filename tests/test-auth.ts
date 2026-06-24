@@ -400,6 +400,13 @@ async function scenarioLdapAdminUsesLocalPassword(): Promise<void> {
     REQUIRE_PASSWORD_CHANGE: "false",
   });
   try {
+    const uiConfig = (await (await fetch(`${srv.base}/api/v1/ui-config`)).json()) as {
+      ldapEnabled?: boolean;
+      passwordAuthEnabled?: boolean;
+    };
+    assert("ui-config reports ldapEnabled=true", uiConfig.ldapEnabled === true);
+    assert("ui-config keeps local passwordAuthEnabled=true", uiConfig.passwordAuthEnabled === true);
+
     const passwordOnly = await jsonPost(`${srv.base}/api/v1/auth/login`, {
       password: localPassword,
     });

@@ -4368,13 +4368,18 @@ const MIN_PASSWORD_LENGTH = 8;
  * Catch-all "what am I running + account" pane. Combines the previous
  * About pane (version + links) with an in-place password-change form
  * for deployments that use UI_PASSWORD auth. The password section
- * hides on API-key-only deployments — there's nothing to change in
- * that case.
+ * hides on API-key-only deployments and LDAP-enabled deployments —
+ * in those cases there is no local password to change or password
+ * changes should be managed by LDAP.
  */
 function GeneralTab() {
   const version = useUiConfigStore((s) => s.version);
   const loaded = useUiConfigStore((s) => s.loaded);
   const passwordAuthEnabled = useUiConfigStore((s) => s.passwordAuthEnabled);
+  const uiConfigLdapEnabled = useUiConfigStore((s) => s.ldapEnabled);
+  const authLdapEnabled = useAuthStore((s) => s.ldapEnabled);
+  const showChangePassword =
+    loaded && passwordAuthEnabled && !uiConfigLdapEnabled && !authLdapEnabled;
   return (
     <div className="space-y-6 text-sm text-neutral-300">
       <header className="space-y-1">
@@ -4444,7 +4449,7 @@ function GeneralTab() {
         </ul>
       </section>
 
-      {passwordAuthEnabled && <ChangePasswordSection />}
+      {showChangePassword && <ChangePasswordSection />}
     </div>
   );
 }
