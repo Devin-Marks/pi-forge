@@ -12,6 +12,7 @@ import {
 } from "../session-registry.js";
 import {
   liveModelRegistry,
+  migrateLegacyModelsJsonIfNeeded,
   readSettings,
   withSettingsLock,
   writeSettings,
@@ -514,6 +515,7 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
       // diagnostic from a typo in the model id. Without this, both cases
       // collapsed to `unknown_model` and the user had no hint which side
       // was wrong.
+      await migrateLegacyModelsJsonIfNeeded();
       const registry = liveModelRegistry();
       const providerKnown = registry.getAll().some((m) => m.provider === req.body.provider);
       if (!providerKnown) {

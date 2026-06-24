@@ -195,7 +195,8 @@ internal proxy.
   "providers": {
     "vllm-local": {
       "api": "openai-completions",
-      "url": "http://localhost:8000/v1",
+      "baseUrl": "http://localhost:8000/v1",
+      "apiKey": "$VLLM_API_KEY",
       "models": [
         {
           "id": "Qwen/Qwen2.5-Coder-32B-Instruct",
@@ -211,6 +212,14 @@ internal proxy.
   }
 }
 ```
+
+`apiKey` is optional when credentials come from `auth.json`, `/login`, or a
+runtime environment supported by the SDK. In SDK 0.80+, this single field also
+supports value resolution: use `$ENV_VAR` / `${ENV_VAR}` for environment
+interpolation or prefix a command with `!`, for example
+`"apiKey": "!op read 'op://vault/item/credential'"`. Older pi-forge
+`apiKeyCommand` entries are migrated automatically to this `apiKey` command
+syntax on the next config read/write or session start.
 
 **Per-model fields:**
 

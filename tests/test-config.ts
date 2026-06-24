@@ -158,13 +158,63 @@ async function main(): Promise<void> {
       );
     }
 
-    // 3. PUT /config/models with malformed body → 400.
+    // 3. Legacy apiKeyCommand is migrated to SDK 0.80's apiKey command syntax.
+    {
+      const legacyModels = {
+        providers: {
+          ...customProvider.providers,
+          legacy: {
+            baseUrl: "http://localhost:8001/v1",
+            apiKeyCommand: ["printf", "legacy-secret"],
+            api: "completions",
+            authHeader: true,
+            models: [
+              {
+                id: "legacy-model",
+                name: "Legacy Model",
+                reasoning: false,
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: 4096,
+                maxTokens: 1024,
+              },
+            ],
+          },
+        },
+      };
+      await writeFile(join(configDir, "models.json"), JSON.stringify(legacyModels), "utf8");
+      const r = await jget(base, "/api/v1/config/models");
+      assert("GET /config/models migrates legacy apiKeyCommand → 200", r.status === 200);
+      const redacted = r.body as {
+        providers: Record<string, { apiKey?: string; apiKeyCommand?: string }>;
+      };
+      assert(
+        "  migrated response redacts apiKey",
+        redacted.providers.legacy?.apiKey === "***REDACTED***",
+      );
+      assert(
+        "  migrated response omits apiKeyCommand",
+        redacted.providers.legacy?.apiKeyCommand === undefined,
+        JSON.stringify(redacted.providers.legacy),
+      );
+      const migrated = JSON.parse(await readFile(join(configDir, "models.json"), "utf8")) as {
+        providers: Record<string, { apiKey?: string; apiKeyCommand?: string }>;
+      };
+      assert(
+        "  on-disk legacy command became ! command apiKey",
+        migrated.providers.legacy?.apiKey === "!printf legacy-secret" &&
+          migrated.providers.legacy?.apiKeyCommand === undefined,
+        JSON.stringify(migrated.providers.legacy),
+      );
+    }
+
+    // 4. PUT /config/models with malformed body → 400.
     {
       const r = await jsend(base, "PUT", "/api/v1/config/models", { not: "right" });
       assert("PUT /config/models malformed → 400", r.status === 400);
     }
 
-    // 4. /config/auth — store, presence-only read, delete.
+    // 5. /config/auth — store, presence-only read, delete.
     {
       const empty = await jget(base, "/api/v1/config/auth");
       assert("GET /config/auth initial → 200", empty.status === 200);
