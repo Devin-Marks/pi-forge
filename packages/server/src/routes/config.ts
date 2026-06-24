@@ -293,8 +293,10 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
       schema: {
         description:
           "Read `models.json` (custom provider configurations). Inline `apiKey` " +
-          "and `apiKeyCommand` fields are returned as `***REDACTED***` so the " +
-          "raw secret never leaves the server. The persisted file is unchanged " +
+          "fields, including command values such as `!op read ...`, are returned " +
+          "as `***REDACTED***` so the raw secret never leaves the server. " +
+          "Legacy `apiKeyCommand` fields are migrated to SDK 0.80 `apiKey` command values. " +
+          "The persisted file is unchanged " +
           "— PUT /config/models takes the actual values; the redaction is on " +
           "the read path only.",
         tags: ["config"],

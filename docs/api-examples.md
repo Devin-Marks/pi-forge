@@ -524,14 +524,15 @@ curl -s -X PUT -H "Authorization: Bearer $KEY" -H "Content-Type: application/jso
 ### Read / write models.json (custom providers)
 
 ```bash
-# GET returns the file with `apiKey` / `apiKeyCommand` REPLACED by
-# "***REDACTED***" so the raw secret never leaves the server. The
-# persisted file is unchanged; PUT takes the actual values.
+# GET returns the file with `apiKey` REPLACED by "***REDACTED***" so the
+# raw secret never leaves the server. SDK 0.80 command-valued apiKey strings
+# such as "!op read ..." are also redacted; legacy apiKeyCommand is migrated.
+# The persisted file is otherwise unchanged; PUT takes the actual values.
 curl -s -H "Authorization: Bearer $KEY" $BASE/api/v1/config/models
 
 curl -s -X PUT -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   $BASE/api/v1/config/models \
-  -d '{"providers":{"vllm-local":{"api":"openai-completions","url":"http://localhost:8000/v1","models":[...]}}}'
+  -d '{"providers":{"vllm-local":{"api":"openai-completions","baseUrl":"http://localhost:8000/v1","apiKey":"$VLLM_API_KEY","models":[...]}}}'
 ```
 
 ### List / toggle skills

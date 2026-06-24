@@ -49,21 +49,52 @@ export interface ModelsJson {
 }
 
 export interface ProviderConfig {
+  name?: string;
   baseUrl?: string;
+  /**
+   * SDK 0.80+ resolves literal values, `$ENV` / `${ENV}` interpolation, and
+   * command values prefixed with `!` from this single field.
+   */
   apiKey?: string;
+  /**
+   * Legacy pi-forge / older pi SDK shape. SDK 0.80 no longer consumes this
+   * field, so config-manager migrates it to `apiKey: "!..."` before the SDK
+   * reads models.json.
+   */
   apiKeyCommand?: string | string[];
   api?: "messages" | "responses" | "completions" | string;
   authHeader?: boolean;
   headers?: Record<string, string>;
+  compat?: Record<string, unknown>;
+  modelOverrides?: Record<
+    string,
+    {
+      name?: string;
+      baseUrl?: string;
+      api?: string;
+      reasoning?: boolean;
+      thinkingLevelMap?: Record<string, string | null>;
+      input?: ("text" | "image")[];
+      cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+      contextWindow?: number;
+      maxTokens?: number;
+      headers?: Record<string, string>;
+      compat?: Record<string, unknown>;
+    }
+  >;
   models?: {
     id: string;
     name: string;
     api?: string;
+    baseUrl?: string;
     reasoning: boolean;
+    thinkingLevelMap?: Record<string, string | null>;
     input: ("text" | "image")[];
     cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
     contextWindow: number;
     maxTokens: number;
+    headers?: Record<string, string>;
+    compat?: Record<string, unknown>;
   }[];
 }
 
@@ -186,6 +217,53 @@ async function readJsonOr<T>(path: string, fallback: T): Promise<T> {
 // ---------------------------------------------------------------------------
 // models.json
 
+function shellQuote(arg: string): string {
+  if (/^[A-Za-z0-9_./:=@%+-]+$/.test(arg)) return arg;
+  return `'${arg.replace(/'/g, `'"'"'`)}'`;
+}
+
+function apiKeyCommandToConfigValue(command: string | string[]): string {
+  const rendered = Array.isArray(command) ? command.map(shellQuote).join(" ") : command;
+  return rendered.startsWith("!") ? rendered : `!${rendered}`;
+}
+
+function normalizeLegacyProviderConfig(provider: ProviderConfig): {
+  provider: ProviderConfig;
+  changed: boolean;
+} {
+  if (provider.apiKeyCommand === undefined) return { provider, changed: false };
+  const { apiKeyCommand, ...rest } = provider;
+  const normalized: ProviderConfig = { ...rest };
+  if (normalized.apiKey === undefined) {
+    normalized.apiKey = apiKeyCommandToConfigValue(apiKeyCommand);
+  }
+  return { provider: normalized, changed: true };
+}
+
+function normalizeLegacyModelsJson(data: ModelsJson): { data: ModelsJson; changed: boolean } {
+  let changed = false;
+  const providers: Record<string, ProviderConfig> = {};
+  for (const [name, provider] of Object.entries(data.providers ?? {})) {
+    const normalized = normalizeLegacyProviderConfig(provider);
+    providers[name] = normalized.provider;
+    changed = changed || normalized.changed;
+  }
+  return { data: { providers }, changed };
+}
+
+/**
+ * SDK 0.80 removed `models.json#providers.*.apiKeyCommand`; commands now live
+ * in `apiKey` with a leading `!`. Persistently migrate the old shape before
+ * handing models.json to the SDK so existing pi-forge installs keep working.
+ */
+export async function migrateLegacyModelsJsonIfNeeded(): Promise<boolean> {
+  const current = await readModelsJson();
+  const normalized = normalizeLegacyModelsJson(current);
+  if (!normalized.changed) return false;
+  await atomicWriteJson(MODELS_FILE(), normalized.data);
+  return true;
+}
+
 export async function readModelsJson(): Promise<ModelsJson> {
   const data = await readJsonOr<unknown>(MODELS_FILE(), { providers: {} });
   if (typeof data !== "object" || data === null || !("providers" in data)) {
@@ -201,7 +279,7 @@ export async function readModelsJson(): Promise<ModelsJson> {
 /**
  * Like readModelsJson but with secret-shaped fields replaced with a literal
  * sentinel. Used by the GET /config/models route so an inline `apiKey` in
- * models.json (the pi SDK accepts both inline keys and `apiKeyCommand`) is
+ * models.json (including SDK 0.80 command values such as `!op read ...`) is
  * never echoed back to a browser or to an operator's log shipper.
  *
  * The persisted file is unchanged — writeModelsJson takes the actual
@@ -209,6 +287,7 @@ export async function readModelsJson(): Promise<ModelsJson> {
  */
 const SECRET_PLACEHOLDER = "***REDACTED***";
 export async function readModelsJsonRedacted(): Promise<ModelsJson> {
+  await migrateLegacyModelsJsonIfNeeded();
   const raw = await readModelsJson();
   const out: Record<string, ProviderConfig> = {};
   for (const [name, provider] of Object.entries(raw.providers)) {
@@ -227,7 +306,7 @@ function redactProviderConfig(p: ProviderConfig): ProviderConfig {
 
 export async function writeModelsJson(data: ModelsJson): Promise<void> {
   // Round-trip secret protection: GET /config/models redacts inline
-  // `apiKey` / `apiKeyCommand` to a sentinel string. If the editor
+  // `apiKey` / legacy `apiKeyCommand` to a sentinel string. If the editor
   // PUTs the body back unchanged, the literal sentinel would
   // overwrite the real secret on disk and the next request would go
   // out with `Authorization: Bearer ***REDACTED***`. Pre-merge here
@@ -245,9 +324,11 @@ export async function writeModelsJson(data: ModelsJson): Promise<void> {
     }
     if (cleaned.apiKeyCommand === SECRET_PLACEHOLDER) {
       if (prior?.apiKeyCommand !== undefined) cleaned.apiKeyCommand = prior.apiKeyCommand;
+      else if (prior?.apiKey !== undefined) cleaned.apiKey = prior.apiKey;
       else delete cleaned.apiKeyCommand;
     }
-    safe.providers[name] = cleaned;
+    const normalized = normalizeLegacyProviderConfig(cleaned);
+    safe.providers[name] = normalized.provider;
   }
   await atomicWriteJson(MODELS_FILE(), safe);
 }
@@ -383,6 +464,7 @@ export async function updateSettings(patch: Record<string, unknown>): Promise<Se
 // needing a restart.
 
 export async function liveProvidersListing(): Promise<ProvidersListing> {
+  await migrateLegacyModelsJsonIfNeeded();
   const store = authStorage();
   const registry = ModelRegistry.create(store, MODELS_FILE());
   const all: Model<Api>[] = registry.getAll();
