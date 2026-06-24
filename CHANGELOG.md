@@ -15,6 +15,26 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.4.5] — 2026-06-23
+
+### Added
+
+- **Custom login branding.** Deployments can now configure server-managed login title, subtitle, accent color, logo, and compact mark values that are surfaced to the browser without exposing secrets.
+- **Server-managed custom themes.** Administrators can define persisted light/dark theme tokens through settings/API configuration, with generated CSS variables and client-side preview behavior.
+- **OpenShift sandbox SCC guidance.** Sandbox deployment docs now include OpenShift-specific security context constraint and ownership guidance for running restricted tool surfaces.
+
+### Changed
+
+- **Sandbox startup ownership handling is more robust.** Container and Kubernetes/OpenShift startup paths now support configurable ownership repair for sandbox writable directories and document the required mount permissions.
+- **Dependency updates for v1.4.5.** Refreshed selected client build dependencies including `vite` 8.1.0 and `@vitejs/plugin-react` 6.0.3.
+
+### Fixed
+
+- **Sandbox file ownership is preserved on creates.** File-manager create paths now chown new sandbox files/directories appropriately so restricted tool users can keep working with generated files.
+- **Terminal sizing avoids early wrapping.** Terminal initialization and resize handling now prevent pasted or long input from wrapping before the terminal has a stable fit.
+- **Login no longer triggers noisy git status polling.** Git status refreshes are suppressed until an authenticated workspace context is available.
+- **Orchestration worker delete notifications ignore self-initiated cleanup.** Supervisor flows no longer report expected worker deletions caused by their own lifecycle actions.
+
 ## [1.4.4] — 2026-06-22
 
 ### Added
