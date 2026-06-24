@@ -348,7 +348,9 @@ export const config = Object.freeze({
    */
   authBannerText: readUiText("AUTH_BANNER_TEXT"),
   authBannerHtml: readBool("AUTH_BANNER_HTML", false),
-  authLogoUrl: readHttpUrl("AUTH_LOGO_URL"),
+  authLogoUrl: readHttpUrl("AUTH_URL_LOGO") ?? readHttpUrl("AUTH_LOGO_URL"),
+  appLogoDarkUrl: readHttpUrl("APP_LOGO_DARK_URL"),
+  appLogoLightUrl: readHttpUrl("APP_LOGO_LIGHT_URL"),
   authColorScheme: readAuthColorScheme("AUTH_COLOR_SCHEME"),
   /**
    * When true, `GET /config/providers` filters out provider entries

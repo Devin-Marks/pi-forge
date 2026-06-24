@@ -46,6 +46,7 @@ import { cleanupArchivedSessions } from "./session-archive.js";
 import { disposeAllPtys, installPtyExitHandler } from "./pty-manager.js";
 import { logSecretHygieneState } from "./agent-resource-loader.js";
 import { applySandboxStartupChowns } from "./sandbox-startup-permissions.js";
+import { initializeLogoCache, logoCacheDir, LOGO_CACHE_PREFIX } from "./logo-cache.js";
 
 /**
  * Per-route auth metadata. Routes that should skip the auth preHandler set
@@ -165,6 +166,13 @@ export async function buildServer(): Promise<FastifyInstance> {
   // Rate limiting is per-route only — no global cap by design. The login
   // route applies its own limit via route-level `config.rateLimit`.
   await fastify.register(rateLimit, { global: false });
+
+  await initializeLogoCache(fastify.log);
+  await fastify.register(fastifyStatic, {
+    root: logoCacheDir(),
+    prefix: LOGO_CACHE_PREFIX,
+    decorateReply: false,
+  });
 
   // Security headers — set on every response, both API and static.
   // Done as an onSend hook rather than via @fastify/helmet to avoid the

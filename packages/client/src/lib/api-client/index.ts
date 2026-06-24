@@ -210,6 +210,10 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
     typeof value.authBannerText === "string" ? value.authBannerText : undefined;
   const authBannerHtml = typeof value.authBannerHtml === "boolean" ? value.authBannerHtml : false;
   const authLogoUrl = typeof value.authLogoUrl === "string" ? value.authLogoUrl : undefined;
+  const appLogoDarkUrl =
+    typeof value.appLogoDarkUrl === "string" ? value.appLogoDarkUrl : undefined;
+  const appLogoLightUrl =
+    typeof value.appLogoLightUrl === "string" ? value.appLogoLightUrl : undefined;
   const authColorScheme = vAuthColorScheme(value.authColorScheme, status);
   return {
     minimal: value.minimal,
@@ -223,6 +227,8 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
     authBannerHtml,
     authColorScheme,
     authLogoUrl,
+    appLogoDarkUrl,
+    appLogoLightUrl,
   };
 }
 

@@ -181,8 +181,8 @@ async function main(): Promise<void> {
       );
       assert("ui-config reports banner HTML opt-in", uiBody.authBannerHtml === true);
       assert(
-        "ui-config reports custom logo URL",
-        uiBody.authLogoUrl === "https://example.com/pi-forge-logo.png",
+        "ui-config omits invalid logo URL for built-in fallback",
+        uiBody.authLogoUrl === undefined,
       );
       assert(
         "ui-config reports auth color scheme",
