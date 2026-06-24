@@ -1,6 +1,7 @@
-import { lchown, lstat, readdir } from "node:fs/promises";
+import { lstat, readdir } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { config } from "./config.js";
+import { applySandboxPathHandoff, sandboxHandoffDescription } from "./sandbox-permissions.js";
 
 const PI_CONFIG_RESOURCE_DIRS = ["skills", "npm", "git", "extensions", "prompts", "themes"];
 
@@ -28,35 +29,35 @@ function assertAllowedSandboxChownPath(path: string): void {
   );
 }
 
-async function chownRecursiveNoFollow(path: string, uid: number, gid: number): Promise<void> {
+async function chownRecursiveNoFollow(path: string): Promise<void> {
   const st = await lstat(path);
   if (st.isDirectory()) {
     const entries = await readdir(path);
     for (const entry of entries) {
-      await chownRecursiveNoFollow(resolve(path, entry), uid, gid);
+      await chownRecursiveNoFollow(resolve(path, entry));
     }
   }
-  if (st.uid === uid && st.gid === gid) return;
-  await lchown(path, uid, gid);
+  await applySandboxPathHandoff(path);
 }
 
 export async function applySandboxStartupChowns(): Promise<void> {
-  const paths = config.agentToolSandbox.chownPaths;
-  if (paths.length === 0) return;
   if (!config.agentToolSandbox.enabled) {
-    console.warn(
-      "[sandbox-startup] AGENT_TOOL_SANDBOX_CHOWN_PATHS is set but sandbox mode is disabled; skipping chown",
-    );
+    if (config.agentToolSandbox.chownPaths.length > 0) {
+      console.warn(
+        "[sandbox-startup] AGENT_TOOL_SANDBOX_CHOWN_PATHS is set but sandbox mode is disabled; skipping chown",
+      );
+    }
     return;
   }
 
-  const uid = config.agentToolSandbox.uid!;
-  const gid = config.agentToolSandbox.gid!;
+  const paths = [...new Set([config.workspacePath, ...config.agentToolSandbox.chownPaths])];
   for (const path of paths) {
     const abs = resolve(path);
     assertAllowedSandboxChownPath(abs);
-    await chownRecursiveNoFollow(abs, uid, gid);
-    console.log(`[sandbox-startup] chowned ${abs} to ${uid}:${gid}`);
+    await chownRecursiveNoFollow(abs);
+    console.log(
+      `[sandbox-startup] prepared ${abs} for sandbox handoff ${sandboxHandoffDescription()}`,
+    );
   }
 }
 

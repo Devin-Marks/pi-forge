@@ -115,8 +115,11 @@ resources loadable and the selected agent resource directories writable by
 `pi-tools`.
 
 The Docker image's built-in directory ownership remains optimized for regular
-mode (`pi` owns `/home/pi` plus `/home/pi/.pi/agent` and `/home/pi/.pi-forge`) so
-non-sandbox tools can create ordinary per-user config such as `~/.config/gh`.
+mode (`pi` owns `/home/pi`, `/home/pi/.pi`, `/home/pi/.pi/agent`, and
+`/home/pi/.pi-forge`) so non-sandbox tools can create ordinary per-user config
+such as `~/.config/gh` and `~/.pi/...` files. The `/home/pi/.pi` group remains
+`pi-tools` without group write so sandbox tools can traverse non-secret resource
+parents without being able to create arbitrary entries there.
 Enabling sandbox with bind mounts or persistent volumes is an explicit operator
 step: adjust the mount permissions to the table above before relying on
 filesystem isolation. Sandbox tool children should still run as a different
@@ -126,10 +129,16 @@ changing volume ownership/modes.
 
 ## Optional startup chown helper
 
-`AGENT_TOOL_SANDBOX_CHOWN_PATHS` can reduce deployment-specific init scripts
-for paths that should be owned by `pi-tools`. When sandbox mode is enabled and
-the server starts as root, pi-forge recursively `chown`s each configured
-existing path to `AGENT_TOOL_UID:AGENT_TOOL_GID` before the HTTP server starts.
+When sandbox mode is enabled and the server starts as root, pi-forge always
+prepares `WORKSPACE_PATH` for sharing between `pi-tools` and the root server
+before the HTTP server starts: owner is `AGENT_TOOL_UID`, group is the server's
+group (root group in the Docker overlay), and mode bits include group rwX. This
+lets the sandbox tool identity write as owner while the root server can still
+create, move, read, delete, and download files without `DAC_OVERRIDE`.
+
+`AGENT_TOOL_SANDBOX_CHOWN_PATHS` can reduce deployment-specific init scripts for
+additional existing paths that should use the same shared sandbox/server
+permissions.
 The helper deliberately accepts only non-secret roots: `WORKSPACE_PATH`,
 `AGENT_TOOL_HOME`, and the Pi resource subtrees
 `${PI_CONFIG_DIR}/{skills,npm,git,extensions,prompts,themes}`. It rejects
@@ -138,7 +147,7 @@ The helper deliberately accepts only non-secret roots: `WORKSPACE_PATH`,
 Example:
 
 ```txt
-AGENT_TOOL_SANDBOX_CHOWN_PATHS=/workspace,/home/pi/.pi/agent/skills
+AGENT_TOOL_SANDBOX_CHOWN_PATHS=/home/pi/.pi/agent/skills
 ```
 
 Keep using explicit init-container or host-side permissioning for server-only
@@ -229,9 +238,12 @@ AGENT_TOOL_HOME=/home/pi-tools
 Start sandbox mode with the sandbox compose overlay. The base compose file runs
 regular mode as `pi` with no Linux capabilities; the overlay switches the server
 container to root and adds back `SETUID` / `SETGID` for sandbox child processes
-plus `CHOWN` for the optional `AGENT_TOOL_SANDBOX_CHOWN_PATHS` startup helper.
-If you remove `CHOWN`, leave `AGENT_TOOL_SANDBOX_CHOWN_PATHS` unset or startup
-will fail on the first ownership change:
+plus `CHOWN` for entrypoint mount preparation and browser-created workspace
+ownership handoff. The image entrypoint prepares `/workspace`,
+`/home/pi/.pi-forge`, `/home/pi/.pi/agent`, and `AGENT_TOOL_HOME` before Node
+starts so server-private files such as `jwt-secret` can be created without
+`DAC_OVERRIDE`. If you remove `CHOWN`, sandbox startup will fail on the first
+ownership change:
 
 ```bash
 cd docker
@@ -297,26 +309,17 @@ docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
 The base compose file already drops all capabilities. The sandbox overlay adds
 back `CHOWN`, `SETUID`, and `SETGID` and runs the server container as root.
 `SETUID` / `SETGID` let pi-forge spawn model/user tool processes as
-`pi-tools`; `CHOWN` lets browser upload and new-file APIs hand newly created
-workspace files/directories to that same sandbox identity, and is also required
-when `AGENT_TOOL_SANDBOX_CHOWN_PATHS` is configured.
-
-If OrbStack/Docker Desktop shows `.pi-forge` as `1000:1000 0700` inside the
-pi-forge container even after the helper volume init chowns it to `root:root`,
-add `DAC_OVERRIDE` for local testing:
-
-```yaml
-cap_add:
-  - CHOWN
-  - SETUID
-  - SETGID
-  - DAC_OVERRIDE # local OrbStack/Docker Desktop workaround only
-```
+`pi-tools`; `CHOWN` lets the entrypoint prepare standard mounts before Node
+starts and lets browser upload/new-file APIs hand newly created workspace
+files/directories to that same sandbox identity (with the server group kept for
+root-server access). It is also required when `AGENT_TOOL_SANDBOX_CHOWN_PATHS`
+is configured.
 
 Keep production/native-Linux deployments to `CHOWN`, `SETUID`, and `SETGID` for
 sandbox mode. If you build a stricter custom overlay, `SETUID`/`SETGID` are
-required for identity switching; `CHOWN` is required for browser-created
-workspace ownership handoff and for `AGENT_TOOL_SANDBOX_CHOWN_PATHS`.
+required for identity switching; `CHOWN` is required for entrypoint mount
+preparation, browser-created workspace ownership handoff, and
+`AGENT_TOOL_SANDBOX_CHOWN_PATHS`.
 
 ### One-shot volume init commands
 

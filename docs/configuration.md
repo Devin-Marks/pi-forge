@@ -84,7 +84,7 @@ or shell environment. The most-touched ones:
 | `AGENT_TOOL_UID` | (unset) | Numeric UID used for sandboxed bash/process/terminal/quick-action/exec children. Required only when sandbox is enabled. |
 | `AGENT_TOOL_GID` | (unset) | Numeric GID used for sandboxed bash/process/terminal/quick-action/exec children. Required only when sandbox is enabled. |
 | `AGENT_TOOL_HOME` | `/home/pi-tools` | Writable HOME injected into sandboxed bash/process/terminal/quick-action/exec children. The Docker image creates this directory owned by `pi-tools`. |
-| `AGENT_TOOL_SANDBOX_CHOWN_PATHS` | (empty) | Comma- or whitespace-separated existing paths to recursively `chown` to `AGENT_TOOL_UID:AGENT_TOOL_GID` at server startup when sandbox mode is enabled. Paths are limited to `/workspace`, `AGENT_TOOL_HOME`, and non-secret Pi resource subtrees (`skills`, `npm`, `git`, `extensions`, `prompts`, `themes`). |
+| `AGENT_TOOL_SANDBOX_CHOWN_PATHS` | (empty) | Optional comma- or whitespace-separated existing extra paths to recursively prepare for sandbox sharing at server startup when sandbox mode is enabled. `WORKSPACE_PATH` is always prepared automatically. Prepared paths are owned by `AGENT_TOOL_UID` with the server's group and group rwX bits so both the sandbox tool identity and root server without `DAC_OVERRIDE` can access them. Extra paths are limited to `WORKSPACE_PATH`, `AGENT_TOOL_HOME`, and non-secret Pi resource subtrees (`skills`, `npm`, `git`, `extensions`, `prompts`, `themes`). |
 
 Logo URL mode examples:
 
