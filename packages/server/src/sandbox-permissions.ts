@@ -1,5 +1,5 @@
 import { chmod, lchown, lstat, readdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { config } from "./config.js";
 
 const SANDBOX_GROUP_RW = 0o060;
@@ -66,4 +66,32 @@ export async function applySandboxTreeHandoff(path: string): Promise<void> {
     }
   }
   await applySandboxPathHandoff(path);
+}
+
+export async function applySandboxDirectoryChainHandoff(root: string, dir: string): Promise<void> {
+  if (!sandboxPermissionsEnabled()) return;
+  const resolvedRoot = resolve(root);
+  const resolvedDir = resolve(dir);
+  const rel = relative(resolvedRoot, resolvedDir);
+  if (rel.startsWith("..") || rel.includes(`..${sep}`)) {
+    await applySandboxPathHandoff(resolvedDir);
+    return;
+  }
+  const parts = rel.split(sep).filter(Boolean);
+  let current = resolvedRoot;
+  await applyExistingSandboxPathHandoff(current);
+  for (const part of parts) {
+    current = join(current, part);
+    await applyExistingSandboxPathHandoff(current);
+  }
+}
+
+async function applyExistingSandboxPathHandoff(path: string): Promise<void> {
+  await applySandboxPathHandoff(path).catch((err: NodeJS.ErrnoException) => {
+    if (err.code !== "ENOENT") throw err;
+  });
+}
+
+export async function applySandboxParentChainHandoff(root: string, path: string): Promise<void> {
+  await applySandboxDirectoryChainHandoff(root, dirname(path));
 }

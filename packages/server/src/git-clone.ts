@@ -36,6 +36,8 @@ import { rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { scrubbedEnv } from "./pty-manager.js";
 import { applySandboxTreeHandoff } from "./sandbox-permissions.js";
+import { config } from "./config.js";
+import { sandboxSpawnIdentity } from "./agent-bash-operations.js";
 
 const MAX_PROGRESS_BUFFER_BYTES = 64 * 1024;
 const CLONE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -255,13 +257,7 @@ export function cloneRepository(opts: CloneOptions): SpawnedClone {
 
   push({ type: "started", cloneUrlForDisplay: displayUrl });
 
-  const env: Record<string, string> = {
-    ...scrubbedEnv(),
-    // Prevent git from prompting on stdin when credentials are
-    // wrong / missing — without this, git can hang indefinitely
-    // waiting for a username/password.
-    GIT_TERMINAL_PROMPT: "0",
-  };
+  const env = gitCloneEnv();
 
   if (opts.insecureTls === true) {
     // git's standard "skip cert validation" knob. Equivalent to
@@ -287,6 +283,7 @@ export function cloneRepository(opts: CloneOptions): SpawnedClone {
     cwd: dirname(target),
     env,
     stdio: ["ignore", "pipe", "pipe"],
+    ...sandboxSpawnIdentity(),
   });
 
   let stderrBuffer = "";
@@ -414,11 +411,24 @@ async function persistInsecureTlsForOrigin(target: string, cleanUrl: string): Pr
   await runGitQuiet(target, ["config", "--local", `http.${cleanUrl}.sslVerify`, "false"]);
 }
 
+function gitCloneEnv(): Record<string, string> {
+  const env = scrubbedEnv();
+  return {
+    ...env,
+    ...(config.agentToolSandbox.enabled ? { HOME: config.agentToolSandbox.home } : {}),
+    // Prevent git from prompting on stdin when credentials are
+    // wrong / missing — without this, git can hang indefinitely
+    // waiting for a username/password.
+    GIT_TERMINAL_PROMPT: "0",
+  };
+}
+
 async function runGitQuiet(cwd: string, args: string[]): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn("git", ["-C", cwd, ...args], {
-      env: scrubbedEnv(),
+      env: gitCloneEnv(),
       stdio: "ignore",
+      ...sandboxSpawnIdentity(),
     });
     child.on("error", reject);
     child.on("close", (code) => {

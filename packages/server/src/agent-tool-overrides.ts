@@ -19,6 +19,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { createForgeBashOperations } from "./agent-bash-operations.js";
 import { assertAgentToolPathAllowed, resolveAgentToolPath } from "./agent-tool-policy.js";
+import {
+  applySandboxParentChainHandoff,
+  applySandboxPathHandoff,
+  applySandboxTreeHandoff,
+} from "./sandbox-permissions.js";
 
 function guard(workspacePath: string, absolutePath: string): string {
   return resolveAgentToolPath(workspacePath, absolutePath);
@@ -88,17 +93,26 @@ export function createSandboxedToolDefinitions(
   const editOps: EditOperations = {
     readFile: async (absolutePath) => readFile(guard(workspacePath, absolutePath)),
     writeFile: async (absolutePath, content) => {
-      await writeFile(guard(workspacePath, absolutePath), content);
+      const safePath = guard(workspacePath, absolutePath);
+      await applySandboxParentChainHandoff(workspacePath, safePath);
+      await writeFile(safePath, content);
+      await applySandboxPathHandoff(safePath);
     },
     access: async (absolutePath) => access(guard(workspacePath, absolutePath)),
   };
 
   const writeOps: WriteOperations = {
     writeFile: async (absolutePath, content) => {
-      await writeFile(guard(workspacePath, absolutePath), content);
+      const safePath = guard(workspacePath, absolutePath);
+      await applySandboxParentChainHandoff(workspacePath, safePath);
+      await writeFile(safePath, content);
+      await applySandboxPathHandoff(safePath);
     },
     mkdir: async (dir) => {
-      await mkdir(guard(workspacePath, dir), { recursive: true });
+      const safeDir = guard(workspacePath, dir);
+      await applySandboxParentChainHandoff(workspacePath, safeDir);
+      await mkdir(safeDir, { recursive: true });
+      await applySandboxTreeHandoff(safeDir);
     },
   };
 

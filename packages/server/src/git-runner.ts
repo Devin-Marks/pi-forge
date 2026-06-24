@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { assertInsideRoot } from "./file-manager.js";
+import { config } from "./config.js";
+import { sandboxSpawnIdentity } from "./agent-bash-operations.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -191,6 +193,7 @@ async function runGit(cwd: string, args: string[]): Promise<RunResult> {
       cwd,
       maxBuffer: MAX_BUFFER,
       env: gitEnv(),
+      ...sandboxSpawnIdentity(),
     });
     return { stdout, stderr, exitCode: 0 };
   } catch (err) {
@@ -229,7 +232,9 @@ async function runGit(cwd: string, args: string[]): Promise<RunResult> {
 function gitEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    HOME: process.env.HOME ?? homedir(),
+    HOME: config.agentToolSandbox.enabled
+      ? config.agentToolSandbox.home
+      : (process.env.HOME ?? homedir()),
     GIT_TERMINAL_PROMPT: "0",
     GIT_ASKPASS: "true",
     LC_ALL: "C",
@@ -257,6 +262,7 @@ export async function runGitRaw(
       cwd,
       maxBuffer: opts.maxBuffer ?? MAX_BUFFER,
       env: gitEnv(),
+      ...sandboxSpawnIdentity(),
     });
     return { stdout, stderr };
   } catch (err) {
