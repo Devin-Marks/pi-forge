@@ -22,13 +22,13 @@ const PATH_EXTENSIONS = new Set([".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp
 
 type LogoKey = "auth" | "appDark" | "appLight";
 
-interface CachedLogoState {
+export interface LogoUrlState {
   authLogoUrl: string | undefined;
   appLogoDarkUrl: string | undefined;
   appLogoLightUrl: string | undefined;
 }
 
-let cachedLogoState: CachedLogoState = {
+let cachedLogoState: LogoUrlState = {
   authLogoUrl: undefined,
   appLogoDarkUrl: undefined,
   appLogoLightUrl: undefined,
@@ -38,7 +38,14 @@ export function logoCacheDir(): string {
   return join(config.forgeDataDir, "cache", "logos");
 }
 
-export function cachedLogoUrls(): CachedLogoState {
+export function logoUrls(): LogoUrlState {
+  if (config.logoUrlMode === "direct") {
+    return {
+      authLogoUrl: config.authLogoUrl,
+      appLogoDarkUrl: config.appLogoDarkUrl,
+      appLogoLightUrl: config.appLogoLightUrl,
+    };
+  }
   return cachedLogoState;
 }
 
@@ -46,6 +53,10 @@ export async function initializeLogoCache(log: {
   warn: (obj: unknown, msg?: string) => void;
   info: (obj: unknown, msg?: string) => void;
 }): Promise<void> {
+  if (config.logoUrlMode === "direct") {
+    log.info("logo URL mode is direct; skipping server-side logo cache refresh");
+    return;
+  }
   await mkdir(logoCacheDir(), { recursive: true });
   const entries: [LogoKey, string | undefined][] = [
     ["auth", config.authLogoUrl],

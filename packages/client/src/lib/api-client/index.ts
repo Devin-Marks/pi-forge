@@ -209,6 +209,7 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
   const authBannerText =
     typeof value.authBannerText === "string" ? value.authBannerText : undefined;
   const authBannerHtml = typeof value.authBannerHtml === "boolean" ? value.authBannerHtml : false;
+  const logoUrlMode = value.logoUrlMode === "direct" ? "direct" : "cache";
   const authLogoUrl = typeof value.authLogoUrl === "string" ? value.authLogoUrl : undefined;
   const appLogoDarkUrl =
     typeof value.appLogoDarkUrl === "string" ? value.appLogoDarkUrl : undefined;
@@ -225,6 +226,7 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
       value.serverTheme === undefined ? undefined : vServerThemeConfig(value.serverTheme, status),
     authBannerText,
     authBannerHtml,
+    logoUrlMode,
     authColorScheme,
     authLogoUrl,
     appLogoDarkUrl,

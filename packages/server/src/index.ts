@@ -71,6 +71,26 @@ function shouldRefreshJwtActivity(method: string): boolean {
   return upper !== "GET" && upper !== "HEAD" && upper !== "OPTIONS";
 }
 
+function originForLogo(url: string | undefined): string | undefined {
+  if (url === undefined) return undefined;
+  return new URL(url).origin;
+}
+
+function imgSrcCsp(): string {
+  const sources = new Set(["'self'", "data:", "blob:"]);
+  if (config.logoUrlMode === "direct") {
+    for (const source of [
+      originForLogo(config.authLogoUrl),
+      originForLogo(config.appLogoDarkUrl),
+      originForLogo(config.appLogoLightUrl),
+      ...config.logoImgSrcAllowlist,
+    ]) {
+      if (source !== undefined) sources.add(source);
+    }
+  }
+  return `img-src ${[...sources].join(" ")}`;
+}
+
 export async function buildServer(): Promise<FastifyInstance> {
   // Install before Fastify so unhandledRejection handlers from this
   // module are first in line — they print full cause chains for
@@ -168,11 +188,13 @@ export async function buildServer(): Promise<FastifyInstance> {
   await fastify.register(rateLimit, { global: false });
 
   await initializeLogoCache(fastify.log);
-  await fastify.register(fastifyStatic, {
-    root: logoCacheDir(),
-    prefix: LOGO_CACHE_PREFIX,
-    decorateReply: false,
-  });
+  if (config.logoUrlMode === "cache") {
+    await fastify.register(fastifyStatic, {
+      root: logoCacheDir(),
+      prefix: LOGO_CACHE_PREFIX,
+      decorateReply: false,
+    });
+  }
 
   // Security headers — set on every response, both API and static.
   // Done as an onSend hook rather than via @fastify/helmet to avoid the
@@ -194,7 +216,8 @@ export async function buildServer(): Promise<FastifyInstance> {
   //     in RootErrorBoundary + CodeMirror's inline cursor/selection
   //     styles compile to style="..." attributes. Keep also on
   //     style-src for Safari < 15.4 which falls back to it.
-  //   - img-src 'self' data: blob: — chat attachments + diff inline icons.
+  //   - img-src 'self' data: blob: (+ direct logo origins when enabled) —
+  //     chat attachments, diff inline icons, and optional raw browser-loaded logos.
   //   - connect-src 'self' — same-origin only. Browsers normalize
   //     ws://same-host to the page origin, so 'self' covers the
   //     integrated terminal WS without granting open-to-any-host
@@ -221,7 +244,7 @@ export async function buildServer(): Promise<FastifyInstance> {
         // honor the tighter style-src-attr below.
         "style-src 'self' 'unsafe-inline'",
         "style-src-attr 'unsafe-inline'",
-        "img-src 'self' data: blob:",
+        imgSrcCsp(),
         "font-src 'self' data:",
         "connect-src 'self'",
         "worker-src 'self' blob:",

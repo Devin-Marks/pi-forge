@@ -44,13 +44,15 @@ interface UiConfigState {
   authBannerText: string | undefined;
   /** True when the banner should render as sanitized HTML. */
   authBannerHtml: boolean;
+  /** Logo URL handling mode selected by the server. */
+  logoUrlMode: "cache" | "direct";
   /** Optional login/auth page color scheme. */
   authColorScheme: AuthColorScheme | undefined;
-  /** Optional same-origin URL for the login/auth logo. */
+  /** Optional URL for the login/auth logo (same-origin cache URL unless direct mode is enabled). */
   authLogoUrl: string | undefined;
-  /** Optional same-origin URL for the app header logo in dark-mode themes. */
+  /** Optional URL for the app header logo in dark-mode themes. */
   appLogoDarkUrl: string | undefined;
-  /** Optional same-origin URL for the app header logo in light-mode themes. */
+  /** Optional URL for the app header logo in light-mode themes. */
   appLogoLightUrl: string | undefined;
   /** Last load error (sticky until a retry succeeds), for diagnostics. */
   error: string | undefined;
@@ -68,6 +70,7 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
   serverTheme: undefined,
   authBannerText: undefined,
   authBannerHtml: false,
+  logoUrlMode: "cache",
   authColorScheme: undefined,
   authLogoUrl: undefined,
   appLogoDarkUrl: undefined,
@@ -91,6 +94,7 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
         serverTheme: cfg.serverTheme,
         authBannerText: cfg.authBannerText,
         authBannerHtml: cfg.authBannerHtml,
+        logoUrlMode: cfg.logoUrlMode,
         authColorScheme: cfg.authColorScheme,
         authLogoUrl: cfg.authLogoUrl,
         appLogoDarkUrl: cfg.appLogoDarkUrl,

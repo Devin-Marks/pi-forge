@@ -101,6 +101,42 @@ function readHttpUrl(key: string): string | undefined {
   return url.toString();
 }
 
+export type LogoUrlMode = "cache" | "direct";
+
+function readLogoUrlMode(key: string): LogoUrlMode {
+  const value = readEnv(key) ?? "cache";
+  if (value === "cache" || value === "direct") return value;
+  throw new Error(`config: ${key} must be one of: cache, direct (got ${value})`);
+}
+
+function readLogoImgSrcAllowlist(key: string): string[] {
+  return readStringList(key).map((source) => {
+    if (source === "*") return source;
+    if (/^[a-z][a-z0-9+.-]*:$/i.test(source)) return source;
+    let url: URL;
+    try {
+      url = new URL(source);
+    } catch {
+      throw new Error(
+        `config: ${key} entries must be absolute origins like https://cdn.example.com, scheme sources like https:, or explicit * (got ${source})`,
+      );
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error(`config: ${key} origins must use http: or https: (got ${url.protocol})`);
+    }
+    if (
+      url.username.length > 0 ||
+      url.password.length > 0 ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash
+    ) {
+      throw new Error(`config: ${key} entries must be origins only, not full URLs (got ${source})`);
+    }
+    return url.origin;
+  });
+}
+
 const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 function normalizeHexColor(key: string, value: string, index: number): string {
@@ -348,6 +384,8 @@ export const config = Object.freeze({
    */
   authBannerText: readUiText("AUTH_BANNER_TEXT"),
   authBannerHtml: readBool("AUTH_BANNER_HTML", false),
+  logoUrlMode: readLogoUrlMode("LOGO_URL_MODE"),
+  logoImgSrcAllowlist: readLogoImgSrcAllowlist("LOGO_IMG_SRC_ALLOWLIST"),
   authLogoUrl: readHttpUrl("AUTH_URL_LOGO") ?? readHttpUrl("AUTH_LOGO_URL"),
   appLogoDarkUrl: readHttpUrl("APP_LOGO_DARK_URL"),
   appLogoLightUrl: readHttpUrl("APP_LOGO_LIGHT_URL"),
