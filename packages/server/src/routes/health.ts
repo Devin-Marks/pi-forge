@@ -124,6 +124,7 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
               "workspaceRoot",
               "version",
               "passwordAuthEnabled",
+              "ldapEnabled",
               "orchestrationEnabled",
               "serverTheme",
               "authBannerHtml",
@@ -148,6 +149,11 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
               // deployments report false; the Settings → General
               // password change section hides in that case.
               passwordAuthEnabled: { type: "boolean" },
+              // True when LDAP username/password login is enabled.
+              // This is non-secret public auth mode metadata used to
+              // hide local password-change UI; LDAP-managed passwords
+              // must be rotated outside pi-forge.
+              ldapEnabled: { type: "boolean" },
               // True iff session orchestration is reachable. Enabled
               // by default, but false when disabled by instance config
               // OR when MINIMAL_UI is true (MINIMAL_UI is a hard gate).
@@ -199,6 +205,7 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
         workspaceRoot: config.workspacePath,
         version: SERVER_VERSION,
         passwordAuthEnabled: passwordAuthEnabled(),
+        ldapEnabled: config.auth.ldap.enabled,
         orchestrationEnabled: isOrchestrationEnabled(),
         serverTheme: { ...serverTheme, defaults: DEFAULT_THEME_COLORS },
         authBannerText: config.authBannerText,

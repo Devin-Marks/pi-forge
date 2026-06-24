@@ -4376,7 +4376,7 @@ function GeneralTab() {
   const version = useUiConfigStore((s) => s.version);
   const loaded = useUiConfigStore((s) => s.loaded);
   const passwordAuthEnabled = useUiConfigStore((s) => s.passwordAuthEnabled);
-  const ldapEnabled = useAuthStore((s) => s.ldapEnabled);
+  const ldapEnabled = useUiConfigStore((s) => s.ldapEnabled);
   return (
     <div className="space-y-6 text-sm text-neutral-300">
       <header className="space-y-1">

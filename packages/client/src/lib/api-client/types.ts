@@ -316,6 +316,11 @@ export interface UiConfigResponse {
    */
   passwordAuthEnabled: boolean;
   /**
+   * True when LDAP username/password login is enabled. Public,
+   * non-secret auth-mode metadata used to hide local password-change UI.
+   */
+  ldapEnabled: boolean;
+  /**
    * True when the server has orchestration available (enabled by
    * default unless disabled by config) AND is NOT in MINIMAL_UI mode.
    * Controls whether the supervisor-mode toggle and Workers panel

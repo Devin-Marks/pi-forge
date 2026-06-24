@@ -32,6 +32,11 @@ interface UiConfigState {
    */
   passwordAuthEnabled: boolean;
   /**
+   * True when LDAP username/password login is enabled. Defaults false
+   * until /ui-config loads so local password deployments keep the form.
+   */
+  ldapEnabled: boolean;
+  /**
    * True when the server has session orchestration available
    * (enabled by default unless disabled by config, and not MINIMAL_UI).
    * Default false until /ui-config loads so older servers that do not
@@ -66,6 +71,7 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
   workspaceRoot: "",
   version: "",
   passwordAuthEnabled: true,
+  ldapEnabled: false,
   orchestrationEnabled: false,
   serverTheme: undefined,
   authBannerText: undefined,
@@ -90,6 +96,7 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
         workspaceRoot: cfg.workspaceRoot,
         version: cfg.version,
         passwordAuthEnabled: cfg.passwordAuthEnabled,
+        ldapEnabled: cfg.ldapEnabled,
         orchestrationEnabled: cfg.orchestrationEnabled,
         serverTheme: cfg.serverTheme,
         authBannerText: cfg.authBannerText,
