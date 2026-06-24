@@ -69,10 +69,12 @@ or shell environment. The most-touched ones:
 | `MINIMAL_UI` | `false` | Hide terminal / git / last-turn / providers / agent-settings panels. Frontend gate; server routes unchanged. ALSO hard-disables webhook configuration, session orchestration, and the quick-actions runner. |
 | `AUTH_BANNER_TEXT` | (unset) | Optional public banner shown below the login prompt. Literal newlines/carriage returns are preserved; `\\n` and `\\r` escapes are decoded for single-line env/CLI surfaces. Do not put secrets here: it is exposed by public `/api/v1/ui-config`. |
 | `AUTH_BANNER_HTML` | `false` | When true, renders `AUTH_BANNER_TEXT` as sanitized HTML instead of plain text. Scripts, styles, event handlers, and unsafe links are stripped client-side. Leave false unless you need links or simple formatting. |
-| `AUTH_URL_LOGO` | (unset) | Optional absolute `http://` or `https://` URL for the login/auth logo. Pulled at server startup into `FORGE_DATA_DIR/cache/logos/` and exposed to the app as a same-origin `/cache/logos/...` URL so CSP stays strict. If fetch/validation fails, the built-in logo is used. |
+| `LOGO_URL_MODE` | `cache` | Logo URL handling mode. `cache` fetches configured logo URLs at server startup into `FORGE_DATA_DIR/cache/logos/` and returns same-origin `/cache/logos/...` URLs. `direct` returns configured raw URLs so the browser loads them directly. Accepted values: `cache`, `direct`. |
+| `LOGO_IMG_SRC_ALLOWLIST` | (unset) | Extra Content-Security-Policy `img-src` sources for `LOGO_URL_MODE=direct`, comma- or whitespace-separated. Entries must be exact `http(s)` origins such as `https://cdn.example.com`, scheme sources such as `https:`, or explicit `*`. The configured logo URL origins are added automatically; use this only for known redirect/CDN origins. |
+| `AUTH_URL_LOGO` | (unset) | Optional absolute `http://` or `https://` URL for the login/auth logo. In `cache` mode, failed fetch/validation falls back to the built-in logo. In `direct` mode, the raw URL is returned without server fetch validation and browser/CSP/network behavior applies. |
 | `AUTH_LOGO_URL` | (unset) | Legacy alias for `AUTH_URL_LOGO`. |
-| `APP_LOGO_DARK_URL` | (unset) | Optional absolute `http://` or `https://` URL for the app header logo in dark-mode themes. Cached/served same-origin; invalid or unreachable URLs fall back to the built-in logo. |
-| `APP_LOGO_LIGHT_URL` | (unset) | Optional absolute `http://` or `https://` URL for the app header logo in light-mode themes. Cached/served same-origin; invalid or unreachable URLs fall back to the built-in logo. |
+| `APP_LOGO_DARK_URL` | (unset) | Optional absolute `http://` or `https://` URL for the app header logo in dark-mode themes. Follows `LOGO_URL_MODE`; invalid or unreachable URLs fall back only in `cache` mode. |
+| `APP_LOGO_LIGHT_URL` | (unset) | Optional absolute `http://` or `https://` URL for the app header logo in light-mode themes. Follows `LOGO_URL_MODE`; invalid or unreachable URLs fall back only in `cache` mode. |
 | `AUTH_COLOR_SCHEME` | (unset) | Optional comma-separated list of exactly 8 hex colors for login/auth pages only: page background, card background, border, text, muted text, button background, button text, button hover background. Example: `#ffffff,#2563eb,#1d4ed8,#ffffff,#dbeafe,#2563eb,#ffffff,#1d4ed8`. Only `#rgb` and `#rrggbb` forms are accepted; invalid values fail startup rather than becoming CSS. |
 | `TRUST_PROXY` | `false` | Set when behind a reverse proxy so `req.ip` is the real client (required for per-user login rate limits). |
 | `ORCHESTRATION_DISABLED` | `false` | Disable the chat-view `Orch` toggle and orchestration REST/tool surface. Orchestration is enabled by default; hard-disabled under `MINIMAL_UI` regardless. See [`orchestration.md`](./orchestration.md). |
@@ -83,6 +85,27 @@ or shell environment. The most-touched ones:
 | `AGENT_TOOL_GID` | (unset) | Numeric GID used for sandboxed bash/process/terminal/quick-action/exec children. Required only when sandbox is enabled. |
 | `AGENT_TOOL_HOME` | `/home/pi-tools` | Writable HOME injected into sandboxed bash/process/terminal/quick-action/exec children. The Docker image creates this directory owned by `pi-tools`. |
 | `AGENT_TOOL_SANDBOX_CHOWN_PATHS` | (empty) | Comma- or whitespace-separated existing paths to recursively `chown` to `AGENT_TOOL_UID:AGENT_TOOL_GID` at server startup when sandbox mode is enabled. Paths are limited to `/workspace`, `AGENT_TOOL_HOME`, and non-secret Pi resource subtrees (`skills`, `npm`, `git`, `extensions`, `prompts`, `themes`). |
+
+Logo URL mode examples:
+
+```bash
+# Default: server fetches logos once at startup and serves /cache/logos/... same-origin.
+AUTH_URL_LOGO=https://assets.example.com/pi-forge-auth.svg \
+APP_LOGO_DARK_URL=https://assets.example.com/pi-forge-dark.svg \
+pi-forge
+
+# Direct: browser loads the raw configured URLs. Their origins are added to img-src automatically.
+LOGO_URL_MODE=direct \
+AUTH_URL_LOGO=https://assets.example.com/pi-forge-auth.svg \
+APP_LOGO_DARK_URL=https://assets.example.com/pi-forge-dark.svg \
+pi-forge
+
+# If a direct logo URL redirects to another trusted CDN origin, allow it explicitly.
+LOGO_URL_MODE=direct \
+LOGO_IMG_SRC_ALLOWLIST=https://cdn.example.net \
+AUTH_URL_LOGO=https://assets.example.com/pi-forge-auth.svg \
+pi-forge
+```
 
 Production-tuning knobs (rate limits, JWT lifetime, TLS / proxy posture)
 are documented in [`deployment.md`](./deployment.md).

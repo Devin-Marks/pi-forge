@@ -5,7 +5,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { sessionCount } from "../session-registry.js";
 import { ptyCount } from "../pty-manager.js";
 import { config, passwordAuthEnabled } from "../config.js";
-import { cachedLogoUrls } from "../logo-cache.js";
+import { logoUrls } from "../logo-cache.js";
 import { isOrchestrationEnabled } from "../orchestration/config.js";
 import { DEFAULT_THEME_COLORS, readThemeConfig, THEME_COLOR_KEYS } from "../theme-config.js";
 
@@ -159,6 +159,7 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
               // client-sanitized.
               authBannerText: { type: "string" },
               authBannerHtml: { type: "boolean" },
+              logoUrlMode: { type: "string", enum: ["cache", "direct"] },
               authLogoUrl: { type: "string" },
               appLogoDarkUrl: { type: "string" },
               appLogoLightUrl: { type: "string" },
@@ -192,7 +193,7 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async () => {
       const serverTheme = await readThemeConfig();
-      const logos = cachedLogoUrls();
+      const logos = logoUrls();
       return {
         minimal: config.minimalUi,
         workspaceRoot: config.workspacePath,
@@ -202,6 +203,7 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
         serverTheme: { ...serverTheme, defaults: DEFAULT_THEME_COLORS },
         authBannerText: config.authBannerText,
         authBannerHtml: config.authBannerHtml,
+        logoUrlMode: config.logoUrlMode,
         authLogoUrl: logos.authLogoUrl,
         appLogoDarkUrl: logos.appLogoDarkUrl,
         appLogoLightUrl: logos.appLogoLightUrl,

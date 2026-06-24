@@ -316,11 +316,27 @@ const FLAGS: readonly FlagDef[] = [
     defaultText: "false",
   },
   {
+    name: "logo-url-mode",
+    env: "LOGO_URL_MODE",
+    type: "string",
+    group: "features",
+    desc: "Logo URL handling: cache (server caches same-origin) or direct (browser loads raw URLs)",
+    defaultText: "cache",
+  },
+  {
+    name: "logo-img-src-allowlist",
+    env: "LOGO_IMG_SRC_ALLOWLIST",
+    type: "list",
+    group: "features",
+    desc: "Extra CSP img-src sources for direct logo mode (origins, schemes, or explicit *)",
+    defaultText: "(unset)",
+  },
+  {
     name: "auth-url-logo",
     env: "AUTH_URL_LOGO",
     type: "string",
     group: "features",
-    desc: "Absolute http(s) URL for the login/auth logo; cached and served same-origin",
+    desc: "Absolute http(s) URL for the login/auth logo; cached same-origin unless LOGO_URL_MODE=direct",
     defaultText: "(unset)",
   },
   {

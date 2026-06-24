@@ -163,6 +163,7 @@ async function main(): Promise<void> {
       const uiBody = uiConfig.body as {
         authBannerText?: string;
         authBannerHtml?: boolean;
+        logoUrlMode?: string;
         authLogoUrl?: string;
         authColorScheme?: {
           pageBackground: string;
@@ -180,6 +181,7 @@ async function main(): Promise<void> {
         uiBody.authBannerText === "Welcome\nRead <b>the policy</b>",
       );
       assert("ui-config reports banner HTML opt-in", uiBody.authBannerHtml === true);
+      assert("ui-config reports default logo cache mode", uiBody.logoUrlMode === "cache");
       assert(
         "ui-config omits invalid logo URL for built-in fallback",
         uiBody.authLogoUrl === undefined,
