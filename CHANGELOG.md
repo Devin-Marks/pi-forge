@@ -15,6 +15,24 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.4.6] — 2026-06-24
+
+### Added
+
+- **Configurable MCP tool result truncation.** Settings now exposes MCP text-result truncation controls, persists them in `mcp.json`, and lets operators disable truncation or tune the character cap while preserving the existing default behavior.
+- **Login inactivity timeout.** Browser JWTs can now expire after a configurable idle period via `LOGIN_INACTIVITY_TIMEOUT_SECONDS` / `--login-inactivity-timeout-seconds`, while passive polling and SSE traffic validate tokens without extending activity.
+- **Direct logo URL mode.** Deployments can opt into `LOGO_URL_MODE=direct` to return configured logo URLs directly to the browser, with CSP image sources derived from the logo origins and optional `LOGO_IMG_SRC_ALLOWLIST` entries.
+
+### Changed
+
+- **Custom logo handling is safer by default.** Remote auth and app header logos are fetched at startup, validated, cached under `FORGE_DATA_DIR/cache/logos/`, and served from same-origin `/cache/logos/...`, with Vite dev proxy support and graceful fallback to the built-in logo.
+- **Sandbox workspace permission handoff is centralized.** File-pane and startup preparation paths now share sandbox permission repair logic that hands files to the tool UID while preserving server group access.
+
+### Fixed
+
+- **Sandbox file-pane operations keep working after ownership drift.** Creating files inside folders, moving files into folders, deleting entries, and downloading files or archives in sandbox mode now repair permissions consistently.
+- **Direct and cached custom logos respect production CSP.** Same-origin cached logos avoid blocked remote image loads by default, while direct mode explicitly adds trusted logo origins to `img-src`.
+
 ## [1.4.5] — 2026-06-23
 
 ### Added
