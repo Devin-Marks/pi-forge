@@ -168,6 +168,7 @@ pi-forge:
 | `TRUST_PROXY` | `true` | Required when behind a reverse proxy so the login rate-limit sees real client IPs |
 | `CORS_ORIGIN` | the URL you reach pi-forge at, e.g. `http://pi-forge.local:3000` | Pinning stops other LAN origins from making cross-origin requests with the user's credentials |
 | `JWT_EXPIRES_IN_SECONDS` | `86400` (24 h) for shared-LAN deploys; default `604800` (7 d) for single-user | Shorter = smaller blast radius if a token leaks |
+| `LOGIN_INACTIVITY_TIMEOUT_SECONDS` | `3600` (1 h) for shared/kiosk browsers; default `0` disables idle expiry | Logs out browser JWTs after no mutating authenticated requests for the configured interval; passive GET polling / SSE reconnects do not extend it |
 | `RATE_LIMIT_LOGIN_MAX` | default `10` is fine | Per-IP login attempts per minute |
 | `LOG_LEVEL` | `info` (default) or `warn` if noisy | `debug` / `trace` are useful during incidents |
 | `MINIMAL_UI` | `true` to hide terminal / git / settings from non-admin users | Frontend gate; server routes unchanged |

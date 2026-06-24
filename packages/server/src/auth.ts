@@ -24,6 +24,7 @@ const SCRYPT_KEYLEN = 64;
 const SCRYPT_SALT_BYTES = 16;
 
 const HASH_PREFIX = "scrypt";
+const lastTokenActivityMs = new Map<string, number>();
 
 export interface JwtPayload {
   sub: "ui-user";
@@ -73,6 +74,7 @@ export function generateToken(opts: { mustChangePassword: boolean }): IssuedToke
     },
   );
   const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+  lastTokenActivityMs.set(token, Date.now());
   return { token, expiresAt };
 }
 
@@ -80,7 +82,7 @@ export function generateToken(opts: { mustChangePassword: boolean }): IssuedToke
  * Verify a JWT and return the typed payload, or undefined on any failure
  * (bad signature, expired, missing JWT_SECRET, wrong subject).
  */
-export function verifyToken(token: string): JwtPayload | undefined {
+export function verifyToken(token: string, opts: { touch?: boolean } = {}): JwtPayload | undefined {
   if (config.auth.jwtSecret === undefined) return undefined;
   try {
     const decoded = jwt.verify(token, config.auth.jwtSecret, {
@@ -92,6 +94,7 @@ export function verifyToken(token: string): JwtPayload | undefined {
     // mustChangePassword may be absent on tokens issued before this
     // field existed; treat absence as `false` so existing sessions
     // don't get force-rerouted to the change-password screen.
+    if (!tokenIsActive(token, decoded.iat, opts.touch !== false)) return undefined;
     const mustChangePassword =
       typeof (decoded as { mustChangePassword?: unknown }).mustChangePassword === "boolean"
         ? (decoded as { mustChangePassword: boolean }).mustChangePassword
@@ -104,6 +107,19 @@ export function verifyToken(token: string): JwtPayload | undefined {
     // (and we don't want to leak which case applies to a brute-forcer).
     return undefined;
   }
+}
+
+function tokenIsActive(token: string, issuedAtSeconds: number, touch: boolean): boolean {
+  const timeoutSeconds = config.auth.loginInactivityTimeoutSeconds;
+  if (timeoutSeconds <= 0) return true;
+  const now = Date.now();
+  const lastSeen = lastTokenActivityMs.get(token) ?? issuedAtSeconds * 1000;
+  if (now - lastSeen > timeoutSeconds * 1000) {
+    lastTokenActivityMs.delete(token);
+    return false;
+  }
+  if (touch) lastTokenActivityMs.set(token, now);
+  return true;
 }
 
 export function verifyApiKey(presented: string): boolean {

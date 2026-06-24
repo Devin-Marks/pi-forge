@@ -479,6 +479,7 @@ export const config = Object.freeze({
       tlsRejectUnauthorized: readBool("LDAP_TLS_REJECT_UNAUTHORIZED", true),
     }),
     jwtExpiresInSeconds: readInt("JWT_EXPIRES_IN_SECONDS", 60 * 60 * 24 * 7),
+    loginInactivityTimeoutSeconds: readInt("LOGIN_INACTIVITY_TIMEOUT_SECONDS", 0),
     loginRateLimitMax: readInt("RATE_LIMIT_LOGIN_MAX", 10),
     loginRateLimitWindowMs: readInt("RATE_LIMIT_LOGIN_WINDOW_MS", 60_000),
     /**

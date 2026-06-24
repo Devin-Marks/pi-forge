@@ -49,6 +49,10 @@ to swap a global server for a project-specific one).
 ```json
 {
   "disabled": false,
+  "truncation": {
+    "enabled": true,
+    "maxChars": 30000
+  },
   "servers": {
     "weather": {
       "url": "https://mcp.example.com/sse",
@@ -99,6 +103,8 @@ shape, so existing files don't need rewriting:
 | `env` | `Record<string, string>` | stdio | (none) | Subprocess env. Pi-forge env is **not** inherited by default (see "Stdio env" below). Treated as secret on read. |
 | `cwd` | string | stdio | project path (project scope) / pi-forge cwd (global) | Subprocess working directory. |
 | `disabled` | boolean (top-level) | — | `false` | Master kill-switch. When `true`, NO MCP tools reach the agent regardless of per-server `enabled`. |
+| `truncation.enabled` | boolean (top-level) | — | `true` | When true, text MCP results are capped before they enter agent context. |
+| `truncation.maxChars` | integer (top-level) | — | `30000` | Total text-character cap across all text blocks in one MCP result. Images pass through unchanged. |
 
 ## Stdio env passthrough
 
@@ -218,11 +224,16 @@ payloads keep their existing UI state to avoid unnecessary churn.
 ## Tool result truncation
 
 Very large text results from MCP tools are capped before they enter the agent
-context. When truncation happens, the returned text starts with a concise
+context. The default cap is 30,000 characters across all text blocks in a single
+MCP result; Settings → MCP lets you disable this or choose a different cap, and
+stores the choice in `${FORGE_DATA_DIR}/mcp.json` as `truncation.enabled` /
+`truncation.maxChars`.
+
+When truncation happens, the returned text starts with a concise
 `MCP_RESULT_TRUNCATED` warning that includes the omitted size and tells the model
 to retry with a smaller scope, narrower filter, or pagination. The visible payload
 then keeps the start and end of the original result with a marker where the middle
-was omitted.
+was omitted. Image blocks pass through unchanged.
 
 ## Troubleshooting
 

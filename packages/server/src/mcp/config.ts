@@ -87,6 +87,13 @@ export interface McpServerConfig {
   cwd?: string;
 }
 
+export interface McpTruncationConfig {
+  /** Default true. When false, MCP text results pass through without truncation. */
+  enabled?: boolean;
+  /** Total text-character cap across all MCP result text blocks. Default 30000. */
+  maxChars?: number;
+}
+
 export interface McpJson {
   /**
    * Master kill-switch surfaced as a toggle in Settings → MCP. When
@@ -96,6 +103,8 @@ export interface McpJson {
    * skipped. Defaults to false (MCP tools available).
    */
   disabled?: boolean;
+  /** MCP result truncation settings. Defaults to enabled with a 30k character cap. */
+  truncation?: McpTruncationConfig;
   servers: Record<string, McpServerConfig>;
 }
 
@@ -111,6 +120,19 @@ export function isStdioConfig(cfg: McpServerConfig): boolean {
 }
 
 const SECRET_PLACEHOLDER = "***REDACTED***";
+export const DEFAULT_MCP_TRUNCATION_MAX_CHARS = 30_000;
+
+export function normalizeMcpTruncationConfig(
+  input: McpTruncationConfig | undefined,
+): Required<McpTruncationConfig> {
+  const enabled = input?.enabled !== false;
+  const rawMax = input?.maxChars;
+  const maxChars =
+    typeof rawMax === "number" && Number.isFinite(rawMax) && rawMax >= 1
+      ? Math.floor(rawMax)
+      : DEFAULT_MCP_TRUNCATION_MAX_CHARS;
+  return { enabled, maxChars };
+}
 
 async function ensureDir(): Promise<void> {
   await mkdir(dirname(config.mcpConfigFile), { recursive: true });
@@ -148,10 +170,19 @@ export async function readMcpJson(): Promise<McpJson> {
     }
     const servers = (parsed as { servers?: unknown }).servers;
     const disabled = (parsed as { disabled?: unknown }).disabled === true;
+    const rawTruncation = (parsed as { truncation?: unknown }).truncation;
+    const truncation =
+      typeof rawTruncation === "object" && rawTruncation !== null
+        ? normalizeMcpTruncationConfig(rawTruncation)
+        : undefined;
     if (typeof servers !== "object" || servers === null) {
-      return { disabled, servers: {} };
+      return { disabled, ...(truncation !== undefined ? { truncation } : {}), servers: {} };
     }
-    return { disabled, servers: servers as Record<string, McpServerConfig> };
+    return {
+      disabled,
+      ...(truncation !== undefined ? { truncation } : {}),
+      servers: servers as Record<string, McpServerConfig>,
+    };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return { servers: {} };
     throw err;
@@ -234,6 +265,10 @@ export async function writeMcpJson(next: McpJson): Promise<void> {
   const existing: McpJson = await readMcpJson().catch(() => ({ servers: {} }));
   const safe: McpJson = { servers: {} };
   if (next.disabled === true) safe.disabled = true;
+  const truncation = normalizeMcpTruncationConfig(next.truncation);
+  if (truncation.enabled !== true || truncation.maxChars !== DEFAULT_MCP_TRUNCATION_MAX_CHARS) {
+    safe.truncation = truncation;
+  }
   for (const [name, server] of Object.entries(next.servers ?? {})) {
     const merged = copyServerCleaned(server);
     if (server.headers !== undefined) {
@@ -256,6 +291,15 @@ export async function upsertMcpServer(name: string, server: McpServerConfig): Pr
 export async function setMcpDisabled(disabled: boolean): Promise<void> {
   const cur = await readMcpJson();
   cur.disabled = disabled;
+  await writeMcpJson(cur);
+}
+
+export async function setMcpTruncationConfig(truncation: McpTruncationConfig): Promise<void> {
+  const cur = await readMcpJson();
+  cur.truncation = normalizeMcpTruncationConfig({
+    ...normalizeMcpTruncationConfig(cur.truncation),
+    ...truncation,
+  });
   await writeMcpJson(cur);
 }
 

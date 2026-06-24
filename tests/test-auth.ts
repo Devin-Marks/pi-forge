@@ -223,6 +223,66 @@ async function scenarioPasswordAndJwt(): Promise<void> {
   }
 }
 
+async function scenarioLoginInactivityTimeout(): Promise<void> {
+  console.log("\n[scenario A2] login inactivity timeout");
+  const password = "hunter2";
+  const srv = await startServer({
+    UI_PASSWORD: password,
+    JWT_SECRET: randomBytes(32).toString("hex"),
+    API_KEY: undefined,
+    LOGIN_INACTIVITY_TIMEOUT_SECONDS: "1",
+    REQUIRE_PASSWORD_CHANGE: "false",
+  });
+  try {
+    const login = await jsonPost(`${srv.base}/api/v1/auth/login`, { password });
+    assert("login with inactivity timeout → 200", login.status === 200);
+    const issued = (await login.json()) as { token: string };
+
+    const activeProbe = await fetch(`${srv.base}/api/v1/__protected_probe`, {
+      headers: { Authorization: `Bearer ${issued.token}` },
+    });
+    assert("fresh JWT passes before inactivity timeout", activeProbe.status === 404);
+
+    await new Promise((r) => setTimeout(r, 650));
+    const passiveGet = await fetch(`${srv.base}/api/v1/__protected_probe`, {
+      headers: { Authorization: `Bearer ${issued.token}` },
+    });
+    assert("passive GET before timeout still passes", passiveGet.status === 404);
+
+    await new Promise((r) => setTimeout(r, 550));
+    const expiredAfterPassiveGet = await fetch(`${srv.base}/api/v1/__protected_probe`, {
+      headers: { Authorization: `Bearer ${issued.token}` },
+    });
+    assert(
+      "passive GET polling does not refresh inactivity timeout → 401",
+      expiredAfterPassiveGet.status === 401,
+    );
+
+    const login2 = await jsonPost(`${srv.base}/api/v1/auth/login`, { password });
+    assert("second login for mutation refresh check → 200", login2.status === 200);
+    const issued2 = (await login2.json()) as { token: string };
+    await new Promise((r) => setTimeout(r, 650));
+    const mutatingProbe = await fetch(`${srv.base}/api/v1/__protected_probe`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${issued2.token}` },
+    });
+    assert("mutating request before timeout passes", mutatingProbe.status === 404);
+    await new Promise((r) => setTimeout(r, 550));
+    const activeAfterMutation = await fetch(`${srv.base}/api/v1/__protected_probe`, {
+      headers: { Authorization: `Bearer ${issued2.token}` },
+    });
+    assert("mutating request refreshes inactivity timeout", activeAfterMutation.status === 404);
+
+    await new Promise((r) => setTimeout(r, 1050));
+    const expiredProbe = await fetch(`${srv.base}/api/v1/__protected_probe`, {
+      headers: { Authorization: `Bearer ${issued2.token}` },
+    });
+    assert("idle JWT after inactivity timeout → 401", expiredProbe.status === 401);
+  } finally {
+    await srv.stop();
+  }
+}
+
 async function scenarioApiKeyOnly(): Promise<void> {
   console.log("\n[scenario B] API_KEY only (no UI_PASSWORD)");
   const apiKey = "test-api-key-" + randomBytes(8).toString("hex");
@@ -529,6 +589,7 @@ async function scenarioPersistedHashOnly(): Promise<void> {
 
 async function main(): Promise<void> {
   await scenarioPasswordAndJwt();
+  await scenarioLoginInactivityTimeout();
   await scenarioApiKeyOnly();
   await scenarioAuthDisabled();
   await scenarioPersistedHashOnly();

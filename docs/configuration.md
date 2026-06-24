@@ -53,6 +53,8 @@ or shell environment. The most-touched ones:
 | `FORGE_LOCAL_ADMIN_USERNAME` | `admin` | Username that selects the local admin password when LDAP login is enabled. Equivalent CLI: `--local-admin-username`. Must be 1-256 characters using only letters, numbers, `.`, `_`, `@`, or `-`. |
 | `API_KEY` | (unset) | Static bearer token for programmatic access. |
 | `JWT_SECRET` | (auto-generated) | HS256 signing key. Auto-generated and persisted to `${FORGE_DATA_DIR}/jwt-secret` (mode 0600) when `UI_PASSWORD`, LDAP auth, or `password-hash` is in play. Set explicitly (`openssl rand -hex 32`) to override; delete the file to rotate. |
+| `JWT_EXPIRES_IN_SECONDS` | `604800` | Absolute browser JWT lifetime (7 days by default). Equivalent CLI: `--jwt-expires-in-seconds`. |
+| `LOGIN_INACTIVITY_TIMEOUT_SECONDS` | `0` | Optional idle timeout for browser JWTs. `0` disables inactivity expiry; a positive value logs out browser sessions after that many seconds without mutating authenticated requests. Passive GETs such as SSE reconnects and status polling do not extend the idle window. Equivalent CLI: `--login-inactivity-timeout-seconds`. |
 | `LDAP_ENABLED` | `false` | Enables LDAP username/password browser login. Requires the LDAP variables below. |
 | `LDAP_URL` | (unset) | LDAP server URL, e.g. `ldap://ldap.example.com:389` or `ldaps://ldap.example.com:636`. |
 | `LDAP_BIND_DN` | (unset) | Service-account bind DN used only to search for the user entry. |
@@ -292,10 +294,12 @@ include them so a restore preserves per-project preferences.
 
 ## MCP servers
 
-MCP server definitions live in `${FORGE_DATA_DIR}/mcp.json` (global)
-and `<project>/.mcp.json` (project-scoped). Manage via **Settings →
-MCP** or edit the files directly. See [`mcp.md`](./mcp.md) for the
-field reference, transport options, auth model, and troubleshooting.
+MCP server definitions and global MCP behavior settings live in
+`${FORGE_DATA_DIR}/mcp.json` (global). Project-scoped server definitions
+live in `<project>/.mcp.json`. Manage global entries and MCP result
+truncation via **Settings → MCP** or edit the files directly. See
+[`mcp.md`](./mcp.md) for the field reference, transport options, auth
+model, truncation semantics, and troubleshooting.
 
 ## Pi plugins
 
