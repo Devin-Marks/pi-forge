@@ -35,6 +35,7 @@ import { spawn } from "node:child_process";
 import { rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { scrubbedEnv } from "./pty-manager.js";
+import { applySandboxTreeHandoff } from "./sandbox-permissions.js";
 
 const MAX_PROGRESS_BUFFER_BYTES = 64 * 1024;
 const CLONE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -361,6 +362,17 @@ export function cloneRepository(opts: CloneOptions): SpawnedClone {
           }
           if (opts.insecureTls === true) {
             await persistInsecureTlsForOrigin(target, displayUrl).catch(() => undefined);
+          }
+          try {
+            await applySandboxTreeHandoff(target);
+          } catch (err) {
+            await rm(target, { recursive: true, force: true }).catch(() => undefined);
+            finish({
+              type: "error",
+              message: `git clone completed but sandbox permission handoff failed: ${err instanceof Error ? err.message : String(err)}`,
+            });
+            resolveOuter();
+            return;
           }
           finish({ type: "done", target });
           resolveOuter();

@@ -10,7 +10,8 @@
  *   - PUT /files/write creates a file (with parent dirs); content reads back
  *     verbatim via GET /files/read; language detected from extension
  *   - POST /files/rename moves a file to a new basename in the same dir
- *   - POST /files/move relocates across directories
+ *   - POST /files/move relocates across directories and into folders in sandbox mode
+ *   - GET /files/download streams files and directory archives
  *   - DELETE /files/delete removes a file
  *   - POST /files/mkdir creates a directory; second call → 409 (target_exists)
  *   - DELETE /files/delete on a non-empty dir → 409 (directory_not_empty)
@@ -27,6 +28,7 @@ import {
   mkdtemp,
   readFile as fsRead,
   rm,
+  stat,
   symlink,
   writeFile as fsWrite,
 } from "node:fs/promises";
@@ -179,6 +181,9 @@ async function main(): Promise<void> {
       UI_PASSWORD: undefined,
       JWT_SECRET: undefined,
       SERVE_CLIENT: "false",
+      AGENT_TOOL_SANDBOX_ENABLED: "true",
+      AGENT_TOOL_UID: String(typeof process.getuid === "function" ? process.getuid() : 0),
+      AGENT_TOOL_GID: String(typeof process.getgid === "function" ? process.getgid() : 0),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -330,6 +335,74 @@ async function main(): Promise<void> {
       const qs = new URLSearchParams({ projectId, path: movedDest }).toString();
       const read = await jget(`${base}/api/v1/files/read?${qs}`, auth);
       assert("file readable at new dest", read.status === 200);
+    }
+
+    // ---- sandbox handoff: create and move inside folders ----
+    {
+      const folder = await jsend(
+        "POST",
+        `${base}/api/v1/files/mkdir`,
+        { projectId, parentPath: canonicalProjectPath, name: "sandbox-folder" },
+        auth,
+      );
+      assert("sandbox mkdir folder → 200", folder.status === 200, JSON.stringify(folder.body));
+      const folderPath = (folder.body as { path: string }).path;
+      const folderMode = (await stat(folderPath)).mode & 0o777;
+      assert(
+        "sandbox folder is group-writable",
+        (folderMode & 0o070) === 0o070,
+        folderMode.toString(8),
+      );
+
+      const childPath = join(folderPath, "child.txt");
+      const created = await jsend(
+        "PUT",
+        `${base}/api/v1/files/write`,
+        { projectId, path: childPath, content: "child\n" },
+        auth,
+      );
+      assert(
+        "sandbox write inside folder → 200",
+        created.status === 200,
+        JSON.stringify(created.body),
+      );
+      const childMode = (await stat(childPath)).mode & 0o777;
+      assert(
+        "sandbox file is group-readable/writable",
+        (childMode & 0o060) === 0o060,
+        childMode.toString(8),
+      );
+
+      const movedIntoFolder = join(folderPath, "moved.ts");
+      const moved = await jsend(
+        "POST",
+        `${base}/api/v1/files/move`,
+        { projectId, src: movedDest, dest: movedIntoFolder },
+        auth,
+      );
+      assert(
+        "sandbox move file into folder → 200",
+        moved.status === 200,
+        JSON.stringify(moved.body),
+      );
+      movedDest = (moved.body as { path: string }).path;
+    }
+
+    // ---- download file and directory ----
+    {
+      const fileQs = new URLSearchParams({ projectId, path: movedDest }).toString();
+      const fileRes = await fetch(`${base}/api/v1/files/download?${fileQs}`, { headers: auth });
+      assert("GET /files/download file → 200", fileRes.status === 200);
+      assert("download file content matches", (await fileRes.text()) === "export const y = 2;\n");
+
+      const dirQs = new URLSearchParams({
+        projectId,
+        path: join(canonicalProjectPath, "sandbox-folder"),
+      }).toString();
+      const dirRes = await fetch(`${base}/api/v1/files/download?${dirQs}`, { headers: auth });
+      const dirBytes = await dirRes.arrayBuffer();
+      assert("GET /files/download directory → 200", dirRes.status === 200);
+      assert("download directory returns bytes", dirBytes.byteLength > 0);
     }
 
     // ---- delete file ----

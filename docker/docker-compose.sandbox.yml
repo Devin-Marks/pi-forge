@@ -6,9 +6,9 @@
 # The base compose file starts as the pi user and drops all capabilities so
 # regular mode does not need SETUID/SETGID. Sandbox mode must start the server
 # as root and add back SETUID/SETGID so pi-forge can spawn model/user tool
-# children as AGENT_TOOL_UID:AGENT_TOOL_GID. CHOWN lets the server hand files
-# created by browser uploads/new-file APIs to the sandbox tool identity and is
-# also required for the optional AGENT_TOOL_SANDBOX_CHOWN_PATHS startup helper.
+# children as AGENT_TOOL_UID:GID. CHOWN lets startup prepare standard writable
+# mounts and lets browser uploads/new-file APIs hand workspace paths to the
+# sandbox tool identity.
 
 services:
   pi-forge:

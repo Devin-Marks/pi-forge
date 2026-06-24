@@ -197,10 +197,10 @@ COPY --from=builder --chown=pi:pi /app/packages/client/dist ./packages/client/di
 # Sandbox deployments must explicitly permission their mounts; see
 # docs/agent-tool-sandbox.md.
 RUN mkdir -p /workspace /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm /home/pi-tools/.config \
- && chown -R pi-tools:pi-tools /workspace /home/pi-tools \
+ && chown -R pi:pi /workspace /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm \
+ && chown -R pi-tools:pi-tools /home/pi-tools \
  && chown pi:pi /home/pi \
- && chown root:pi-tools /home/pi/.pi \
- && chown -R pi:pi /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm \
+ && chown pi:pi-tools /home/pi/.pi \
  && chmod 0775 /workspace \
  && chmod 0755 /home/pi /home/pi/.pi \
  && chmod 0700 /home/pi/.pi/agent /home/pi/.pi-forge /home/pi/.local /home/pi/.npm /home/pi-tools
@@ -211,12 +211,42 @@ set -eu
 case "$(printf '%s' "${AGENT_TOOL_SANDBOX_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')" in
   1|true|yes|on)
     # Sandbox mode: keep the server as root so it can setuid/setgid
-    # model/user tool children to AGENT_TOOL_UID:GID. Mount ownership is
-    # an operator contract; see docs/agent-tool-sandbox.md.
+    # model/user tool children to AGENT_TOOL_UID:GID. Prepare the standard
+    # writable mounts here, before Node imports config.ts and tries to create
+    # server-private files such as /home/pi/.pi-forge/jwt-secret.
     if [ "$(id -u)" != "0" ]; then
       echo "AGENT_TOOL_SANDBOX_ENABLED=true requires the container to run as root" >&2
       exit 1
     fi
+    tool_uid="${AGENT_TOOL_UID:?AGENT_TOOL_UID is required when sandbox is enabled}"
+    tool_gid="${AGENT_TOOL_GID:?AGENT_TOOL_GID is required when sandbox is enabled}"
+    workspace_path="${WORKSPACE_PATH:-/workspace}"
+    forge_data_dir="${FORGE_DATA_DIR:-/home/pi/.pi-forge}"
+    pi_config_dir="${PI_CONFIG_DIR:-/home/pi/.pi/agent}"
+    tool_home="${AGENT_TOOL_HOME:-/home/pi-tools}"
+
+    mkdir -p "$workspace_path" "$forge_data_dir" "$pi_config_dir" "$tool_home"
+
+    chown root:root "$forge_data_dir"
+    chmod u+rwx "$forge_data_dir"
+    chown -R root:root "$forge_data_dir"
+    chmod -R u+rwX,go-rwx "$forge_data_dir"
+
+    chown root:0 "$workspace_path"
+    chmod u+rwx,g+rwx "$workspace_path"
+    chown -R root:0 "$workspace_path"
+    chmod -R u+rwX,g+rwX,o-rwx "$workspace_path"
+    chown -R "$tool_uid:0" "$workspace_path"
+
+    chown root:"$tool_gid" "$pi_config_dir"
+    chmod 0750 "$pi_config_dir"
+
+    chown root:"$tool_gid" "$tool_home"
+    chmod u+rwx "$tool_home"
+    chown -R root:"$tool_gid" "$tool_home"
+    chmod -R u+rwX,go-rwx "$tool_home"
+    chown -R "$tool_uid:$tool_gid" "$tool_home"
+
     exec "$@"
     ;;
   *)

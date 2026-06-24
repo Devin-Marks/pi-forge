@@ -12,6 +12,7 @@ import {
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { config } from "./config.js";
+import { applySandboxPathHandoff } from "./sandbox-permissions.js";
 import { clearProjectOverrides as clearProjectSkillOverrides } from "./skill-overrides.js";
 import { clearProjectPromptOverrides } from "./prompt-overrides.js";
 import { clearProjectSystemPromptAddendum } from "./system-prompt-overrides.js";
@@ -410,6 +411,13 @@ export async function createDirectory(parentPath: string, name: string): Promise
   if (!isInsideWorkspace(target)) {
     throw new PathOutsideWorkspaceError(target);
   }
+  await applySandboxPathHandoff(parent);
   await mkdir(target, { recursive: false });
+  try {
+    await applySandboxPathHandoff(target);
+  } catch (err) {
+    await rm(target, { recursive: true, force: true }).catch(() => undefined);
+    throw err;
+  }
   return target;
 }

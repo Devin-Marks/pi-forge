@@ -188,8 +188,8 @@ try {
       const changed = JSON.parse(statJson) as { uid?: number; gid?: number };
       assert("startup chown changes ownership when privileged", chownAttempt.status === 0);
       assert(
-        "startup chown target has requested owner/group",
-        changed.uid === targetUid && changed.gid === targetGid,
+        "startup chown target has requested owner and server group",
+        changed.uid === targetUid && changed.gid === currentGid,
         chownAttempt.stdout,
       );
     } else {
@@ -235,6 +235,17 @@ try {
       opts?: { expectedSha256?: string; overwrite?: boolean },
     ) => Promise<{ path: string; size: number; sha256: string }>;
   };
+  const { createDirectory: createWorkspaceDirectory } = (await import(
+    resolve(repoRoot, "packages/server/dist/project-manager.js")
+  )) as { createDirectory: (parentPath: string, name: string) => Promise<string> };
+  const { cloneRepository } = (await import(
+    resolve(repoRoot, "packages/server/dist/git-clone.js")
+  )) as {
+    cloneRepository: (opts: { url: string; target: string }) => {
+      promise: Promise<void>;
+      events: AsyncIterable<{ type: string; target?: string; message?: string }>;
+    };
+  };
   const { applySandboxStartupChowns } = (await import(
     resolve(repoRoot, "packages/server/dist/sandbox-startup-permissions.js")
   )) as { applySandboxStartupChowns: () => Promise<void> };
@@ -269,8 +280,9 @@ try {
     bufferSource("uploaded\n"),
   );
   const mkdirResult = await makeDirectory(project, project, "browser-dir");
+  const workspaceDirResult = await createWorkspaceDirectory(workspace, "browser-project");
   const expectedUid = Number(process.env.AGENT_TOOL_UID);
-  const expectedGid = Number(process.env.AGENT_TOOL_GID);
+  const expectedGid = process.getgid?.() ?? Number(process.env.AGENT_TOOL_GID);
   for (const ownedPath of [
     resolve(project, "created"),
     resolve(project, "created", "from-write.txt"),
@@ -278,13 +290,62 @@ try {
     resolve(project, "uploaded", "nested"),
     uploadResult.path,
     mkdirResult,
+    workspaceDirResult,
   ]) {
     const st = statSync(ownedPath);
+    const mode = st.mode & 0o777;
     assert(
-      `sandbox-created path owned by tool identity: ${ownedPath.slice(project.length + 1)}`,
+      `sandbox-created path owned by tool identity and server group: ${ownedPath.slice(project.length + 1)}`,
       st.uid === expectedUid && st.gid === expectedGid,
       `${st.uid}:${st.gid}`,
     );
+    assert(
+      `sandbox-created path is group accessible: ${ownedPath.slice(project.length + 1)}`,
+      st.isDirectory() ? (mode & 0o070) === 0o070 : (mode & 0o060) === 0o060,
+      mode.toString(8),
+    );
+  }
+
+  if (spawnSync("git", ["--version"], { encoding: "utf8" }).status === 0) {
+    const sourceRepo = resolve(tmp, "source-repo");
+    mkdirSync(sourceRepo, { recursive: true });
+    spawnSync("git", ["init"], { cwd: sourceRepo, encoding: "utf8" });
+    writeFileSync(resolve(sourceRepo, "README.md"), "# sandbox clone\n", "utf8");
+    spawnSync("git", ["add", "README.md"], { cwd: sourceRepo, encoding: "utf8" });
+    spawnSync(
+      "git",
+      ["-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init"],
+      {
+        cwd: sourceRepo,
+        encoding: "utf8",
+      },
+    );
+    const cloneTarget = resolve(workspace, "cloned-project");
+    const cloned = cloneRepository({ url: `file://${sourceRepo}`, target: cloneTarget });
+    let cloneDone = false;
+    let cloneError = "";
+    for await (const event of cloned.events) {
+      if (event.type === "done") cloneDone = true;
+      if (event.type === "error") cloneError = event.message ?? "clone error";
+    }
+    await cloned.promise;
+    assert("sandbox git clone completes", cloneDone, cloneError);
+    for (const clonedPath of [cloneTarget, resolve(cloneTarget, "README.md")]) {
+      const st = statSync(clonedPath);
+      const mode = st.mode & 0o777;
+      assert(
+        `sandbox-cloned path owned by tool identity and server group: ${clonedPath.slice(workspace.length + 1)}`,
+        st.uid === expectedUid && st.gid === expectedGid,
+        `${st.uid}:${st.gid}`,
+      );
+      assert(
+        `sandbox-cloned path is group accessible: ${clonedPath.slice(workspace.length + 1)}`,
+        st.isDirectory() ? (mode & 0o070) === 0o070 : (mode & 0o060) === 0o060,
+        mode.toString(8),
+      );
+    }
+  } else {
+    assert("git clone sandbox handoff coverage skipped because git is unavailable", true);
   }
 
   if ((process.getuid?.() ?? 0) === 0) {
@@ -341,7 +402,7 @@ try {
       },
     );
     assert(
-      "root can chown file-manager creates to configured UID/GID",
+      "root can prepare file-manager creates for sandbox handoff",
       ownership.status === 0,
       ownership.stderr,
     );
@@ -352,8 +413,8 @@ try {
     >;
     for (const [label, st] of Object.entries(ownershipStats)) {
       assert(
-        `root-created ${label} owned by 1:1`,
-        st.uid === 1 && st.gid === 1,
+        `root-created ${label} owned by tool uid and server group`,
+        st.uid === 1 && st.gid === 0,
         `${st.uid}:${st.gid}`,
       );
     }
