@@ -2,9 +2,10 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
-  AuthStorage,
   DefaultResourceLoader,
   ModelRegistry,
+  ModelRuntime,
+  type ModelRuntime as ModelRuntimeInstance,
   type PromptTemplate,
   type ResourceDiagnostic,
   SettingsManager,
@@ -14,6 +15,7 @@ import {
 import {
   getSupportedThinkingLevels,
   type Api,
+  type Credential,
   type Model,
   type ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
@@ -334,10 +336,23 @@ export async function writeModelsJson(data: ModelsJson): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// auth.json — uses the SDK's AuthStorage for locking + presence semantics.
+// auth.json / models.json — use the SDK's async ModelRuntime facade for 0.80+.
 
-function authStorage(): AuthStorage {
-  return AuthStorage.create(AUTH_FILE());
+type AuthJson = Record<string, Credential>;
+
+async function readAuthJson(): Promise<AuthJson> {
+  const data = await readJsonOr<unknown>(AUTH_FILE(), {});
+  if (typeof data !== "object" || data === null) return {};
+  return data as AuthJson;
+}
+
+async function writeAuthJson(data: AuthJson): Promise<void> {
+  await atomicWriteJson(AUTH_FILE(), data);
+}
+
+async function liveModelRuntime(): Promise<ModelRuntime> {
+  await migrateLegacyModelsJsonIfNeeded();
+  return ModelRuntime.create({ authPath: AUTH_FILE(), modelsPath: MODELS_FILE() });
 }
 
 /**
@@ -347,32 +362,30 @@ function authStorage(): AuthStorage {
  * knows built-in providers and silently returns undefined for anything
  * defined in models.json.
  */
-export function liveModelRegistry(): ModelRegistry {
-  return ModelRegistry.create(authStorage(), MODELS_FILE());
+export async function liveModelRegistry(): Promise<ModelRegistry> {
+  const runtime = await liveModelRuntime();
+  return new ModelRegistry(runtime);
 }
 
-export function readAuthSummary(): AuthSummary {
-  const store = authStorage();
+export async function readAuthSummary(): Promise<AuthSummary> {
   const providers: Record<string, AuthEntry> = {};
-  // `list()` enumerates providers stored in auth.json. Augment each with the
-  // typed `getAuthStatus` shape so the response surface matches what the UI
-  // would render (configured + source + label, no key value).
-  for (const provider of store.list()) {
-    const status = store.getAuthStatus(provider);
+  for (const [provider, credential] of Object.entries(await readAuthJson())) {
     providers[provider] = {
-      configured: status.configured,
-      source: status.source,
-      label: status.label,
+      configured: true,
+      source: "stored",
+      label: credential.type === "oauth" ? "OAuth" : "Stored API key",
     };
   }
   return { providers };
 }
 
-export function writeApiKey(provider: string, apiKey: string): void {
+export async function writeApiKey(provider: string, apiKey: string): Promise<void> {
   if (provider.length === 0) throw new Error("provider name cannot be empty");
   if (apiKey.length === 0) throw new Error("api key cannot be empty");
-  const store = authStorage();
-  store.set(provider, { type: "api_key", key: apiKey });
+  if (DANGEROUS_KEYS.has(provider)) throw new Error("provider name cannot be reserved");
+  const auth = await readAuthJson();
+  auth[provider] = { type: "api_key", key: apiKey };
+  await writeAuthJson(auth);
 }
 
 export class AuthProviderNotFoundError extends Error {
@@ -382,10 +395,23 @@ export class AuthProviderNotFoundError extends Error {
   }
 }
 
-export function removeApiKey(provider: string): void {
-  const store = authStorage();
-  if (!store.has(provider)) throw new AuthProviderNotFoundError(provider);
-  store.remove(provider);
+export async function removeApiKey(provider: string): Promise<void> {
+  const auth = await readAuthJson();
+  if (auth[provider] === undefined) throw new AuthProviderNotFoundError(provider);
+  delete auth[provider];
+  await writeAuthJson(auth);
+}
+
+export async function syncStoredApiKeyToRuntime(
+  runtime: ModelRuntimeInstance,
+  provider: string,
+): Promise<void> {
+  const credential = (await readAuthJson())[provider];
+  if (credential?.type === "api_key" && typeof credential.key === "string") {
+    await runtime.setRuntimeApiKey(provider, credential.key);
+  } else {
+    await runtime.removeRuntimeApiKey(provider);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -465,8 +491,7 @@ export async function updateSettings(patch: Record<string, unknown>): Promise<Se
 
 export async function liveProvidersListing(): Promise<ProvidersListing> {
   await migrateLegacyModelsJsonIfNeeded();
-  const store = authStorage();
-  const registry = ModelRegistry.create(store, MODELS_FILE());
+  const registry = await liveModelRegistry();
   const all: Model<Api>[] = registry.getAll();
   // When HIDE_BUILTIN_PROVIDERS is on, restrict to providers whose
   // name appears as a key in models.json. Built-ins (anthropic,

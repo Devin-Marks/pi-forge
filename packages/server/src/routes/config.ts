@@ -544,7 +544,7 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (_req, reply) => {
       try {
-        return readAuthSummary();
+        return await readAuthSummary();
       } catch (err) {
         return internalError(reply, err);
       }
@@ -587,7 +587,7 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       try {
-        writeApiKey(req.params.provider, req.body.apiKey);
+        await writeApiKey(req.params.provider, req.body.apiKey);
         return { provider: req.params.provider, configured: true };
       } catch (err) {
         return internalError(reply, err);
@@ -611,7 +611,7 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       try {
-        removeApiKey(req.params.provider);
+        await removeApiKey(req.params.provider);
         return reply.code(204).send();
       } catch (err) {
         if (err instanceof AuthProviderNotFoundError) {

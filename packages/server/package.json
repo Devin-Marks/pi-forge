@@ -9,9 +9,9 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "0.80.1",
-    "@earendil-works/pi-ai": "0.80.1",
-    "@earendil-works/pi-coding-agent": "0.80.1",
+    "@earendil-works/pi-agent-core": "0.80.10",
+    "@earendil-works/pi-ai": "0.80.10",
+    "@earendil-works/pi-coding-agent": "0.80.10",
     "@fastify/cors": "^11.0.1",
     "@fastify/multipart": "^10.0.0",
     "@fastify/rate-limit": "^11.0.0",

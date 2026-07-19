@@ -11,10 +11,9 @@
  *   - The size limit + image-count limit return 400 BEFORE
  *     `session.prompt()` is invoked.
  *
- * The test stubs both `session.prompt`, `session.model`, and
- * `session.modelRegistry.hasConfiguredAuth` so the route's
- * pre-flight passes without configuring a real provider. No LLM
- * round-trip required.
+ * The test stubs `session.prompt`, `session.model`, and the
+ * `session.modelRuntime` auth preflight surface so the route passes without
+ * configuring a real provider. No LLM round-trip required.
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -75,7 +74,12 @@ async function main(): Promise<void> {
       session: {
         prompt: (text: string, opts?: unknown) => Promise<void>;
         model: unknown;
-        modelRegistry: { hasConfiguredAuth: (m: unknown) => boolean };
+        modelRuntime: {
+          reloadConfig: () => Promise<void>;
+          setRuntimeApiKey: (provider: string, apiKey: string) => Promise<void>;
+          removeRuntimeApiKey: (provider: string) => Promise<void>;
+          hasConfiguredAuth: (provider: string) => boolean;
+        };
       };
     }>;
     disposeSession: (id: string) => boolean;
@@ -108,7 +112,12 @@ async function main(): Promise<void> {
     const calls: PromptCall[] = [];
     const fakeSession = {
       model: { provider: "test", id: "test-model" },
-      modelRegistry: { hasConfiguredAuth: () => true },
+      modelRuntime: {
+        reloadConfig: async () => undefined,
+        setRuntimeApiKey: async () => undefined,
+        removeRuntimeApiKey: async () => undefined,
+        hasConfiguredAuth: () => true,
+      },
       prompt: async (text: string, opts?: unknown): Promise<void> => {
         calls.push({ text, opts: opts as PromptCall["opts"] });
       },

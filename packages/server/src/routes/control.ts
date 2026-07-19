@@ -14,6 +14,7 @@ import {
   liveModelRegistry,
   migrateLegacyModelsJsonIfNeeded,
   readSettings,
+  syncStoredApiKeyToRuntime,
   withSettingsLock,
   writeSettings,
 } from "../config-manager.js";
@@ -516,7 +517,7 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
       // collapsed to `unknown_model` and the user had no hint which side
       // was wrong.
       await migrateLegacyModelsJsonIfNeeded();
-      const registry = liveModelRegistry();
+      const registry = await liveModelRegistry();
       const providerKnown = registry.getAll().some((m) => m.provider === req.body.provider);
       if (!providerKnown) {
         return reply.code(400).send({ error: "unknown_provider" });
@@ -558,30 +559,13 @@ export const controlRoutes: FastifyPluginAsync = async (fastify) => {
           // undefined so we don't try to restore a phantom snapshot.
         }
         try {
-          // The live AgentSession was created with a ModelRegistry
-          // snapshot of auth.json + models.json at session-create time;
-          // the SDK never re-reads either file on its own. If the user
-          // added a provider/key AFTER this session was created, the
-          // SDK's `setModel` -> `_modelRegistry.hasConfiguredAuth(...)`
-          // check would fail against the stale snapshot even though
-          // our route-level `liveModelRegistry()` validation just
-          // passed (it reads fresh each call).
-          //
-          // TWO reloads are needed, in this order: ModelRegistry's
-          // `refresh()` re-reads models.json + resets API/OAuth
-          // provider registrations, but does NOT touch AuthStorage —
-          // the AuthStorage.data map (what `hasAuth(provider)` queries)
-          // stays frozen at session-create time. Without the explicit
-          // `authStorage.reload()`, refresh() alone closes only half
-          // the staleness gap and `set_model_failed` still fires for
-          // any provider whose key was added post-create.
-          //
-          // Both calls mutate in place, so every subsequent SDK use
-          // inside this session (turn execution, per-request auth
-          // lookup, model picker enumeration) also picks up the new
-          // keys without restarting the session.
-          live.session.modelRegistry.authStorage.reload();
-          live.session.modelRegistry.refresh();
+          // The live AgentSession was created with a ModelRuntime snapshot of
+          // auth.json + models.json at session-create time; refresh it before
+          // calling setModel so providers, models, and credentials added after
+          // session creation are visible without restarting the session.
+          await live.session.modelRuntime.reloadConfig();
+          await syncStoredApiKeyToRuntime(live.session.modelRuntime, req.body.provider);
+          await live.session.modelRuntime.refresh();
           // Wrap in withTimeout so a hung SDK setModel can't hold the
           // settings lock indefinitely. Without this, a single hung
           // setModel blocks every subsequent PUT /config/settings,
