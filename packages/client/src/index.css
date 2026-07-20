@@ -295,18 +295,25 @@
    If the page-level diff palette ever needs to differ from the
    chat's inline diff palette, fork this scope into separate classes
    on the wrapping div. */
-/* xterm's DOM rows can be laid out by the browser as normal inline text.
-   In Firefox / font / zoom combinations, sub-pixel cell measurements have
-   made the last column wrap or disappear even though xterm's grid still has
-   room for it. Keep rendered terminal rows as a single unwrapped line; xterm
-   owns all terminal wrapping via its grid and PTY resize messages. */
+/* xterm owns terminal wrapping via its grid and PTY resize messages. Preserve
+   literal spaces at ANSI span boundaries (for example colored `ls` output) while
+   still preventing browser soft-wrap from fighting xterm's measured columns. */
+.pi-terminal-host,
+.pi-terminal-host .xterm,
+.pi-terminal-host .xterm-screen {
+  overflow: hidden;
+}
+
 .pi-terminal-host .xterm-rows,
-.pi-terminal-host .xterm-rows > div {
-  white-space: nowrap;
+.pi-terminal-host .xterm-rows > div,
+.pi-terminal-host .xterm-rows span {
+  white-space: pre;
 }
 
 .pi-terminal-host .xterm {
+  contain: layout paint style;
   font-variant-ligatures: none;
+  letter-spacing: 0 !important;
 }
 
 .pi-diff-block {
