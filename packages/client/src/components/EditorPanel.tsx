@@ -104,7 +104,7 @@ export function EditorPanel() {
   }, [activeExt]);
 
   return (
-    <div className="flex h-full flex-col bg-neutral-950 text-sm text-neutral-200">
+    <div className="forge-editor-panel flex h-full flex-col bg-neutral-950 text-sm text-neutral-200">
       <Tabs
         files={openFiles}
         activePath={activePath}
@@ -203,7 +203,7 @@ function Tabs({
     onCloseAll();
   };
   return (
-    <div className="flex border-b border-neutral-800 bg-neutral-900/40">
+    <div className="forge-editor-tabs flex border-b border-neutral-800 bg-neutral-900/40">
       {/* Close-all sits before the tab strip so its position is
           stable regardless of how many tabs are open. Confirmation
           prompt only when there are unsaved changes. */}
@@ -348,7 +348,7 @@ function StatusBar({
   // disabled while a save is in flight to avoid double-fire.
   const canSave = (dirty || saveError !== undefined) && !saving && !file.binary;
   return (
-    <div className="flex items-center justify-between gap-3 border-t border-neutral-800 bg-neutral-900/40 px-3 py-1 text-[11px]">
+    <div className="forge-editor-status flex items-center justify-between gap-3 border-t border-neutral-800 bg-neutral-900/40 px-3 py-1 text-[11px]">
       <div className="flex items-center gap-2">
         <span className="font-mono text-neutral-500">{file.language}</span>
         <button

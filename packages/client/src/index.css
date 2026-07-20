@@ -120,6 +120,28 @@
   --pi-terminal-fg: #cdd6f4;
 }
 
+[data-theme="high-contrast"] {
+  color-scheme: dark;
+  /* VS Code High Contrast-inspired: near-black surfaces,
+     white primary text, and intentionally separated grays so
+     borders, muted labels, panels, and selections remain visible
+     without remapping the app's semantic/accent Tailwind colors. */
+  --color-neutral-50: #ffffff;
+  --color-neutral-100: #ffffff;
+  --color-neutral-200: #f2f2f2;
+  --color-neutral-300: #dcdcdc;
+  --color-neutral-400: #c6c6c6;
+  --color-neutral-500: #a0a0a0;
+  --color-neutral-600: #7a7a7a;
+  --color-neutral-700: #5a5a5a;
+  --color-neutral-800: #1f1f1f;
+  --color-neutral-900: #0c0c0c;
+  --color-neutral-950: #000000;
+  --pi-editor-bg: #000000;
+  --pi-terminal-bg: #000000;
+  --pi-terminal-fg: #ffffff;
+}
+
 :root {
   --forge-app-bg: var(--color-neutral-950);
   --forge-panel-bg: var(--color-neutral-900);
@@ -182,6 +204,52 @@
 [data-server-theme="on"] mark {
   background: var(--forge-highlight-bg) !important;
   color: var(--forge-highlight-text) !important;
+}
+
+[data-theme="high-contrast"] .message-bubble[data-message-role="user"] {
+  background: #171717;
+  border: 1px solid #8a8a8a;
+  border-left-width: 2px;
+  color: #ffffff;
+}
+
+[data-theme="high-contrast"] .message-bubble[data-message-role="assistant"] {
+  background: #000000;
+  border: 1px solid #dcdcdc;
+  border-left: 2px solid #f2f2f2;
+  color: #ffffff;
+}
+
+[data-theme="high-contrast"] .message-bubble ::selection {
+  background: #264f78;
+  color: #ffffff;
+}
+
+[data-theme="high-contrast"] .forge-file-browser,
+[data-theme="high-contrast"] .forge-editor-panel {
+  background: #000000;
+  color: #ffffff;
+}
+
+[data-theme="high-contrast"] .forge-file-browser > div:first-child,
+[data-theme="high-contrast"] .forge-editor-tabs,
+[data-theme="high-contrast"] .forge-editor-status {
+  background: #0c0c0c;
+  border-color: #6a6a6a;
+}
+
+[data-theme="high-contrast"] .forge-file-context-menu {
+  background: #0c0c0c;
+  border-color: #ffffff;
+  color: #ffffff;
+}
+
+[data-theme="high-contrast"] .forge-session-row {
+  border-top-color: #444444;
+}
+
+[data-theme="high-contrast"] .forge-session-row:first-of-type {
+  border-top-color: #5a5a5a;
 }
 
 /* `light:text-neutral-*` classes are separate escaped class names,
