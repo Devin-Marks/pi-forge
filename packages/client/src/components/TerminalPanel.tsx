@@ -30,6 +30,10 @@ interface Live {
   reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   /** Set when the tab is being torn down — prevents the close handler from scheduling a reconnect. */
   disposed: boolean;
+  /** Whether this tab is currently visible; inactive tabs skip resize work until activated. */
+  visible: boolean;
+  /** Coalesces ResizeObserver bursts into one fit per animation frame. */
+  pendingFitFrame: number | undefined;
 }
 
 const live = new Map<string, Live>();
@@ -88,6 +92,10 @@ function parseCssPixels(value: string): number {
 }
 
 function fitAndSyncPty(entry: Live, force = false): void {
+  if (entry.pendingFitFrame !== undefined) {
+    window.cancelAnimationFrame(entry.pendingFitFrame);
+    entry.pendingFitFrame = undefined;
+  }
   // FitAddon 0.11 measures the host via computedStyle width/height and
   // parseInt(), which can under-count columns in some browser/font/zoom
   // combinations (or when the resolved width is not an integer string). Use
@@ -132,6 +140,58 @@ function fitAndSyncPty(entry: Live, force = false): void {
     entry.term.resize(cols, rows);
   }
   syncPtySize(entry, force);
+}
+
+function scheduleFitAndSyncPty(entry: Live, force = false): void {
+  if (!entry.visible && !force) return;
+  if (entry.pendingFitFrame !== undefined) return;
+  entry.pendingFitFrame = window.requestAnimationFrame(() => {
+    entry.pendingFitFrame = undefined;
+    try {
+      fitAndSyncPty(entry, force);
+    } catch {
+      // The terminal host can be detached briefly during tab/panel toggles.
+    }
+  });
+}
+
+function fallbackCopyText(text: string): void {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand("copy");
+  } catch {
+    // Best effort only; if both clipboard APIs fail, leave selection intact.
+  } finally {
+    textarea.remove();
+  }
+}
+
+function copyTextToClipboard(text: string): void {
+  if (text.length === 0) return;
+  const writeAsync = navigator.clipboard?.writeText?.bind(navigator.clipboard);
+  if (writeAsync !== undefined) {
+    void writeAsync(text).catch(() => fallbackCopyText(text));
+    return;
+  }
+  fallbackCopyText(text);
+}
+
+function handleTerminalKeyEvent(term: Terminal, event: KeyboardEvent): boolean {
+  if (event.type !== "keydown") return true;
+  if (event.key.toLowerCase() !== "c" || !event.ctrlKey || !event.shiftKey) return true;
+
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+  copyTextToClipboard(term.getSelection());
+  return false;
 }
 
 /**
@@ -301,6 +361,7 @@ function TerminalHost({
     // user just sees blank space.
     const existing = live.get(tab.id);
     if (existing !== undefined) {
+      existing.visible = visible;
       try {
         // xterm 5's `term.open(newParent)` doesn't reliably move its
         // root DOM element to the new parent on a second call — it
@@ -327,11 +388,7 @@ function TerminalHost({
         // success.
       }
       const observer = new ResizeObserver(() => {
-        try {
-          fitAndSyncPty(existing);
-        } catch {
-          // host detached momentarily during tab/panel toggles
-        }
+        scheduleFitAndSyncPty(existing);
       });
       observer.observe(host);
       // Disconnect the previous observer (which was watching a now-
@@ -344,8 +401,8 @@ function TerminalHost({
       existing.observer = observer;
       requestAnimationFrame(() => {
         try {
-          fitAndSyncPty(existing);
-          existing.term.focus();
+          fitAndSyncPty(existing, visible);
+          if (visible) existing.term.focus();
         } catch {
           // ignore
         }
@@ -378,7 +435,13 @@ function TerminalHost({
       fontFamily:
         'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
       fontSize: 13,
-      cursorBlink: true,
+      // Blinking cursors invalidate the render layer continuously and are noticeably
+      // expensive over RDP/remote desktops. A steady block keeps the terminal readable
+      // without an idle animation tax.
+      cursorBlink: false,
+      smoothScrollDuration: 0,
+      letterSpacing: 0,
+      lineHeight: 1.2,
       // SCROLLBACK: 5000 lines is enough for `npm install` output;
       // memory cost ~few MB.
       scrollback: 5000,
@@ -390,6 +453,7 @@ function TerminalHost({
     term.loadAddon(fit);
     term.loadAddon(links);
     term.open(host);
+    term.attachCustomKeyEventHandler((event) => handleTerminalKeyEvent(term, event));
     disableBrowserTextAssist(host);
     // Hosts use `visibility: hidden` (not `display: none`) for tab
     // switching — see render block — so every host has real layout
@@ -418,14 +482,9 @@ function TerminalHost({
     // is throttled by the browser so we don't need to debounce
     // ourselves. Reads the current WS each call (post-reconnect-safe).
     const observer = new ResizeObserver(() => {
-      try {
-        const entry = live.get(tab.id);
-        if (entry === undefined) return;
-        fitAndSyncPty(entry);
-      } catch {
-        // fit can throw if the host is detached momentarily during
-        // tab toggles; harmless.
-      }
+      const entry = live.get(tab.id);
+      if (entry === undefined) return;
+      scheduleFitAndSyncPty(entry);
     });
     observer.observe(hostRef.current);
 
@@ -438,6 +497,8 @@ function TerminalHost({
       reconnectAttempt: 0,
       reconnectTimer: undefined,
       disposed: false,
+      visible,
+      pendingFitFrame: undefined,
     };
     live.set(tab.id, entry);
     requestAnimationFrame(() => {
@@ -472,9 +533,10 @@ function TerminalHost({
   // When the tab becomes visible, force a fit() — the xterm
   // dimensions are stale because the host was display:none.
   useEffect(() => {
-    if (!visible) return;
     const entry = live.get(tab.id);
     if (entry === undefined) return;
+    entry.visible = visible;
+    if (!visible) return;
     requestAnimationFrame(() => {
       try {
         fitAndSyncPty(entry);
@@ -655,6 +717,7 @@ function teardown(id: string): void {
   if (entry === undefined) return;
   entry.disposed = true;
   if (entry.reconnectTimer !== undefined) clearTimeout(entry.reconnectTimer);
+  if (entry.pendingFitFrame !== undefined) window.cancelAnimationFrame(entry.pendingFitFrame);
   live.delete(id);
   try {
     entry.observer.disconnect();
