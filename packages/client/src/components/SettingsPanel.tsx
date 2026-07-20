@@ -3313,6 +3313,8 @@ interface McpDraft {
   transport: McpTransport;
   /** Headers as a flat ordered list so the user can manage rows. */
   headers: { key: string; value: string }[];
+  /** Remote-only: allow self-signed / invalid HTTPS certs for this server. */
+  ignoreCertificateErrors: boolean;
   // Stdio fields
   command: string;
   /** Args as a single textarea-friendly string; one arg per line.
@@ -3338,6 +3340,7 @@ function emptyDraft(): McpDraft {
     url: "",
     transport: "auto",
     headers: [],
+    ignoreCertificateErrors: false,
     command: "",
     argsText: "",
     env: [],
@@ -3487,6 +3490,7 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
       url: cfg.url ?? "",
       transport: cfg.transport ?? "auto",
       headers: Object.entries(cfg.headers ?? {}).map(([k, v]) => ({ key: k, value: v })),
+      ignoreCertificateErrors: cfg.ignoreCertificateErrors === true,
       command: cfg.command ?? "",
       argsText: (cfg.args ?? []).join("\n"),
       env: Object.entries(cfg.env ?? {}).map(([k, v]) => ({ key: k, value: v })),
@@ -3517,6 +3521,7 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
     if (draft.kind === "remote") {
       body.url = draft.url;
       body.transport = draft.transport;
+      if (draft.ignoreCertificateErrors) body.ignoreCertificateErrors = true;
       const headers: Record<string, string> = {};
       for (const h of draft.headers) {
         if (h.key.trim().length === 0) continue;
@@ -3691,22 +3696,20 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
               disabled={busy || !settings.truncation.enabled}
               className="w-28 rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 disabled:opacity-50"
             />
-            <button
-              onClick={() =>
-                void saveTruncation({
-                  ...settings.truncation,
-                  enabled: !settings.truncation.enabled,
-                })
-              }
-              disabled={busy}
-              className={`rounded border px-3 py-1 text-xs ${
-                settings.truncation.enabled
-                  ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300 light:border-emerald-300 light:bg-emerald-50 light:text-emerald-800"
-                  : "border-neutral-700 text-neutral-300 hover:border-neutral-500"
-              }`}
-            >
-              {settings.truncation.enabled ? "Truncating" : "Pass-through"}
-            </button>
+            <label className="flex items-center gap-2 rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-300">
+              <input
+                type="checkbox"
+                checked={settings.truncation.enabled}
+                disabled={busy}
+                onChange={(e) =>
+                  void saveTruncation({
+                    ...settings.truncation,
+                    enabled: e.target.checked,
+                  })
+                }
+              />
+              <span>{settings.truncation.enabled ? "Truncating" : "Pass-through"}</span>
+            </label>
           </div>
         </div>
       </div>
@@ -4202,6 +4205,17 @@ function McpDraftForm(props: {
               <option value="streamable-http">streamable-http</option>
               <option value="sse">sse</option>
             </select>
+            <label className="text-neutral-500">HTTPS certs</label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={draft.ignoreCertificateErrors}
+                onChange={(e) => setField("ignoreCertificateErrors", e.target.checked)}
+              />
+              <span className="text-[11px] text-neutral-500">
+                Ignore certificate errors for this server (self-signed/local HTTPS only).
+              </span>
+            </label>
           </>
         ) : (
           <>

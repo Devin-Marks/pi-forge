@@ -58,6 +58,12 @@ export interface McpServerConfig {
    * Ignored for stdio servers.
    */
   headers?: Record<string, string>;
+  /**
+   * Remote-only escape hatch for local/self-signed HTTPS MCP endpoints.
+   * When true, TLS certificate validation is disabled for this server's
+   * connection attempts. Defaults to false; do not enable for untrusted networks.
+   */
+  ignoreCertificateErrors?: boolean;
 
   /* --------- stdio-only (mutually exclusive with `url`) --------- */
   /**
@@ -199,6 +205,9 @@ function copyServerCleaned(src: McpServerConfig): McpServerConfig {
   if (src.enabled !== undefined) out.enabled = src.enabled;
   if (src.url !== undefined) out.url = src.url;
   if (src.transport !== undefined) out.transport = src.transport;
+  if (src.ignoreCertificateErrors !== undefined) {
+    out.ignoreCertificateErrors = src.ignoreCertificateErrors;
+  }
   if (src.command !== undefined) out.command = src.command;
   if (src.args !== undefined) out.args = [...src.args];
   if (src.cwd !== undefined) out.cwd = src.cwd;
@@ -229,7 +238,11 @@ export async function readMcpJsonRedacted(): Promise<McpJson> {
     }
     out[name] = cleaned;
   }
-  return { disabled: raw.disabled === true, servers: out };
+  return {
+    disabled: raw.disabled === true,
+    ...(raw.truncation !== undefined ? { truncation: raw.truncation } : {}),
+    servers: out,
+  };
 }
 
 /**

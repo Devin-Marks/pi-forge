@@ -520,6 +520,8 @@ export const config = Object.freeze({
     }),
     jwtExpiresInSeconds: readInt("JWT_EXPIRES_IN_SECONDS", 60 * 60 * 24 * 7),
     loginInactivityTimeoutSeconds: readInt("LOGIN_INACTIVITY_TIMEOUT_SECONDS", 0),
+    loginAttemptLimitMax: readBoundedInt("LOGIN_ATTEMPT_LIMIT_MAX", 10, 1, 1000),
+    loginLockoutMs: readBoundedInt("LOGIN_LOCKOUT_MS", 5 * 60_000, 1_000, 24 * 60 * 60_000),
     loginRateLimitMax: readInt("RATE_LIMIT_LOGIN_MAX", 10),
     loginRateLimitWindowMs: readInt("RATE_LIMIT_LOGIN_WINDOW_MS", 60_000),
     /**

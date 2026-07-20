@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Agent as UndiciAgent } from "undici";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
@@ -419,13 +420,14 @@ async function syncScope(scope: Scope, configs: Record<string, McpServerConfig>)
  * Equality across every field that affects the underlying connection
  * (excluding `enabled`, which the caller compares separately because
  * a false→true flip needs to drop into connect, not just reconnect).
- * Covers both remote (`url`, `transport`, `headers`) and stdio
- * (`command`, `args`, `env`, `cwd`) — comparing the irrelevant set
+ * Covers both remote (`url`, `transport`, `headers`, TLS settings) and
+ * stdio (`command`, `args`, `env`, `cwd`) — comparing the irrelevant set
  * for a given kind is harmless because both sides are `undefined`.
  */
 function sameConnectionConfig(a: McpServerConfig, b: McpServerConfig): boolean {
   if (a.url !== b.url) return false;
   if (a.transport !== b.transport) return false;
+  if (a.ignoreCertificateErrors !== b.ignoreCertificateErrors) return false;
   if (a.command !== b.command) return false;
   if (a.cwd !== b.cwd) return false;
   if (JSON.stringify(a.args ?? []) !== JSON.stringify(b.args ?? [])) return false;
@@ -560,17 +562,18 @@ async function openConnection(cfg: McpServerConfig, scope: Scope): Promise<Opene
   }
   const url = new URL(cfg.url);
   const requested: McpTransport = cfg.transport ?? "auto";
+  const ignoreCertificateErrors = cfg.ignoreCertificateErrors === true;
   if (requested === "streamable-http") {
-    return await openStreamableHttp(url, cfg.headers);
+    return await openStreamableHttp(url, cfg.headers, ignoreCertificateErrors);
   }
   if (requested === "sse") {
-    return await openSse(url, cfg.headers);
+    return await openSse(url, cfg.headers, ignoreCertificateErrors);
   }
   // auto: try streamable-http, fall back to sse
   try {
-    return await openStreamableHttp(url, cfg.headers);
+    return await openStreamableHttp(url, cfg.headers, ignoreCertificateErrors);
   } catch {
-    return await openSse(url, cfg.headers);
+    return await openSse(url, cfg.headers, ignoreCertificateErrors);
   }
 }
 
@@ -648,15 +651,19 @@ const cachedProjectPaths = new Map<string, string>();
 // the connect boundary so we don't propagate that union mismatch into
 // our own types — runtime behavior is unaffected.
 type SdkTransport = Parameters<Client["connect"]>[0];
+type FetchWithDispatcherInit = RequestInit & { dispatcher?: UndiciAgent };
+const insecureHttpsAgent = new UndiciAgent({ connect: { rejectUnauthorized: false } });
 
 async function openStreamableHttp(
   url: URL,
   headers: Record<string, string> | undefined,
+  ignoreCertificateErrors: boolean,
 ): Promise<OpenedConnection> {
-  const transport = new StreamableHTTPClientTransport(
-    url,
-    headers !== undefined ? { requestInit: { headers } } : undefined,
-  );
+  const fetchWithTlsPolicy = makeFetchWithTlsPolicy(ignoreCertificateErrors);
+  const transport = new StreamableHTTPClientTransport(url, {
+    ...(headers !== undefined ? { requestInit: { headers } } : {}),
+    fetch: fetchWithTlsPolicy,
+  });
   const client = new Client({ name: "pi-forge", version: "1.0.0" }, { capabilities: {} });
   await client.connect(transport as unknown as SdkTransport);
   return { client, transport, resolvedTransport: "streamable-http" };
@@ -665,31 +672,34 @@ async function openStreamableHttp(
 async function openSse(
   url: URL,
   headers: Record<string, string> | undefined,
+  ignoreCertificateErrors: boolean,
 ): Promise<OpenedConnection> {
-  // Build options inline — exactOptionalPropertyTypes refuses to
-  // accept explicit `undefined` for optional properties, so the
-  // header-bearing variant builds the full options literal in one
-  // shot rather than composing it field-by-field.
-  const transport =
-    headers !== undefined
-      ? new SSEClientTransport(url, {
-          requestInit: { headers },
-          // Custom EventSource fetch factory so the SSE GET also
-          // carries the Authorization header. Browsers' native
-          // EventSource doesn't accept headers, but the MCP SDK's
-          // bundled eventsource shim does, via this factory hook.
-          eventSourceInit: {
-            fetch: (input: string | URL, init?: RequestInit) =>
-              fetch(input, {
-                ...init,
-                headers: { ...((init?.headers as Record<string, string>) ?? {}), ...headers },
-              }),
-          } as unknown as EventSourceInit,
-        })
-      : new SSEClientTransport(url);
+  const fetchWithTlsPolicy = makeFetchWithTlsPolicy(ignoreCertificateErrors);
+  const transport = new SSEClientTransport(url, {
+    ...(headers !== undefined ? { requestInit: { headers } } : {}),
+    // Custom EventSource fetch factory so the SSE GET also carries headers and
+    // the per-server TLS policy. Browsers' native EventSource doesn't accept
+    // headers, but the MCP SDK's bundled eventsource shim does via this hook.
+    eventSourceInit: {
+      fetch: (input: string | URL, init?: RequestInit) =>
+        fetchWithTlsPolicy(input, {
+          ...init,
+          headers: { ...((init?.headers as Record<string, string>) ?? {}), ...(headers ?? {}) },
+        }),
+    } as unknown as EventSourceInit,
+  });
   const client = new Client({ name: "pi-forge", version: "1.0.0" }, { capabilities: {} });
   await client.connect(transport);
   return { client, transport, resolvedTransport: "sse" };
+}
+
+function makeFetchWithTlsPolicy(ignoreCertificateErrors: boolean): typeof fetch {
+  if (!ignoreCertificateErrors) return fetch;
+  return async (input, init) =>
+    await fetch(input, {
+      ...init,
+      dispatcher: insecureHttpsAgent,
+    } as FetchWithDispatcherInit);
 }
 
 /* -------------------------- project-scope read -------------------------- */

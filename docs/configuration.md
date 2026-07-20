@@ -55,6 +55,8 @@ or shell environment. The most-touched ones:
 | `JWT_SECRET` | (auto-generated) | HS256 signing key. Auto-generated and persisted to `${FORGE_DATA_DIR}/jwt-secret` (mode 0600) when `UI_PASSWORD`, LDAP auth, or `password-hash` is in play. Set explicitly (`openssl rand -hex 32`) to override; delete the file to rotate. |
 | `JWT_EXPIRES_IN_SECONDS` | `604800` | Absolute browser JWT lifetime (7 days by default). Equivalent CLI: `--jwt-expires-in-seconds`. |
 | `LOGIN_INACTIVITY_TIMEOUT_SECONDS` | `0` | Optional idle timeout for browser JWTs. `0` disables inactivity expiry; a positive value logs out browser sessions after that many seconds without mutating authenticated requests. Passive GETs such as SSE reconnects and status polling do not extend the idle window. Equivalent CLI: `--login-inactivity-timeout-seconds`. |
+| `LOGIN_ATTEMPT_LIMIT_MAX` | `10` | Failed browser login attempts allowed before pi-forge temporarily locks that login identity. Equivalent CLI: `--login-attempt-limit-max`. |
+| `LOGIN_LOCKOUT_MS` | `300000` | Browser login lockout duration after too many failed attempts (5 minutes by default). Lockout state is in-memory and clears on server restart. Equivalent CLI: `--login-lockout-ms`. |
 | `LDAP_ENABLED` | `false` | Enables LDAP username/password browser login. Requires the LDAP variables below. |
 | `LDAP_URL` | (unset) | LDAP server URL, e.g. `ldap://ldap.example.com:389` or `ldaps://ldap.example.com:636`. |
 | `LDAP_BIND_DN` | (unset) | Service-account bind DN used only to search for the user entry. |

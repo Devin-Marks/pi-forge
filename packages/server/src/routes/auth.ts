@@ -3,8 +3,12 @@ import { config, authEnabled } from "../config.js";
 import {
   extractBearer,
   generateToken,
+  getLoginLockoutState,
+  loginLockoutKey,
   passwordConfigured,
   persistPassword,
+  recordLoginFailure,
+  resetLoginFailures,
   verifyPasswordWithSource,
   verifyToken,
 } from "../auth.js";
@@ -87,12 +91,22 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
           },
           400: errorSchema,
           401: errorSchema,
+          423: errorSchema,
           503: errorSchema,
         },
       },
     },
     async (req, reply) => {
       const { username, password } = req.body;
+      const attemptKey = loginLockoutKey(username);
+      const lockout = getLoginLockoutState(attemptKey);
+      if (lockout.locked) {
+        return reply.code(423).send({
+          error: "login_locked",
+          message: `too many failed login attempts; try again in ${Math.ceil(lockout.remainingMs / 1000)} seconds`,
+          lockedUntil: lockout.lockedUntil,
+        });
+      }
       const loginAsLocalAdmin =
         username === undefined ||
         username.toLowerCase() === config.auth.localAdminUsername.toLowerCase();
@@ -108,11 +122,20 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
           });
         }
         if (!result.ok) {
+          const failed = recordLoginFailure(attemptKey);
+          if (failed.locked) {
+            return reply.code(423).send({
+              error: "login_locked",
+              message: `too many failed login attempts; try again in ${Math.ceil(failed.remainingMs / 1000)} seconds`,
+              lockedUntil: failed.lockedUntil,
+            });
+          }
           return reply.code(401).send({
             error: "invalid_password",
             message: "the username or password did not match, or the user is not authorized",
           });
         }
+        resetLoginFailures(attemptKey);
         const issued = generateToken({ mustChangePassword: false });
         return { ...issued, mustChangePassword: false };
       }
@@ -126,11 +149,20 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const result = await verifyPasswordWithSource(password);
       if (!result.ok) {
+        const failed = recordLoginFailure(attemptKey);
+        if (failed.locked) {
+          return reply.code(423).send({
+            error: "login_locked",
+            message: `too many failed login attempts; try again in ${Math.ceil(failed.remainingMs / 1000)} seconds`,
+            lockedUntil: failed.lockedUntil,
+          });
+        }
         return reply.code(401).send({
           error: "invalid_password",
           message: "the password did not match",
         });
       }
+      resetLoginFailures(attemptKey);
       const mustChangePassword = result.source === "env" && config.auth.requirePasswordChange;
       const issued = generateToken({ mustChangePassword });
       return { ...issued, mustChangePassword };

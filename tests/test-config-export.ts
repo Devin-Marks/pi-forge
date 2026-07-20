@@ -173,6 +173,9 @@ async function main(): Promise<void> {
       },
     },
   };
+  const seedQuickActions = [
+    { id: "qa-1", name: "Say hi", kind: "prompt", prompt: "hello", enabled: true },
+  ];
   const seedAuth = { providers: { anthropic: { apiKey: "sk-ant-secret-do-not-export" } } };
   await writeFile(join(configDir, "settings.json"), JSON.stringify(seedSettings), "utf8");
   await writeFile(join(configDir, "models.json"), JSON.stringify(seedModels), "utf8");
@@ -184,6 +187,7 @@ async function main(): Promise<void> {
     "utf8",
   );
   await writeFile(join(dataDir, "tool-overrides.json"), JSON.stringify(seedToolOverrides), "utf8");
+  await writeFile(join(dataDir, "quick-actions.json"), JSON.stringify(seedQuickActions), "utf8");
 
   const buildModule = (await import(
     resolve(repoRoot, "packages/server/dist/index.js")
@@ -213,11 +217,12 @@ async function main(): Promise<void> {
         .filter((s) => s.length > 0)
         .sort();
       assert(
-        "  X-Pi-Forge-Files lists all five files",
+        "  X-Pi-Forge-Files lists all six files",
         JSON.stringify(filesList) ===
           JSON.stringify([
             "mcp.json",
             "models.json",
+            "quick-actions.json",
             "settings.json",
             "skills-overrides.json",
             "tool-overrides.json",
@@ -239,11 +244,12 @@ async function main(): Promise<void> {
 
       const entries = (await listTarEntries(exportedBuf)).sort();
       assert(
-        "  tar contents match the five exportable files",
+        "  tar contents match the six exportable files",
         JSON.stringify(entries) ===
           JSON.stringify([
             "mcp.json",
             "models.json",
+            "quick-actions.json",
             "settings.json",
             "skills-overrides.json",
             "tool-overrides.json",
@@ -265,6 +271,7 @@ async function main(): Promise<void> {
       await rm(join(dataDir, "mcp.json"));
       await rm(join(dataDir, "skills-overrides.json"));
       await rm(join(dataDir, "tool-overrides.json"));
+      await rm(join(dataDir, "quick-actions.json"));
 
       const r = await postMultipart(
         base,
@@ -277,9 +284,9 @@ async function main(): Promise<void> {
       assert("POST /config/import → 200", r.status === 200, JSON.stringify(r.body));
       const summary = r.body as { imported: string[]; skipped: string[]; errors: unknown[] };
       assert(
-        "  imported lists all five",
+        "  imported lists all six",
         summary.imported.sort().join(",") ===
-          "mcp.json,models.json,settings.json,skills-overrides.json,tool-overrides.json",
+          "mcp.json,models.json,quick-actions.json,settings.json,skills-overrides.json,tool-overrides.json",
         JSON.stringify(summary),
       );
       assert("  no skipped entries", summary.skipped.length === 0, JSON.stringify(summary.skipped));
@@ -314,6 +321,14 @@ async function main(): Promise<void> {
         "  tool-overrides.json content round-trips",
         JSON.stringify(toolOverridesBack) === JSON.stringify(seedToolOverrides),
         JSON.stringify(toolOverridesBack),
+      );
+      const quickActionsBack = JSON.parse(
+        await readFile(join(dataDir, "quick-actions.json"), "utf8"),
+      );
+      assert(
+        "  quick-actions.json content round-trips",
+        JSON.stringify(quickActionsBack) === JSON.stringify(seedQuickActions),
+        JSON.stringify(quickActionsBack),
       );
 
       // auth.json was NEVER touched by the import path.
@@ -466,14 +481,14 @@ async function main(): Promise<void> {
         .split(",")
         .filter((s) => s.length > 0)
         .sort();
-      // The two `*-overrides.json` files were re-imported in step 2
-      // and again touched by step 3, so they're still on disk and
-      // included in this missing-mcp.json export.
+      // The forge-private backup files were re-imported in step 2, so
+      // they're still on disk and included in this missing-mcp.json export.
       assert(
         "  X-Pi-Forge-Files omits missing mcp.json",
         JSON.stringify(filesList) ===
           JSON.stringify([
             "models.json",
+            "quick-actions.json",
             "settings.json",
             "skills-overrides.json",
             "tool-overrides.json",
@@ -486,6 +501,7 @@ async function main(): Promise<void> {
         JSON.stringify(entries) ===
           JSON.stringify([
             "models.json",
+            "quick-actions.json",
             "settings.json",
             "skills-overrides.json",
             "tool-overrides.json",

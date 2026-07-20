@@ -594,9 +594,43 @@ async function scenarioPersistedHashOnly(): Promise<void> {
   }
 }
 
+async function scenarioLoginAttemptLockout(): Promise<void> {
+  console.log("\n[scenario A3] login attempt lockout");
+  const password = "hunter2";
+  const srv = await startServer({
+    UI_PASSWORD: password,
+    JWT_SECRET: randomBytes(32).toString("hex"),
+    API_KEY: undefined,
+    LOGIN_ATTEMPT_LIMIT_MAX: "2",
+    LOGIN_LOCKOUT_MS: "60000",
+    RATE_LIMIT_LOGIN_MAX: "100",
+    RATE_LIMIT_LOGIN_WINDOW_MS: "60000",
+    REQUIRE_PASSWORD_CHANGE: "false",
+  });
+  try {
+    const wrong1 = await jsonPost(`${srv.base}/api/v1/auth/login`, { password: "wrong" });
+    assert("lockout attempt 1 → 401", wrong1.status === 401);
+
+    const wrong2 = await jsonPost(`${srv.base}/api/v1/auth/login`, { password: "wrong" });
+    assert("lockout attempt 2 → 423 locked", wrong2.status === 423);
+    const lockedBody = (await wrong2.json()) as { error?: string; message?: string };
+    assert("lockout response uses login_locked code", lockedBody.error === "login_locked");
+    assert(
+      "lockout response includes user-visible timer",
+      typeof lockedBody.message === "string" && lockedBody.message.includes("try again"),
+    );
+
+    const rightWhileLocked = await jsonPost(`${srv.base}/api/v1/auth/login`, { password });
+    assert("correct password during lockout stays locked → 423", rightWhileLocked.status === 423);
+  } finally {
+    await srv.stop();
+  }
+}
+
 async function main(): Promise<void> {
   await scenarioPasswordAndJwt();
   await scenarioLoginInactivityTimeout();
+  await scenarioLoginAttemptLockout();
   await scenarioApiKeyOnly();
   await scenarioAuthDisabled();
   await scenarioPersistedHashOnly();

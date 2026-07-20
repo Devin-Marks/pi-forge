@@ -178,6 +178,22 @@ const FLAGS: readonly FlagDef[] = [
     defaultText: "0 (disabled)",
   },
   {
+    name: "login-attempt-limit-max",
+    env: "LOGIN_ATTEMPT_LIMIT_MAX",
+    type: "number",
+    group: "auth",
+    desc: "Failed browser login attempts before temporary lockout",
+    defaultText: "10",
+  },
+  {
+    name: "login-lockout-ms",
+    env: "LOGIN_LOCKOUT_MS",
+    type: "number",
+    group: "auth",
+    desc: "Browser login lockout duration in milliseconds after too many failed attempts",
+    defaultText: "300000 (5m)",
+  },
+  {
     name: "require-password-change",
     env: "REQUIRE_PASSWORD_CHANGE",
     type: "boolean",
