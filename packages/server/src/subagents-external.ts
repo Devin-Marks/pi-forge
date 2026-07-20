@@ -39,6 +39,7 @@ interface AsyncResultFile {
   results?: {
     agent?: string;
     output?: string;
+    finalOutput?: string;
     success?: boolean;
     error?: string;
     sessionFile?: string;
@@ -225,6 +226,7 @@ function formatCompletionContent(
   const agent = result?.agent ?? result?.results?.[0]?.agent ?? "subagent";
   const summary =
     result?.summary ??
+    result?.results?.[0]?.finalOutput ??
     result?.results?.[0]?.output ??
     result?.results?.[0]?.error ??
     `(background run ${status.rootRunId} ${state})`;
@@ -286,7 +288,14 @@ export async function deliverExternalSubagentCompletionForRun(root: string): Pro
   if (status === undefined || !TERMINAL_STATES.has(status.state)) return;
   const resultPath = join(SUBAGENTS_RESULTS_DIR, `${root}.json`);
   const result = await readJson<AsyncResultFile>(resultPath);
-  const parentId = await sessionIdFromSessionReference(result?.sessionId ?? status.parentSessionId);
+  if (result === undefined) {
+    // pi-subagents can write the terminal status before it writes the async
+    // result file. Defer the parent notification until the result exists so
+    // the durable chat message contains the child output instead of an early
+    // placeholder that would then be deduped forever.
+    return;
+  }
+  const parentId = await sessionIdFromSessionReference(result.sessionId ?? status.parentSessionId);
   if (parentId === undefined) return;
   const live = getSession(parentId);
   if (live === undefined) return;
