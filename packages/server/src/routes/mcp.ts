@@ -29,6 +29,7 @@ interface McpServerBody {
   url?: string;
   transport?: McpTransport;
   headers?: Record<string, string>;
+  ignoreCertificateErrors?: boolean;
   // stdio
   command?: string;
   args?: string[];
@@ -51,6 +52,7 @@ const serverConfigSchema = {
       type: "object",
       additionalProperties: { type: "string" },
     },
+    ignoreCertificateErrors: { type: "boolean" },
     command: { type: "string", minLength: 1 },
     args: { type: "array", items: { type: "string" } },
     env: {
@@ -119,6 +121,9 @@ function buildServerConfigFromBody(
     cfg.url = body.url;
     if (body.transport !== undefined) cfg.transport = body.transport;
     if (body.headers !== undefined) cfg.headers = body.headers;
+    if (body.ignoreCertificateErrors !== undefined) {
+      cfg.ignoreCertificateErrors = body.ignoreCertificateErrors;
+    }
   } else if (body.command !== undefined) {
     cfg.command = body.command;
     if (body.args !== undefined) cfg.args = [...body.args];

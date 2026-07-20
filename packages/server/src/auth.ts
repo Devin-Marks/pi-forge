@@ -25,6 +25,7 @@ const SCRYPT_SALT_BYTES = 16;
 
 const HASH_PREFIX = "scrypt";
 const lastTokenActivityMs = new Map<string, number>();
+const loginAttempts = new Map<string, { failures: number; lockedUntilMs?: number }>();
 
 export interface JwtPayload {
   sub: "ui-user";
@@ -40,6 +41,12 @@ export interface IssuedToken {
 }
 
 export type PasswordSource = "stored" | "env" | "none";
+
+export interface LoginLockoutState {
+  locked: boolean;
+  remainingMs: number;
+  lockedUntil?: string;
+}
 
 /**
  * Constant-time string comparison. Pads the shorter buffer so timingSafeEqual
@@ -126,6 +133,46 @@ export function verifyApiKey(presented: string): boolean {
   const expected = config.auth.apiKey;
   if (expected === undefined) return false;
   return constantTimeStringEqual(presented, expected);
+}
+
+export function loginLockoutKey(username: string | undefined): string {
+  return (username ?? config.auth.localAdminUsername).trim().toLowerCase();
+}
+
+export function getLoginLockoutState(key: string, nowMs = Date.now()): LoginLockoutState {
+  const state = loginAttempts.get(key);
+  const lockedUntilMs = state?.lockedUntilMs;
+  if (lockedUntilMs === undefined) return { locked: false, remainingMs: 0 };
+  if (lockedUntilMs <= nowMs) {
+    if ((state?.failures ?? 0) <= 0) loginAttempts.delete(key);
+    else loginAttempts.set(key, { failures: 0 });
+    return { locked: false, remainingMs: 0 };
+  }
+  return {
+    locked: true,
+    remainingMs: lockedUntilMs - nowMs,
+    lockedUntil: new Date(lockedUntilMs).toISOString(),
+  };
+}
+
+export function recordLoginFailure(key: string, nowMs = Date.now()): LoginLockoutState {
+  const prior = loginAttempts.get(key);
+  const failures = (prior?.failures ?? 0) + 1;
+  if (failures >= config.auth.loginAttemptLimitMax) {
+    const lockedUntilMs = nowMs + config.auth.loginLockoutMs;
+    loginAttempts.set(key, { failures: 0, lockedUntilMs });
+    return {
+      locked: true,
+      remainingMs: config.auth.loginLockoutMs,
+      lockedUntil: new Date(lockedUntilMs).toISOString(),
+    };
+  }
+  loginAttempts.set(key, { failures });
+  return { locked: false, remainingMs: 0 };
+}
+
+export function resetLoginFailures(key: string): void {
+  loginAttempts.delete(key);
 }
 
 /**

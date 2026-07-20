@@ -153,7 +153,9 @@ export function LoginScreen() {
                   : "Incorrect password."
                 : error === "username_required"
                   ? "Username is required."
-                  : `Login failed: ${error}`}
+                  : error === "login_locked" || error.startsWith("too many failed login attempts")
+                    ? error
+                    : `Login failed: ${error}`}
             </p>
           )}
           <button

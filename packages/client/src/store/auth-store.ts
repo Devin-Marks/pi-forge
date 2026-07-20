@@ -87,7 +87,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "login_failed";
-      set({ loginPending: false, loginError: code });
+      const message = err instanceof ApiError && code === "login_locked" ? err.message : code;
+      set({ loginPending: false, loginError: message });
     }
   },
   changePassword: async (currentPassword: string, newPassword: string) => {

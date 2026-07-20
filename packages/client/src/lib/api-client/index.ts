@@ -1618,7 +1618,13 @@ async function request<T>(
     } else {
       code = "invalid_error_body";
     }
-    throw new ApiError(res.status, code, parsed.ok ? undefined : `non-JSON ${res.status} body`);
+    const message =
+      parsed.ok && isObject(parsed.value) && typeof parsed.value.message === "string"
+        ? parsed.value.message
+        : parsed.ok
+          ? undefined
+          : `non-JSON ${res.status} body`;
+    throw new ApiError(res.status, code, message);
   }
 
   if (!parsed.ok) {

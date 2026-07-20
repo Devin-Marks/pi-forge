@@ -27,7 +27,8 @@
     "mammoth": "^1.12.0",
     "node-pty": "^1.0.0",
     "pdf-parse": "^2.4.5",
-    "tar": "^7.5.15"
+    "tar": "^7.5.15",
+    "undici": "^8.7.0"
   },
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.9",

@@ -57,6 +57,7 @@ export interface McpServerConfig {
   url?: string;
   transport?: McpTransport;
   headers?: Record<string, string>;
+  ignoreCertificateErrors?: boolean;
   // stdio-only (mutually exclusive with `url`)
   command?: string;
   args?: string[];
