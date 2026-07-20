@@ -2877,6 +2877,18 @@ const SERVER_THEME_BASE_COLORS: Record<ThemeId, ServerThemeColors> = {
     highlightText: "#11111b",
     selectionBackground: "#585b70",
   },
+  "high-contrast": {
+    appBackground: "#000000",
+    panelBackground: "#0c0c0c",
+    userBubbleBackground: "#1f1f1f",
+    assistantBubbleBackground: "#0c0c0c",
+    primaryText: "#ffffff",
+    secondaryText: "#dcdcdc",
+    mutedText: "#a0a0a0",
+    highlightBackground: "#ffff00",
+    highlightText: "#000000",
+    selectionBackground: "#7a7a7a",
+  },
 };
 
 function isObject(v: unknown): v is Record<string, unknown> {

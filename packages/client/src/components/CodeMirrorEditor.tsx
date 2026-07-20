@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { EditorView, basicSetup } from "codemirror";
 import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { keymap } from "@codemirror/view";
@@ -70,6 +70,56 @@ const editorFillContainerTheme = EditorView.theme({
   "&": { height: "100%" },
 });
 
+const highContrastEditorTheme = EditorView.theme(
+  {
+    "&": {
+      backgroundColor: "#000000",
+      color: "#ffffff",
+    },
+    ".cm-content": {
+      caretColor: "#ffffff",
+    },
+    ".cm-cursor, .cm-dropCursor": {
+      borderLeftColor: "#ffffff",
+    },
+    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+      backgroundColor: "#264f78",
+    },
+    ".cm-activeLine": {
+      backgroundColor: "#111111",
+    },
+    ".cm-activeLineGutter": {
+      backgroundColor: "#111111",
+      color: "#ffffff",
+    },
+    ".cm-gutters": {
+      backgroundColor: "#000000",
+      borderRightColor: "#6a6a6a",
+      color: "#c6c6c6",
+    },
+    ".cm-lineNumbers .cm-gutterElement": {
+      color: "#c6c6c6",
+    },
+    ".cm-panels": {
+      backgroundColor: "#0c0c0c",
+      color: "#ffffff",
+    },
+    ".cm-searchMatch": {
+      backgroundColor: "#ffff0055",
+      outline: "1px solid #ffff00",
+    },
+    ".cm-searchMatch.cm-searchMatch-selected": {
+      backgroundColor: "#ff990080",
+    },
+    ".cm-tooltip": {
+      backgroundColor: "#0c0c0c",
+      borderColor: "#ffffff",
+      color: "#ffffff",
+    },
+  },
+  { dark: true },
+);
+
 /**
  * CodeMirror host. Lives in its own module so EditorPanel can pull it
  * in via `React.lazy()` — the CM bundle is ~700 KB minified and the
@@ -123,6 +173,15 @@ export function CodeMirrorEditor({
   const themeCompartmentRef = useRef<Compartment>(new Compartment());
   const activeTheme = useThemeStore((s) => s.theme);
   const editorMode = themeDef(activeTheme).mode;
+  const editorThemeExtension = useMemo<Extension>(
+    () =>
+      activeTheme === "high-contrast"
+        ? highContrastEditorTheme
+        : editorMode === "dark"
+          ? oneDark
+          : [],
+    [activeTheme, editorMode],
+  );
 
   // Latest `onChange` / `onSaveShortcut` in refs so the EditorView
   // listener doesn't capture stale closures across renders.
@@ -154,7 +213,7 @@ export function CodeMirrorEditor({
       // light-themed CodeMirror pack is bundled, so light mode
       // falls back to CodeMirror's default light styling (which
       // reads cleanly on white backgrounds).
-      themeCompartmentRef.current.of(editorMode === "dark" ? oneDark : []),
+      themeCompartmentRef.current.of(editorThemeExtension),
       wrapCompartmentRef.current.of(wrap ? EditorView.lineWrapping : []),
       // Git diff gutter + scrollbar overview. The extension itself
       // doesn't need a compartment — the StateField it ships with
@@ -204,16 +263,16 @@ export function CodeMirrorEditor({
   }, [wrap]);
 
   // Reconfigure the theme compartment when the user changes the
-  // app theme. dark→light flips oneDark off; light→dark flips it
-  // back on. Same compartment trick as wrap — preserves editor
-  // state.
+  // app theme. dark→light flips oneDark off; high contrast swaps in
+  // its dedicated black/white editor chrome. Same compartment trick
+  // as wrap — preserves editor state.
   useEffect(() => {
     const view = viewRef.current;
     if (view === null) return;
     view.dispatch({
-      effects: themeCompartmentRef.current.reconfigure(editorMode === "dark" ? oneDark : []),
+      effects: themeCompartmentRef.current.reconfigure(editorThemeExtension),
     });
-  }, [editorMode]);
+  }, [editorThemeExtension]);
 
   // External draft change (e.g. reloadFile bringing fresh disk content)
   // — sync into the editor without firing onChange.

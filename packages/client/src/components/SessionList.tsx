@@ -303,7 +303,7 @@ export function SessionList({ projectId }: Props) {
     // `mt-1` separates the first session row from the project row
     // above; without it, the active-row highlight backgrounds (both
     // are `bg-neutral-800`) touch and read as one continuous block.
-    <div className="ml-6 mt-1 space-y-0.5">
+    <div className="forge-session-list ml-6 mt-1 space-y-0.5">
       {/* "New session" lives on the parent project row in
           ProjectSidebar (the + button on hover). Avoids stacking
           a second action button per project. */}
@@ -409,7 +409,7 @@ function SessionRow(props: SessionRowProps) {
       // by 2 px. Blue, not emerald, to disambiguate from any future
       // success / drop affordances on these rows.
       style={depth > 0 ? { marginLeft: `${Math.min(depth, 3) * 8}px` } : undefined}
-      className={`group flex items-center gap-1 rounded border-l-2 border-t border-t-neutral-800/40 px-2 py-0.5 text-xs light:border-t-neutral-200 ${
+      className={`forge-session-row group flex items-center gap-1 rounded border-l-2 border-t border-t-neutral-800/40 px-2 py-0.5 text-xs light:border-t-neutral-200 ${
         isSelected
           ? "border-l-blue-400 bg-blue-500/15 text-neutral-100 hover:bg-blue-500/25"
           : isActive

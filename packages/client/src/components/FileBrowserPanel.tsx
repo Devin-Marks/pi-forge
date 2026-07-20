@@ -401,7 +401,7 @@ export function FileBrowserPanel() {
   };
 
   return (
-    <div className="flex h-full flex-col text-xs text-neutral-300">
+    <div className="forge-file-browser flex h-full flex-col bg-neutral-950 text-xs text-neutral-300">
       <div className="flex items-center justify-between border-b border-neutral-800 px-3 py-2">
         <span className="truncate font-medium text-neutral-200" title={project.path}>
           {project.name}
@@ -690,7 +690,7 @@ function FileContextMenu(props: {
 
   return (
     <div
-      className="fixed z-50 min-w-[200px] overflow-hidden rounded-md border border-neutral-700 bg-neutral-900 shadow-lg"
+      className="forge-file-context-menu fixed z-50 min-w-[200px] overflow-hidden rounded-md border border-neutral-700 bg-neutral-900 shadow-lg"
       style={{ left: props.x, top: props.y }}
       onMouseDown={(e) => e.stopPropagation()}
     >

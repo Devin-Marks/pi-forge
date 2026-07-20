@@ -6,7 +6,13 @@ import { create } from "zustand";
  * three-step change: add an id here, add a CSS rule in index.css,
  * and (optionally) tag it light vs dark in {@link THEME_DEFS}.
  */
-export type ThemeId = "dark" | "light" | "dracula" | "solarized-dark" | "catppuccin-mocha";
+export type ThemeId =
+  | "dark"
+  | "light"
+  | "dracula"
+  | "solarized-dark"
+  | "catppuccin-mocha"
+  | "high-contrast";
 
 export interface ThemeDef {
   id: ThemeId;
@@ -22,6 +28,7 @@ export const THEME_DEFS: ThemeDef[] = [
   { id: "dracula", label: "Dracula", mode: "dark" },
   { id: "solarized-dark", label: "Solarized Dark", mode: "dark" },
   { id: "catppuccin-mocha", label: "Catppuccin Mocha", mode: "dark" },
+  { id: "high-contrast", label: "High Contrast", mode: "dark" },
 ];
 
 const STORAGE_KEY = "forge.theme";
@@ -74,6 +81,7 @@ const THEME_CHROME: Record<ThemeId, string> = {
   dracula: "#191a21",
   "solarized-dark": "#002b36",
   "catppuccin-mocha": "#11111b",
+  "high-contrast": "#000000",
 };
 
 function syncThemeColorMeta(id: ThemeId): void {
