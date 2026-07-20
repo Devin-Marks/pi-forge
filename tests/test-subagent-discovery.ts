@@ -309,6 +309,19 @@ async function main(): Promise<void> {
       }),
       "utf8",
     );
+    await subagentsExternal.deliverExternalSubagentCompletionForRun(runId);
+    const notifyBeforeResult = parent.session.messages?.find(
+      (m) =>
+        typeof m === "object" &&
+        m !== null &&
+        (m as { customType?: unknown }).customType === "subagent-notify",
+    );
+    assert(
+      "terminal status waits for async result before notifying parent",
+      notifyBeforeResult === undefined,
+      `message=${JSON.stringify(notifyBeforeResult)}`,
+    );
+
     await mkdir(subagentsExternal.SUBAGENTS_RESULTS_DIR, { recursive: true });
     await writeFile(
       join(subagentsExternal.SUBAGENTS_RESULTS_DIR, `${runId}.json`),
@@ -317,8 +330,7 @@ async function main(): Promise<void> {
         sessionId: parent.sessionId,
         agent: "reviewer",
         success: true,
-        summary: "done",
-        sessionFile: childAPath,
+        results: [{ agent: "reviewer", finalOutput: "done", sessionFile: childAPath }],
       }),
       "utf8",
     );
@@ -332,7 +344,8 @@ async function main(): Promise<void> {
     assert(
       "explicit async completion path appends renderable subagent-notify to parent",
       typeof notifyMessage?.content === "string" &&
-        notifyMessage.content.includes("Background task completed"),
+        notifyMessage.content.includes("Background task completed") &&
+        notifyMessage.content.includes("done"),
       `message=${JSON.stringify(notifyMessage)}`,
     );
 
