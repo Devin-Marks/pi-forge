@@ -204,6 +204,8 @@ function removeSessionFromState(current: SessionState, sessionId: string): Parti
   delete nextTurnWriteCount[sessionId];
   const nextQueued = { ...current.queuedBySession };
   delete nextQueued[sessionId];
+  const nextBottomPinRequest = { ...current.bottomPinRequestBySession };
+  delete nextBottomPinRequest[sessionId];
   const byProject: Record<string, UnifiedSession[]> = {};
   for (const [pid, list] of Object.entries(current.byProject)) {
     byProject[pid] = list.filter((u) => u.sessionId !== sessionId);
@@ -219,6 +221,7 @@ function removeSessionFromState(current: SessionState, sessionId: string): Parti
     fileRefreshCountBySession: nextFileRefreshCount,
     turnWriteCountBySession: nextTurnWriteCount,
     queuedBySession: nextQueued,
+    bottomPinRequestBySession: nextBottomPinRequest,
     byProject,
     activeSessionId: current.activeSessionId === sessionId ? undefined : current.activeSessionId,
   };
@@ -320,6 +323,7 @@ interface SessionState {
    * same session doesn't re-trigger the scroll.
    */
   pendingScrollByMessageIndex: Record<string, number>;
+  bottomPinRequestBySession: Record<string, number>;
   /** Errors surfaced from API calls (sticky until next successful op). */
   error: string | undefined;
   loadingList: boolean;
@@ -360,6 +364,8 @@ interface SessionState {
   requestScrollToMessage: (sessionId: string, messageIndex: number) => void;
   /** Consume + clear the pending scroll target for `sessionId`. */
   consumePendingScroll: (sessionId: string) => number | undefined;
+  /** Force the chat viewport to pin to the bottom for a user-originated entry. */
+  requestScrollToBottom: (sessionId: string) => void;
   sendPrompt: (sessionId: string, text: string, attachments?: File[]) => Promise<void>;
   sendSteer: (sessionId: string, text: string, mode?: "steer" | "followUp") => Promise<void>;
   abortSession: (sessionId: string) => Promise<void>;
@@ -392,6 +398,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   compactionEndCountBySession: {},
   queuedBySession: {},
   pendingScrollByMessageIndex: {},
+  bottomPinRequestBySession: {},
   error: undefined,
   loadingList: false,
 
@@ -522,6 +529,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return { pendingScrollByMessageIndex: next };
     });
     return value;
+  },
+
+  requestScrollToBottom: (sessionId) => {
+    set((s) => ({
+      bottomPinRequestBySession: {
+        ...s.bottomPinRequestBySession,
+        [sessionId]: (s.bottomPinRequestBySession[sessionId] ?? 0) + 1,
+      },
+    }));
   },
 
   setActiveSession: (sessionId) => {

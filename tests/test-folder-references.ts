@@ -8,7 +8,8 @@
  *   - Directory marker preserved with trailing `/` appended
  *   - Existing trailing `/` from user input is kept (not doubled)
  *   - Quoted form `@"path with spaces"` works for directories too
- *   - Non-existent path still becomes `[@<path> not included: ...]`
+ *   - Non-existent paths are escaped so `@mentions` are not file refs
+ *   - Escaped `\\@` stays literal
  *   - File markers (small + large + binary) keep their existing
  *     behaviour — regression guard
  *   - listAllFiles output now includes directories with trailing `/`
@@ -109,12 +110,23 @@ async function main(): Promise<void> {
       );
     }
 
-    // 5. Non-existent path still errors out cleanly
+    // 5. Non-existent paths are escaped so ordinary @mentions do not
+    // get surfaced as file references in the rendered chat bubble.
     {
-      const out = await fr.expandFileReferences("missing @nope", workspace);
+      const out = await fr.expandFileReferences("thanks @alex for the notes", workspace);
       assert(
-        "missing path produces `[@nope not included: ...]`",
-        out.includes("[@nope not included") && out.includes("not found"),
+        "missing bare mention is escaped literal text",
+        out === "thanks \\@alex for the notes",
+        `got: ${JSON.stringify(out)}`,
+      );
+    }
+
+    // 5b. Backslash escapes a marker even when the path exists.
+    {
+      const out = await fr.expandFileReferences("literal \\@src please", workspace);
+      assert(
+        "escaped at-sign stays literal",
+        out === "literal \\@src please",
         `got: ${JSON.stringify(out)}`,
       );
     }

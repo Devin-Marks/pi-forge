@@ -58,13 +58,20 @@ function parseChatFileReferences(text: string): string[] {
   // Lazy bare alternation + lookahead so trailing sentence punctuation
   // (`?`, `,`, `;`, `:`, `!`, `)`, `]`) doesn't get glued onto the
   // path — kept in sync with the server-side REF_RE in
-  // file-references.ts. See that file for the rationale.
+  // file-references.ts. See that file for the rationale. For the draft
+  // badge row, keep bare one-word mentions like `@alex` out of the UI;
+  // quoted refs and path-shaped bare refs are explicit enough to badge.
   const re = /(?:^|\s)@(?:"([^"\n]+)"|([^\s]+?))(?=[?,;:!)\]]?(?:\s|$))/g;
   const out: string[] = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
-    const p = m[1] ?? m[2];
-    if (p !== undefined) out.push(p);
+    const quoted = m[1];
+    const bare = m[2];
+    if (quoted !== undefined) {
+      out.push(quoted);
+    } else if (bare !== undefined && /[./\\]/.test(bare)) {
+      out.push(bare);
+    }
   }
   return out;
 }
@@ -255,6 +262,7 @@ export function ChatInput({ sessionId }: Props) {
   const sendPrompt = useSessionStore((s) => s.sendPrompt);
   const sendSteer = useSessionStore((s) => s.sendSteer);
   const reloadMessages = useSessionStore((s) => s.reloadMessages);
+  const requestScrollToBottom = useSessionStore((s) => s.requestScrollToBottom);
   const abortSession = useSessionStore((s) => s.abortSession);
   const error = useSessionStore((s) => s.error);
 
@@ -609,10 +617,10 @@ export function ChatInput({ sessionId }: Props) {
           setAttachmentError(
             minimalUi
               ? "/<cmd> runs a pi-forge command (compact, abort, settings, …). " +
-                  "@<path> references a project file (autocomplete from the popover)."
+                  "@<path> references a project file (autocomplete from the popover); type \\@ for a literal @."
               : "/<cmd> runs a pi-forge command (compact, abort, settings, …). " +
                   "!cmd runs bash (output → next LLM context); !!cmd runs bash local-only. " +
-                  "@<path> references a project file (autocomplete from the popover).",
+                  "@<path> references a project file (autocomplete from the popover); type \\@ for a literal @.",
           );
         },
       },
@@ -1238,6 +1246,7 @@ export function ChatInput({ sessionId }: Props) {
       }
       return;
     }
+    requestScrollToBottom(sessionId);
     setSubmitting(true);
     try {
       // Bash exec dispatch — `!cmd` includes the result in the next
