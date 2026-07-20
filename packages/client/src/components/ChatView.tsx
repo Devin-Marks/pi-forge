@@ -1,5 +1,6 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -121,6 +122,7 @@ export function ChatView({ sessionId }: Props) {
   // re-fires when the target index actually changes (selecting the
   // map and reading by key would re-run on every map mutation).
   const pendingScrollTarget = useSessionStore((s) => s.pendingScrollByMessageIndex[sessionId]);
+  const bottomPinRequest = useSessionStore((s) => s.bottomPinRequestBySession[sessionId] ?? 0);
   const consumePendingScroll = useSessionStore((s) => s.consumePendingScroll);
   // Quick-action run cards for THIS session — empty array when none.
   // The store mutation triggers a re-render which the sticky-bottom
@@ -207,6 +209,7 @@ export function ChatView({ sessionId }: Props) {
   }, [sessionId, openStream, closeStream]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
   // "Sticky bottom" scroll: track the user's INTENT in a ref via the
   // onScroll handler, then auto-scroll only when intent says "follow."
   //
@@ -233,12 +236,24 @@ export function ChatView({ sessionId }: Props) {
     lastScrollTopRef.current = el.scrollTop;
   };
 
+  const snapChatToBottom = useCallback((): void => {
+    const el = scrollRef.current;
+    if (el !== null) {
+      el.scrollTop = el.scrollHeight;
+      lastScrollTopRef.current = el.scrollTop;
+    }
+  }, []);
+
+  const followChatToBottom = useCallback((): void => {
+    if (isFollowingBottomRef.current) snapChatToBottom();
+  }, [snapChatToBottom]);
+
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el === null) return;
     if (isFollowingBottomRef.current) {
-      el.scrollTop = el.scrollHeight;
-      lastScrollTopRef.current = el.scrollTop;
+      snapChatToBottom();
+      requestAnimationFrame(snapChatToBottom);
       return;
     }
 
@@ -248,19 +263,28 @@ export function ChatView({ sessionId }: Props) {
     // appearing/disappearing, etc.). Browser scroll anchoring can otherwise
     // nudge the chat a few pixels when generation finishes.
     el.scrollTop = lastScrollTopRef.current;
-  }, [messages, streamingText, isStreaming, generatingToolCall]);
+  }, [
+    messages,
+    compactions,
+    streamingText,
+    isStreaming,
+    activeTool,
+    generatingToolCall,
+    queued,
+    sessionRuns.length,
+    snapChatToBottom,
+  ]);
 
-  const snapChatToBottom = (): void => {
-    const el = scrollRef.current;
-    if (el !== null) {
-      el.scrollTop = el.scrollHeight;
-      lastScrollTopRef.current = el.scrollTop;
-    }
-  };
-
-  const followChatToBottom = (): void => {
-    if (isFollowingBottomRef.current) snapChatToBottom();
-  };
+  useEffect(() => {
+    const list = messageListRef.current;
+    if (list === null || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      followChatToBottom();
+      requestAnimationFrame(followChatToBottom);
+    });
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [followChatToBottom]);
 
   // Force scroll-to-bottom + re-engage follow mode whenever a NEW
   // user message lands at the tail. Catches both the "user typed in
@@ -277,13 +301,20 @@ export function ChatView({ sessionId }: Props) {
       requestAnimationFrame(snapChatToBottom);
     }
     lastUserMessageCountRef.current = userCount;
-  }, [messages]);
+  }, [messages, snapChatToBottom]);
 
   useEffect(() => {
     if (!isStreaming) return;
     isFollowingBottomRef.current = true;
     snapChatToBottom();
-  }, [isStreaming]);
+  }, [isStreaming, snapChatToBottom]);
+
+  useEffect(() => {
+    if (bottomPinRequest === 0) return;
+    isFollowingBottomRef.current = true;
+    snapChatToBottom();
+    requestAnimationFrame(snapChatToBottom);
+  }, [bottomPinRequest, snapChatToBottom]);
 
   // Global-search scroll-to-message: when the search bar dispatches a
   // pending target for this session, locate the matching wrapper by
@@ -420,7 +451,7 @@ export function ChatView({ sessionId }: Props) {
               No messages yet. Send a prompt to get started.
             </p>
           )}
-          <div className="chat-message-list mx-auto max-w-3xl space-y-4">
+          <div ref={messageListRef} className="chat-message-list mx-auto max-w-3xl space-y-4">
             {(() => {
               // Pair toolCall blocks (in assistant messages) with their
               // matching toolResult messages (by toolCallId) so each
@@ -1143,7 +1174,7 @@ function Message({
               // ChatMarkdown's `chatStyleBreaks` prop docstring for
               // the trade-off (tables in user input need a leading
               // blank line; this matches what most users type).
-              <ChatMarkdown text={text} chatStyleBreaks />
+              <ChatMarkdown text={text} chatStyleBreaks enableMath={false} />
             )}
           </div>
         )}

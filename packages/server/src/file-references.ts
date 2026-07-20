@@ -38,9 +38,11 @@ import { checkFileReference, readFile } from "./file-manager.js";
  *                  intentionally do NOT bulk-embed directory contents
  *                  — large dirs would blow the context window, and
  *                  the model has cheap tools to explore on demand.
- *     error     → missing / outside root / binary. Replace marker
- *                  with `[@<path> not included: <reason>]` so neither
- *                  user nor model is left guessing.
+ *     literal   → missing paths are escaped as literal text so ordinary prose
+ *                  like `thanks @alex` does not become a file reference.
+ *     error     → outside root / binary. Replace marker with
+ *                  `[@<path> not included: <reason>]` so neither user nor
+ *                  model is left guessing.
  *
  * Multiple markers in one prompt are classified independently, then
  * inline candidates compete for a shared aggregate budget. See
@@ -137,6 +139,7 @@ export async function expandFileReferences(text: string, workspacePath: string):
     | { kind: "inlineCandidate"; size: number; abs: string }
     | { kind: "deferLarge" }
     | { kind: "directory" }
+    | { kind: "literal" }
     | { kind: "error"; reason: string };
 
   // Phase 1: classify every marker in parallel. Cheap — `checkFileReference`
@@ -159,7 +162,7 @@ export async function expandFileReferences(text: string, workspacePath: string):
       } catch (err) {
         const e = err as Error & { code?: string };
         if (e.name === "NotFoundError" || e.code === "ENOENT") {
-          return { kind: "error", reason: "file not found" };
+          return { kind: "literal" };
         }
         if (e.name === "PathOutsideRootError" || e.name === "AgentToolPathDeniedError") {
           return { kind: "error", reason: "path is outside allowed roots" };
@@ -204,6 +207,7 @@ export async function expandFileReferences(text: string, workspacePath: string):
     | { kind: "inline"; text: string }
     | { kind: "defer" }
     | { kind: "directory" }
+    | { kind: "literal" }
     | { kind: "error"; reason: string };
 
   // Phase 3: read content for the budget survivors, materialise the
@@ -213,6 +217,7 @@ export async function expandFileReferences(text: string, workspacePath: string):
   const outcomes: Outcome[] = await Promise.all(
     classifications.map(async (c, i): Promise<Outcome> => {
       if (c.kind === "directory") return { kind: "directory" };
+      if (c.kind === "literal") return { kind: "literal" };
       if (c.kind === "error") return { kind: "error", reason: c.reason };
       if (c.kind === "deferLarge") return { kind: "defer" };
       // c.kind === "inlineCandidate"
@@ -270,6 +275,8 @@ export async function expandFileReferences(text: string, workspacePath: string):
       const dirPath = mm.path.endsWith("/") ? mm.path : `${mm.path}/`;
       const dirMarker = /\s/.test(dirPath) ? `@"${dirPath}"` : `@${dirPath}`;
       out = `${before}${dirMarker}${after}`;
+    } else if (outcome.kind === "literal") {
+      out = `${before}\\${marker}${after}`;
     } else {
       out = `${before}[${marker} not included: ${outcome.reason}]${after}`;
     }

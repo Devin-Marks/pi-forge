@@ -131,6 +131,13 @@ interface Props {
    * on the standard line-break semantics.
    */
   chatStyleBreaks?: boolean;
+  /**
+   * Enable TeX-style `$...$` and `$$...$$` math. Assistant output keeps
+   * this enabled so model-authored math still renders, but user chat
+   * bubbles can disable it to preserve pasted shell snippets, prices, and
+   * env vars containing dollar signs as ordinary prose.
+   */
+  enableMath?: boolean;
 }
 
 /**
@@ -276,7 +283,12 @@ const components: Components = {
   pre: ({ children }) => <>{children}</>,
 };
 
-export function ChatMarkdown({ text, size = "sm", chatStyleBreaks = false }: Props) {
+export function ChatMarkdown({
+  text,
+  size = "sm",
+  chatStyleBreaks = false,
+  enableMath = true,
+}: Props) {
   // The outer container holds the typography scale + breaks long
   // unbroken tokens (URLs, identifiers, base64 dumps) so a single
   // gigantic word can't blow out the bubble width. Tailwind's
@@ -297,11 +309,20 @@ export function ChatMarkdown({ text, size = "sm", chatStyleBreaks = false }: Pro
   // those nodes into rendered MathML+HTML using KaTeX. Order matters —
   // remark-math must run before remark-breaks so a `$\rightarrow$` token
   // lands as a math node rather than text containing a literal `\n` →
-  // `<br>` rewrite around the dollar signs.
-  const plugins = chatStyleBreaks ? [remarkGfm, remarkMath, remarkBreaks] : [remarkGfm, remarkMath];
+  // `<br>` rewrite around the dollar signs. User-authored chat bubbles
+  // disable math because pasted multiline shell/env text commonly contains
+  // literal `$` pairs that should not switch into KaTeX formatting.
+  const plugins = enableMath
+    ? chatStyleBreaks
+      ? [remarkGfm, remarkMath, remarkBreaks]
+      : [remarkGfm, remarkMath]
+    : chatStyleBreaks
+      ? [remarkGfm, remarkBreaks]
+      : [remarkGfm];
+  const rehypePlugins = enableMath ? [rehypeKatex] : [];
   return (
     <div className={`${sizeClass} break-words [overflow-wrap:anywhere]`}>
-      <ReactMarkdown remarkPlugins={plugins} rehypePlugins={[rehypeKatex]} components={components}>
+      <ReactMarkdown remarkPlugins={plugins} rehypePlugins={rehypePlugins} components={components}>
         {text}
       </ReactMarkdown>
     </div>
