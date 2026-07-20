@@ -2967,7 +2967,7 @@ function ThemeSwatch({ id }: { id: ThemeId }) {
  * Export / import the pi-forge's portable config as a `.tar.gz`.
  *
  * Export bundles `mcp.json` + `settings.json` + `models.json` +
- * `skills-overrides.json` + `tool-overrides.json`. Auth is
+ * `skills-overrides.json` + `tool-overrides.json` + `quick-actions.json`. Auth is
  * deliberately excluded (provider keys / OAuth tokens), and the
  * UI calls that out so a user planning a migration knows to re-auth
  * providers afterwards.
@@ -3112,8 +3112,9 @@ function BackupTab({ onError }: { onError: (msg: string | undefined) => void }) 
           <code className="font-mono">mcp.json</code>,{" "}
           <code className="font-mono">settings.json</code>,{" "}
           <code className="font-mono">models.json</code>,{" "}
-          <code className="font-mono">skills-overrides.json</code>, and{" "}
-          <code className="font-mono">tool-overrides.json</code>. Provider auth (
+          <code className="font-mono">skills-overrides.json</code>,{" "}
+          <code className="font-mono">tool-overrides.json</code>, and{" "}
+          <code className="font-mono">quick-actions.json</code>. Provider auth (
           <code className="font-mono">auth.json</code> — API keys, OAuth tokens) is{" "}
           <strong>not</strong> included; re-authenticate providers after restoring on a new install.
         </p>
