@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { ConversionError, convertAttachment, pickConverter } from "../attachment-converters.js";
 import { config } from "../config.js";
+import { syncStoredApiKeyToRuntime } from "../config-manager.js";
 import { formatErrorChain } from "../diagnostics.js";
 import { expandFileReferences, languageHintForPath } from "../file-references.js";
 import {
@@ -351,7 +352,9 @@ async function preflight(
     });
     return undefined;
   }
-  if (!live.session.modelRegistry.hasConfiguredAuth(model)) {
+  await live.session.modelRuntime.reloadConfig();
+  await syncStoredApiKeyToRuntime(live.session.modelRuntime, model.provider);
+  if (!live.session.modelRuntime.hasConfiguredAuth(model.provider)) {
     await reply.code(400).send({
       error: "no_api_key",
       message: `No API key configured for provider "${model.provider}". Add one via PUT /api/v1/config/auth/${model.provider}.`,

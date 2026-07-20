@@ -293,8 +293,10 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
       schema: {
         description:
           "Read `models.json` (custom provider configurations). Inline `apiKey` " +
-          "and `apiKeyCommand` fields are returned as `***REDACTED***` so the " +
-          "raw secret never leaves the server. The persisted file is unchanged " +
+          "fields, including command values such as `!op read ...`, are returned " +
+          "as `***REDACTED***` so the raw secret never leaves the server. " +
+          "Legacy `apiKeyCommand` fields are migrated to SDK 0.80 `apiKey` command values. " +
+          "The persisted file is unchanged " +
           "— PUT /config/models takes the actual values; the redaction is on " +
           "the read path only.",
         tags: ["config"],
@@ -542,7 +544,7 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (_req, reply) => {
       try {
-        return readAuthSummary();
+        return await readAuthSummary();
       } catch (err) {
         return internalError(reply, err);
       }
@@ -585,7 +587,7 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       try {
-        writeApiKey(req.params.provider, req.body.apiKey);
+        await writeApiKey(req.params.provider, req.body.apiKey);
         return { provider: req.params.provider, configured: true };
       } catch (err) {
         return internalError(reply, err);
@@ -609,7 +611,7 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (req, reply) => {
       try {
-        removeApiKey(req.params.provider);
+        await removeApiKey(req.params.provider);
         return reply.code(204).send();
       } catch (err) {
         if (err instanceof AuthProviderNotFoundError) {
