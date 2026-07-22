@@ -15,6 +15,23 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.4.7] — 2026-07-22
+
+### Added
+
+- **High contrast theme.** A new built-in high contrast appearance option improves contrast across the app shell, editor, terminal, settings, and chat surfaces.
+
+### Changed
+
+- **Dependency updates for v1.4.7.** Updated the pinned pi SDK trio to 0.80.10 and refreshed the associated lockfile entries.
+
+### Fixed
+
+- **Async subagent completion output is preserved.** Background subagent returns now keep their completion text available in session output and discovery flows.
+- **Composer references and chat autoscroll are more reliable.** File/folder reference insertion, prompt submission, and transcript scrolling now better preserve user intent while following new output when appropriate.
+- **MCP auth and backup settings are easier to use.** Settings and backup flows now handle MCP auth data more consistently and list backup quick actions in the backup pane.
+- **Terminal rendering and copy behavior are smoother.** Terminal display updates, selection/copy interactions, and related rendering details have been tightened.
+
 ## [1.4.6] — 2026-06-24
 
 ### Added
