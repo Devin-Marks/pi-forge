@@ -32,7 +32,7 @@
   },
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.9",
-    "@types/node": "^26.0.0",
+    "@types/node": "^26.1.1",
     "@types/tar": "^7.0.87",
     "@types/ws": "^8.18.1",
     "tsx": "^4.22.3",
