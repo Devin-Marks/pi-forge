@@ -286,6 +286,21 @@ listed as runtime defaults. Quickstart:</p>
 # deploy) UI_PASSWORD (JWT_SECRET auto-generates), or API_KEY
 cd docker &amp;&amp; docker compose up -d --build
 </code></pre>
+<h3>Rootless Podman on SELinux-enabled Linux</h3>
+<p>Keep SELinux enforcing. Use the Podman overlay to map the container&#39;s <code>pi</code>
+user to the invoking host user and to give the three bind-mount sources
+private SELinux labels:</p>
+<pre><code class="language-bash">cd docker
+PUID=$(id -u) PGID=$(id -g) \
+  podman-compose -f docker-compose.yml -f docker-compose.podman.yml up -d --build
+</code></pre>
+<p><code>userns_mode: keep-id</code> is Podman-specific, so it is intentionally kept out of
+the Docker Compose base file. The overlay&#39;s <code>:Z</code> volume suffix relabels the
+workspace, Pi agent config, and forge state directories for this one
+container. Do not use the same host directories from another container unless
+you deliberately manage compatible SELinux labels.</p>
+<p>For Podman installations where <code>podman compose</code> delegates to a compose
+provider, pass the same two <code>-f</code> files.</p>
 <h3>Operations</h3>
 <pre><code class="language-bash"># Logs (follow)
 docker compose -f docker/docker-compose.yml logs -f

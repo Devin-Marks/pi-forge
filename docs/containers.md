@@ -172,6 +172,27 @@ cp docker/.env.example docker/.env
 cd docker && docker compose up -d --build
 ```
 
+### Rootless Podman on SELinux-enabled Linux
+
+Keep SELinux enforcing. Use the Podman overlay to map the container's `pi`
+user to the invoking host user and to give the three bind-mount sources
+private SELinux labels:
+
+```bash
+cd docker
+PUID=$(id -u) PGID=$(id -g) \
+  podman-compose -f docker-compose.yml -f docker-compose.podman.yml up -d --build
+```
+
+`userns_mode: keep-id` is Podman-specific, so it is intentionally kept out of
+the Docker Compose base file. The overlay's `:Z` volume suffix relabels the
+workspace, Pi agent config, and forge state directories for this one
+container. Do not use the same host directories from another container unless
+you deliberately manage compatible SELinux labels.
+
+For Podman installations where `podman compose` delegates to a compose
+provider, pass the same two `-f` files.
+
 ### Operations
 
 ```bash
