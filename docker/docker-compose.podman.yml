@@ -1,0 +1,16 @@
+# Rootless Podman overlay for SELinux-enabled Linux hosts.
+#
+# Use with docker-compose.yml:
+#   PUID=$(id -u) PGID=$(id -g) \
+#     podman-compose -f docker-compose.yml -f docker-compose.podman.yml up -d --build
+#
+# `keep-id` maps the container's pi user to the invoking host user. `:Z`
+# applies a private SELinux label to each bind-mount source.
+
+services:
+  pi-forge:
+    userns_mode: keep-id
+    volumes:
+      - ${WORKSPACE_HOST_PATH:-../workspace}:/workspace:Z
+      - ${PI_CONFIG_HOST_PATH:-~/.pi/agent}:/home/pi/.pi/agent:Z
+      - ${FORGE_DATA_HOST_PATH:-~/.pi-forge-docker}:/home/pi/.pi-forge:Z

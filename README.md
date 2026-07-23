@@ -57,6 +57,23 @@ cp docker/.env.example docker/.env       # edit auth + paths if you want
 cd docker && docker compose up -d --build
 ```
 
+### Rootless Podman (SELinux-enabled Linux)
+
+Use the Podman overlay so the container user maps to your host user and Podman
+can apply private SELinux labels to the three bind mounts:
+
+```bash
+git clone https://github.com/Devin-Marks/pi-forge.git
+cd pi-forge
+cp docker/.env.example docker/.env       # edit auth + paths if you want
+cd docker
+PUID=$(id -u) PGID=$(id -g) \
+  podman-compose -f docker-compose.yml -f docker-compose.podman.yml up -d --build
+```
+
+Do not disable SELinux. The `:Z` mount labels are private to this container;
+use a different host directory if another container must mount the same path.
+
 ### npm (no Docker, runs from your shell)
 
 ```bash
