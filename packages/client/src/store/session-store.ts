@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api, ApiError, type SessionSummary, type UnifiedSession } from "../lib/api-client";
 import { streamSSE } from "../lib/sse-client";
 import { extractToolCallGeneration, type ToolCallGeneration } from "../lib/tool-call-streaming";
+import { createChatTimelinePosition, type ChatTimelinePosition } from "../lib/chat-timeline";
 import { postCrossTab, subscribeCrossTab } from "../lib/cross-tab";
 import { useAskUserQuestionStore, type PendingAskQuestion } from "./ask-user-question-store";
 import { useTodoStore, type Task as TodoTaskShape } from "./todo-store";
@@ -21,6 +22,7 @@ export const EMPTY_SESSIONS: UnifiedSession[] = [];
 export const EMPTY_MESSAGES: AgentMessageLike[] = [];
 export const EMPTY_STRING = "";
 export const EMPTY_COMPACTIONS: CompactionEvent[] = [];
+export const EMPTY_EXTENSION_NOTIFICATIONS: ExtensionUiNotification[] = [];
 
 /**
  * Per-session pending streaming-text delta buffer + RAF id. We accumulate
@@ -111,9 +113,16 @@ export interface ActiveTool {
 }
 
 export interface ExtensionUiNotification {
+  id: string;
   message: string;
   level: "info" | "warning" | "error";
+  /** Receive-side timestamp; extension feedback is never written to Pi's transcript. */
+  receivedAt: number;
+  /** Monotonic tie-breaker for feedback received in the same millisecond. */
+  arrivalOrder: number;
 }
+
+export type ExtensionUiNotificationInput = Pick<ExtensionUiNotification, "message" | "level">;
 
 /**
  * Wire-shape of an SSE event from the bridge. `snapshot` carries the full
@@ -199,6 +208,8 @@ function removeSessionFromState(current: SessionState, sessionId: string): Parti
   delete nextExtensionNotifications[sessionId];
   const nextStreamingText = { ...current.streamingTextBySession };
   delete nextStreamingText[sessionId];
+  const nextStreamingTimelinePosition = { ...current.streamingTimelinePositionBySession };
+  delete nextStreamingTimelinePosition[sessionId];
   const nextActiveTool = { ...current.activeToolBySession };
   delete nextActiveTool[sessionId];
   const nextToolCallGeneration = { ...current.toolCallGenerationBySession };
@@ -211,6 +222,8 @@ function removeSessionFromState(current: SessionState, sessionId: string): Parti
   delete nextTurnWriteCount[sessionId];
   const nextQueued = { ...current.queuedBySession };
   delete nextQueued[sessionId];
+  const nextQueuedTimelinePosition = { ...current.queuedTimelinePositionBySession };
+  delete nextQueuedTimelinePosition[sessionId];
   const nextBottomPinRequest = { ...current.bottomPinRequestBySession };
   delete nextBottomPinRequest[sessionId];
   const byProject: Record<string, UnifiedSession[]> = {};
@@ -223,12 +236,14 @@ function removeSessionFromState(current: SessionState, sessionId: string): Parti
     bannerBySession: nextBanner,
     extensionNotificationsBySession: nextExtensionNotifications,
     streamingTextBySession: nextStreamingText,
+    streamingTimelinePositionBySession: nextStreamingTimelinePosition,
     activeToolBySession: nextActiveTool,
     toolCallGenerationBySession: nextToolCallGeneration,
     agentEndCountBySession: nextAgentEndCount,
     fileRefreshCountBySession: nextFileRefreshCount,
     turnWriteCountBySession: nextTurnWriteCount,
     queuedBySession: nextQueued,
+    queuedTimelinePositionBySession: nextQueuedTimelinePosition,
     bottomPinRequestBySession: nextBottomPinRequest,
     byProject,
     activeSessionId: current.activeSessionId === sessionId ? undefined : current.activeSessionId,
@@ -276,6 +291,8 @@ interface SessionState {
    * messages array refetched by `getMessages` then carries the final text).
    */
   streamingTextBySession: Record<string, string>;
+  /** Receipt position for the live assistant entry currently in the chat. */
+  streamingTimelinePositionBySession: Record<string, ChatTimelinePosition | undefined>;
   /**
    * Per-session "agent is currently running tool X" indicator. Set on
    * tool_execution_start, cleared on tool_execution_end. The chat view
@@ -329,6 +346,8 @@ interface SessionState {
    * pop entries optimistically.
    */
   queuedBySession: Record<string, { steering: string[]; followUp: string[] } | undefined>;
+  /** Receipt position for the current queued-input snapshot. */
+  queuedTimelinePositionBySession: Record<string, ChatTimelinePosition | undefined>;
   /**
    * Per-session pending scroll target (zero-based message index) set
    * by the global search bar when a result is clicked. ChatView reads
@@ -402,13 +421,13 @@ interface SessionState {
    * the banner reappears on the next event.
    */
   clearBanner: (sessionId: string) => void;
-  /** Add extension feedback without overwriting a state banner or earlier notification. */
+  /** Add store-only extension feedback at its arrival position in the chat timeline. */
   enqueueExtensionUiNotification: (
     sessionId: string,
-    notification: ExtensionUiNotification,
+    notification: ExtensionUiNotificationInput,
   ) => void;
-  /** Dismiss the visible extension notification and advance its session queue. */
-  dismissExtensionUiNotification: (sessionId: string) => void;
+  /** Dismiss one extension notification without changing Pi's canonical transcript. */
+  dismissExtensionUiNotification: (sessionId: string, notificationId?: string) => void;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -421,6 +440,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   bannerBySession: {},
   extensionNotificationsBySession: {},
   streamingTextBySession: {},
+  streamingTimelinePositionBySession: {},
   activeToolBySession: {},
   toolCallGenerationBySession: {},
   agentEndCountBySession: {},
@@ -428,6 +448,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   turnWriteCountBySession: {},
   compactionEndCountBySession: {},
   queuedBySession: {},
+  queuedTimelinePositionBySession: {},
   pendingScrollByMessageIndex: {},
   bottomPinRequestBySession: {},
   error: undefined,
@@ -843,20 +864,31 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }));
   },
   enqueueExtensionUiNotification: (sessionId, notification) => {
+    const position = createChatTimelinePosition();
+    const entry: ExtensionUiNotification = {
+      ...notification,
+      id: `extension-notification-${position.order}`,
+      receivedAt: position.timestamp,
+      arrivalOrder: position.order,
+    };
     set((s) => ({
       extensionNotificationsBySession: {
         ...s.extensionNotificationsBySession,
-        [sessionId]: [...(s.extensionNotificationsBySession[sessionId] ?? []), notification],
+        [sessionId]: [...(s.extensionNotificationsBySession[sessionId] ?? []), entry],
       },
     }));
   },
-  dismissExtensionUiNotification: (sessionId) => {
+  dismissExtensionUiNotification: (sessionId, notificationId) => {
     set((s) => {
       const notifications = s.extensionNotificationsBySession[sessionId] ?? [];
       if (notifications.length === 0) return {};
       const next = { ...s.extensionNotificationsBySession };
-      if (notifications.length === 1) delete next[sessionId];
-      else next[sessionId] = notifications.slice(1);
+      const remaining =
+        notificationId === undefined
+          ? notifications.slice(1)
+          : notifications.filter((notification) => notification.id !== notificationId);
+      if (remaining.length === 0) delete next[sessionId];
+      else next[sessionId] = remaining;
       return { extensionNotificationsBySession: next };
     });
   },
@@ -892,6 +924,13 @@ function applyEvent(
         ...s.streamingBySession,
         [sessionId]: event.isStreaming ?? false,
       },
+      streamingTimelinePositionBySession: {
+        ...s.streamingTimelinePositionBySession,
+        [sessionId]:
+          event.isStreaming === true
+            ? (s.streamingTimelinePositionBySession[sessionId] ?? createChatTimelinePosition())
+            : undefined,
+      },
       bannerBySession: {
         ...s.bannerBySession,
         [sessionId]:
@@ -917,6 +956,10 @@ function applyEvent(
     set((s) => ({
       streamingBySession: { ...s.streamingBySession, [sessionId]: true },
       streamingTextBySession: { ...s.streamingTextBySession, [sessionId]: "" },
+      streamingTimelinePositionBySession: {
+        ...s.streamingTimelinePositionBySession,
+        [sessionId]: createChatTimelinePosition(),
+      },
       bannerBySession: { ...s.bannerBySession, [sessionId]: undefined },
       turnWriteCountBySession: { ...s.turnWriteCountBySession, [sessionId]: 0 },
       toolCallGenerationBySession: { ...s.toolCallGenerationBySession, [sessionId]: undefined },
@@ -963,6 +1006,10 @@ function applyEvent(
             messagesBySession: { ...s.messagesBySession, [sessionId]: messages },
             streamingBySession: { ...s.streamingBySession, [sessionId]: false },
             streamingTextBySession: { ...s.streamingTextBySession, [sessionId]: "" },
+            streamingTimelinePositionBySession: {
+              ...s.streamingTimelinePositionBySession,
+              [sessionId]: undefined,
+            },
             activeToolBySession: { ...s.activeToolBySession, [sessionId]: undefined },
             toolCallGenerationBySession: {
               ...s.toolCallGenerationBySession,
@@ -995,6 +1042,10 @@ function applyEvent(
         // disappears and the chat looks healthy when it isn't.
         set((s) => ({
           streamingBySession: { ...s.streamingBySession, [sessionId]: false },
+          streamingTimelinePositionBySession: {
+            ...s.streamingTimelinePositionBySession,
+            [sessionId]: undefined,
+          },
           activeToolBySession: { ...s.activeToolBySession, [sessionId]: undefined },
           toolCallGenerationBySession: { ...s.toolCallGenerationBySession, [sessionId]: undefined },
           bannerBySession: {
@@ -1035,6 +1086,11 @@ function applyEvent(
         // badge unmounts cleanly rather than rendering "queued: 0".
         [sessionId]:
           steering.length === 0 && followUp.length === 0 ? undefined : { steering, followUp },
+      },
+      queuedTimelinePositionBySession: {
+        ...s.queuedTimelinePositionBySession,
+        [sessionId]:
+          steering.length === 0 && followUp.length === 0 ? undefined : createChatTimelinePosition(),
       },
     }));
     return;

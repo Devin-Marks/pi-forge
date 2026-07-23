@@ -25,12 +25,14 @@ import {
 } from "lucide-react";
 import {
   EMPTY_COMPACTIONS,
+  EMPTY_EXTENSION_NOTIFICATIONS,
   EMPTY_MESSAGES,
   EMPTY_STRING,
   useSessionStore,
   type ActiveTool,
   type AgentMessageLike,
   type CompactionEvent,
+  type ExtensionUiNotification,
 } from "../store/session-store";
 import type { ToolCallGeneration } from "../lib/tool-call-streaming";
 import { useActiveProject, useProjectStore } from "../store/project-store";
@@ -42,7 +44,8 @@ import { DiffBlock } from "./DiffBlock";
 import { SessionTreePanel } from "./SessionTreePanel";
 import { QuickActionsMenu } from "./QuickActionsMenu";
 import { QuickActionRunCard } from "./QuickActionRunCard";
-import { useQuickActionRunsStore } from "../store/quick-actions-store";
+import { useQuickActionRunsStore, type QuickActionRun } from "../store/quick-actions-store";
+import { placeChatTimelineItems, type ChatTimelinePosition } from "../lib/chat-timeline";
 import { parseSubagentDetails, type SubagentResult } from "../lib/subagent-parser";
 import { OrchestrationPanel } from "./OrchestrationPanel";
 import { useUiConfigStore } from "../store/ui-config-store";
@@ -88,6 +91,21 @@ interface Props {
   sessionId: string;
 }
 
+type TransientChatTimelineItem =
+  | { kind: "extension"; notification: ExtensionUiNotification; position: ChatTimelinePosition }
+  | { kind: "streaming"; position: ChatTimelinePosition }
+  | {
+      kind: "queued";
+      queued: { steering: string[]; followUp: string[] };
+      position: ChatTimelinePosition;
+    }
+  | { kind: "quick-action"; run: QuickActionRun; position: ChatTimelinePosition };
+
+const FALLBACK_TIMELINE_POSITION: ChatTimelinePosition = {
+  timestamp: Number.MAX_SAFE_INTEGER,
+  order: Number.MAX_SAFE_INTEGER,
+};
+
 /**
  * Phase 8 chat surface. Renders the SDK's AgentMessage union heuristically —
  * matches on `role` and `type` to pick a renderer per message kind. The shape
@@ -115,14 +133,17 @@ export function ChatView({ sessionId }: Props) {
   const generatingToolCall = useSessionStore((s) => s.toolCallGenerationBySession[sessionId]);
   const banner = useSessionStore((s) => s.bannerBySession[sessionId]);
   const clearBanner = useSessionStore((s) => s.clearBanner);
-  const extensionNotification = useSessionStore(
-    (s) => s.extensionNotificationsBySession[sessionId]?.[0],
-  );
-  const extensionNotificationCount = useSessionStore(
-    (s) => s.extensionNotificationsBySession[sessionId]?.length ?? 0,
+  const extensionNotifications = useSessionStore(
+    (s) => s.extensionNotificationsBySession[sessionId] ?? EMPTY_EXTENSION_NOTIFICATIONS,
   );
   const dismissExtensionUiNotification = useSessionStore((s) => s.dismissExtensionUiNotification);
   const queued = useSessionStore((s) => s.queuedBySession[sessionId]);
+  const streamingTimelinePosition = useSessionStore(
+    (s) => s.streamingTimelinePositionBySession[sessionId],
+  );
+  const queuedTimelinePosition = useSessionStore(
+    (s) => s.queuedTimelinePositionBySession[sessionId],
+  );
   const openStream = useSessionStore((s) => s.openStream);
   const closeStream = useSessionStore((s) => s.closeStream);
   // Pending scroll target set by the global search bar when the user
@@ -138,9 +159,60 @@ export function ChatView({ sessionId }: Props) {
   // bottom scrolls into view the same way a new message would.
   const allRuns = useQuickActionRunsStore((s) => s.runs);
   const sessionRuns = useMemo(
-    () => allRuns.filter((r) => r.sessionId === sessionId),
+    () =>
+      allRuns
+        .filter((r) => r.sessionId === sessionId)
+        .sort((a, b) => a.startedAt - b.startedAt || a.timelineOrder - b.timelineOrder),
     [allRuns, sessionId],
   );
+  const timelineSlots = useMemo(() => {
+    const transientItems: { item: TransientChatTimelineItem; position: ChatTimelinePosition }[] = [
+      ...extensionNotifications.map((notification) => ({
+        item: {
+          kind: "extension" as const,
+          notification,
+          position: { timestamp: notification.receivedAt, order: notification.arrivalOrder },
+        },
+        position: { timestamp: notification.receivedAt, order: notification.arrivalOrder },
+      })),
+      ...sessionRuns.map((run) => ({
+        item: {
+          kind: "quick-action" as const,
+          run,
+          position: { timestamp: run.startedAt, order: run.timelineOrder },
+        },
+        position: { timestamp: run.startedAt, order: run.timelineOrder },
+      })),
+    ];
+    if (isStreaming) {
+      transientItems.push({
+        item: {
+          kind: "streaming",
+          position: streamingTimelinePosition ?? FALLBACK_TIMELINE_POSITION,
+        },
+        position: streamingTimelinePosition ?? FALLBACK_TIMELINE_POSITION,
+      });
+    }
+    if (queued !== undefined) {
+      transientItems.push({
+        item: {
+          kind: "queued",
+          queued,
+          position: queuedTimelinePosition ?? FALLBACK_TIMELINE_POSITION,
+        },
+        position: queuedTimelinePosition ?? FALLBACK_TIMELINE_POSITION,
+      });
+    }
+    return placeChatTimelineItems(messages, transientItems);
+  }, [
+    extensionNotifications,
+    isStreaming,
+    messages,
+    queued,
+    queuedTimelinePosition,
+    sessionRuns,
+    streamingTimelinePosition,
+  ]);
 
   const [chatViewType, setChatViewType] = useState<ChatViewType>(readChatViewType);
   const setAndPersistChatViewType = (next: ChatViewType): void => {
@@ -153,13 +225,14 @@ export function ChatView({ sessionId }: Props) {
   };
 
   useEffect(() => {
-    if (extensionNotification === undefined) return;
-    const timer = window.setTimeout(
-      () => dismissExtensionUiNotification(sessionId),
-      EXTENSION_NOTIFICATION_TIMEOUT_MS,
+    const timers = extensionNotifications.map((notification) =>
+      window.setTimeout(
+        () => dismissExtensionUiNotification(sessionId, notification.id),
+        Math.max(0, notification.receivedAt + EXTENSION_NOTIFICATION_TIMEOUT_MS - Date.now()),
+      ),
     );
-    return () => window.clearTimeout(timer);
-  }, [dismissExtensionUiNotification, extensionNotification, sessionId]);
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [dismissExtensionUiNotification, extensionNotifications, sessionId]);
 
   // Phase 15 — session tree overlay. The button lives in a tiny
   // toolbar above the scroll container so it's always visible
@@ -289,6 +362,7 @@ export function ChatView({ sessionId }: Props) {
     generatingToolCall,
     queued,
     sessionRuns.length,
+    extensionNotifications,
     snapChatToBottom,
   ]);
 
@@ -462,43 +536,15 @@ export function ChatView({ sessionId }: Props) {
             </button>
           </div>
         )}
-        {extensionNotification !== undefined && (
-          <div
-            className={`flex items-start gap-2 border-b px-6 py-2 text-xs ${
-              extensionNotification.level === "error"
-                ? "border-red-700/40 bg-red-900/20 text-red-200 light:border-red-300 light:bg-red-50 light:text-red-800"
-                : extensionNotification.level === "warning"
-                  ? "border-amber-700/40 bg-amber-900/20 text-amber-200 light:border-amber-300 light:bg-amber-50 light:text-amber-800"
-                  : "border-sky-700/40 bg-sky-900/20 text-sky-200 light:border-sky-300 light:bg-sky-50 light:text-sky-800"
-            }`}
-            role="status"
-            aria-live="polite"
-          >
-            <div className="flex-1">
-              <span className="font-medium">Extension:</span> {extensionNotification.message}
-              {extensionNotificationCount > 1 && (
-                <span className="ml-2 text-neutral-400 light:text-neutral-600">
-                  ({extensionNotificationCount} pending)
-                </span>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => dismissExtensionUiNotification(sessionId)}
-              className="-mr-1 shrink-0 rounded p-0.5 hover:bg-neutral-900/30 hover:text-white light:hover:bg-neutral-200"
-              title="Dismiss"
-              aria-label="Dismiss extension notification"
-            >
-              <X size={14} />
-            </button>
-          </div>
-        )}
         <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-6 py-4">
-          {messages.length === 0 && streamingText.length === 0 && !isStreaming && (
-            <p className="mt-12 text-center text-sm text-neutral-500">
-              No messages yet. Send a prompt to get started.
-            </p>
-          )}
+          {messages.length === 0 &&
+            streamingText.length === 0 &&
+            !isStreaming &&
+            extensionNotifications.length === 0 && (
+              <p className="mt-12 text-center text-sm text-neutral-500">
+                No messages yet. Send a prompt to get started.
+              </p>
+            )}
           <div ref={messageListRef} className="chat-message-list mx-auto max-w-3xl space-y-4">
             {(() => {
               // Pair toolCall blocks (in assistant messages) with their
@@ -581,6 +627,43 @@ export function ChatView({ sessionId }: Props) {
                   );
                 }
               };
+              const renderTimelineEntriesAt = (idx: number): void => {
+                const entries = timelineSlots[idx];
+                if (entries === undefined || entries.length === 0) return;
+                flushPendingBatch();
+                for (const entry of entries) {
+                  if (entry.kind === "extension") {
+                    out.push(
+                      <ExtensionNotificationEntry
+                        key={entry.notification.id}
+                        notification={entry.notification}
+                        onDismiss={() =>
+                          dismissExtensionUiNotification(sessionId, entry.notification.id)
+                        }
+                      />,
+                    );
+                  } else if (entry.kind === "streaming") {
+                    out.push(
+                      <StreamingTimelineEntry
+                        key={`streaming-${entry.position.timestamp}-${entry.position.order}`}
+                        streamingText={streamingText}
+                        activeTool={activeTool}
+                        generatingToolCall={generatingToolCall}
+                        onVisibleOrUpdate={followChatToBottom}
+                      />,
+                    );
+                  } else if (entry.kind === "queued") {
+                    out.push(
+                      <QueuedMessages
+                        key={`queued-${entry.position.timestamp}-${entry.position.order}`}
+                        queued={entry.queued}
+                      />,
+                    );
+                  } else {
+                    out.push(<QuickActionRunCard key={entry.run.runId} run={entry.run} />);
+                  }
+                }
+              };
               // Hide the LATEST compaction's kept window from inline
               // bubbles — those messages render inside that card's
               // expand drawer instead. Without this, after a compaction
@@ -619,6 +702,7 @@ export function ChatView({ sessionId }: Props) {
               for (let i = 0; i < messages.length; i++) {
                 const m = messages[i]!;
                 renderCardsAt(i);
+                renderTimelineEntriesAt(i);
                 if (isPairedToolResult(toolPairing, m)) {
                   continue; // rendered inline next to its toolCall
                 }
@@ -682,35 +766,9 @@ export function ChatView({ sessionId }: Props) {
               // messages have been pushed since. Rare; render at the
               // bottom for completeness.
               renderCardsAt(messages.length);
+              renderTimelineEntriesAt(messages.length);
               return out;
             })()}
-            {streamingText.length > 0 && (
-              <div
-                className="message-bubble rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3"
-                data-message-role="assistant"
-              >
-                <div className="mb-1 text-[10px] uppercase tracking-wider text-neutral-500">
-                  assistant (streaming)
-                </div>
-                <div className="text-neutral-100">
-                  <ChatMarkdown text={streamingText} />
-                  <span className="ml-1 inline-block h-3 w-1.5 animate-pulse bg-neutral-300 align-text-bottom" />
-                </div>
-              </div>
-            )}
-            {isStreaming && activeTool === undefined && generatingToolCall !== undefined && (
-              <ToolCallGenerationPlaceholder
-                toolCall={generatingToolCall}
-                onVisibleOrUpdate={followChatToBottom}
-              />
-            )}
-            {isStreaming && streamingText.length === 0 && generatingToolCall === undefined && (
-              <ActiveToolPlaceholder tool={activeTool} />
-            )}
-            {queued !== undefined && <QueuedMessages queued={queued} />}
-            {sessionRuns.map((run) => (
-              <QuickActionRunCard key={run.runId} run={run} />
-            ))}
           </div>
         </div>
       </div>
@@ -723,6 +781,88 @@ export function ChatView({ sessionId }: Props) {
       )}
     </ChatDiffViewContext.Provider>
   );
+}
+
+/**
+ * Extension feedback is intentionally rendered in the scrolling timeline,
+ * not as a session-state banner. It remains store-only and is dismissed after
+ * a short delay, so extension output never becomes part of Pi's transcript.
+ */
+function ExtensionNotificationEntry({
+  notification,
+  onDismiss,
+}: {
+  notification: ExtensionUiNotification;
+  onDismiss: () => void;
+}) {
+  const severityClass =
+    notification.level === "error"
+      ? "border-red-700/40 bg-red-900/20 text-red-100 light:border-red-300 light:bg-red-50 light:text-red-950"
+      : notification.level === "warning"
+        ? "border-amber-700/40 bg-amber-900/20 text-amber-100 light:border-amber-300 light:bg-amber-50 light:text-amber-950"
+        : "border-sky-700/40 bg-sky-900/20 text-sky-100 light:border-sky-300 light:bg-sky-50 light:text-sky-950";
+  return (
+    <div
+      className={`message-bubble flex items-start gap-3 rounded-lg border px-4 py-3 ${severityClass}`}
+      data-message-role="extension-notification"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="min-w-0 flex-1">
+        <div className="mb-1 text-[10px] font-medium uppercase tracking-wider opacity-75">
+          extension {notification.level}
+        </div>
+        <ChatMarkdown text={notification.message} size="xs" />
+      </div>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="-mr-1 shrink-0 rounded p-0.5 opacity-75 hover:bg-neutral-900/30 hover:text-white hover:opacity-100 light:hover:bg-neutral-200"
+        title="Dismiss"
+        aria-label="Dismiss extension notification"
+      >
+        <X size={14} />
+      </button>
+    </div>
+  );
+}
+
+function StreamingTimelineEntry({
+  streamingText,
+  activeTool,
+  generatingToolCall,
+  onVisibleOrUpdate,
+}: {
+  streamingText: string;
+  activeTool: ActiveTool | undefined;
+  generatingToolCall: ToolCallGeneration | undefined;
+  onVisibleOrUpdate: () => void;
+}) {
+  if (streamingText.length > 0) {
+    return (
+      <div
+        className="message-bubble rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3"
+        data-message-role="assistant"
+      >
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-neutral-500">
+          assistant (streaming)
+        </div>
+        <div className="text-neutral-100">
+          <ChatMarkdown text={streamingText} />
+          <span className="ml-1 inline-block h-3 w-1.5 animate-pulse bg-neutral-300 align-text-bottom" />
+        </div>
+      </div>
+    );
+  }
+  if (activeTool === undefined && generatingToolCall !== undefined) {
+    return (
+      <ToolCallGenerationPlaceholder
+        toolCall={generatingToolCall}
+        onVisibleOrUpdate={onVisibleOrUpdate}
+      />
+    );
+  }
+  return <ActiveToolPlaceholder tool={activeTool} />;
 }
 
 /**
