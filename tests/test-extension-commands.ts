@@ -79,7 +79,8 @@ async function main(): Promise<void> {
 
   await mkdir(join(configDir, "extensions"), { recursive: true });
   await writeFile(
-    join(configDir, "extensions", "test-command.mjs"),
+    // The SDK discovers direct extension files with .js or .ts suffixes.
+    join(configDir, "extensions", "test-command.js"),
     [
       "export default function testCommand(pi) {",
       '  pi.registerCommand("test-command", {',
@@ -105,7 +106,14 @@ async function main(): Promise<void> {
   const registry = (await import(
     resolve(repoRoot, "packages/server/dist/session-registry.js")
   )) as unknown as {
-    getSession: (id: string) => { session: { _isAgentRunActive: boolean } } | undefined;
+    getSession: (id: string) =>
+      | {
+          session: {
+            _isAgentRunActive: boolean;
+            sessionManager: { appendMessage: (message: unknown) => string };
+          };
+        }
+      | undefined;
     disposeSession: (id: string) => Promise<boolean>;
   };
 
@@ -138,10 +146,15 @@ async function main(): Promise<void> {
       commands.status === 200,
       JSON.stringify(commands.body),
     );
-    assert("registered command name is listed without slash", testCommand !== undefined);
+    assert(
+      "registered command name is listed without slash",
+      testCommand !== undefined,
+      JSON.stringify(commands.body),
+    );
     assert(
       "registered command description is listed",
       testCommand?.description === "Set the session name from command arguments",
+      JSON.stringify(commands.body),
     );
 
     const sseController = new AbortController();
@@ -149,10 +162,13 @@ async function main(): Promise<void> {
       signal: sseController.signal,
     });
     assert("open SSE stream for extension rename → 200", stream.status === 200);
-    const renamedEvent = waitForSseEvent(
-      stream,
-      (event) => event.type === "session_renamed" && event.name === "extension:normal",
-    );
+    const renamedEvent =
+      stream.status === 200
+        ? waitForSseEvent(
+            stream,
+            (event) => event.type === "session_renamed" && event.name === "extension:normal",
+          )
+        : undefined;
 
     const invoke = await request(base, `/api/v1/sessions/${sessionId}/prompt`, {
       method: "POST",
@@ -164,19 +180,44 @@ async function main(): Promise<void> {
       invoke.status === 202,
       JSON.stringify(invoke.body),
     );
-    await new Promise((resolveFn) => setTimeout(resolveFn, 25));
-    const rename = await Promise.race([
-      renamedEvent,
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("timed out waiting for extension rename SSE")), 1_000),
-      ),
-    ]);
-    sseController.abort();
-    assert(
-      "extension session_info_changed reaches UI as session_renamed SSE",
-      rename.sessionId === sessionId && rename.name === "extension:normal",
-      JSON.stringify(rename),
-    );
+    let rename: Record<string, unknown> | undefined;
+    try {
+      if (invoke.status === 202 && renamedEvent !== undefined) {
+        await new Promise((resolveFn) => setTimeout(resolveFn, 25));
+        rename = await Promise.race([
+          renamedEvent,
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error("timed out waiting for extension rename SSE")),
+              1_000,
+            ),
+          ),
+        ]);
+      }
+    } catch (err) {
+      assert(
+        "extension session_info_changed reaches UI as session_renamed SSE",
+        false,
+        err instanceof Error ? err.message : String(err),
+      );
+    } finally {
+      // Always close the stream: Fastify.close() waits for open SSE clients.
+      sseController.abort();
+      await renamedEvent?.catch(() => undefined);
+    }
+    if (rename !== undefined) {
+      assert(
+        "extension session_info_changed reaches UI as session_renamed SSE",
+        rename.sessionId === sessionId && rename.name === "extension:normal",
+        JSON.stringify(rename),
+      );
+    } else {
+      assert(
+        "extension session_info_changed reaches UI as session_renamed SSE",
+        false,
+        "extension command request was not accepted or the SSE stream was unavailable",
+      );
+    }
     const afterNormal = await request(base, `/api/v1/sessions/${sessionId}`);
     assert(
       "normal prompt path invokes extension handler with args",
@@ -210,6 +251,30 @@ async function main(): Promise<void> {
       (afterStreaming.body as { name?: string }).name === "extension:streaming",
       JSON.stringify(afterStreaming.body),
     );
+
+    // The SDK deliberately defers JSONL creation until an assistant message
+    // exists. Add a minimal assistant fixture so this test can cover the
+    // route's cold-session resume path without an LLM or API key.
+    if (live !== undefined) {
+      live.session.sessionManager.appendMessage({
+        role: "assistant",
+        content: [{ type: "text", text: "test fixture", id: "stub-1" }],
+        api: "messages",
+        provider: "anthropic",
+        model: "test-fixture",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: Date.now(),
+      });
+    }
+    assert("persist session for cold command lookup", live !== undefined);
 
     const disposed = await registry.disposeSession(sessionId);
     assert("dispose session before cold command lookup", disposed);
