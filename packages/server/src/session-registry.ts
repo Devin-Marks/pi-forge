@@ -477,17 +477,17 @@ function makeSubscribeHandler(live: LiveSession): () => void {
     // enrichment, a context-overflow / 401 / 5xx ends up emitting an
     // `agent_end` with no detail, the chat UI hides its spinner with
     // no error banner, and the user sees an empty assistant message.
-    if (e.type === "session_info_changed") {
-      // Extensions rename sessions through pi.setSessionName(), which emits
-      // this SDK-only event. Translate it to the established forge-native
-      // UI frame so the sidebar updates without a REST refresh.
-      outboundEvent = {
-        type: "session_renamed",
-        sessionId: live.sessionId,
-        projectId: live.projectId,
-        name: typeof e.name === "string" ? e.name : undefined,
-      } as unknown as AgentSessionEvent;
-    }
+    // Preserve the SDK event for registry subscribers, while also emitting
+    // the forge-native frame that the SSE bridge exposes to the UI.
+    const renamedEvent =
+      e.type === "session_info_changed"
+        ? {
+            type: "session_renamed" as const,
+            sessionId: live.sessionId,
+            projectId: live.projectId,
+            name: typeof e.name === "string" ? e.name : undefined,
+          }
+        : undefined;
     if (e.type === "agent_end") {
       // Primary: session-level `errorMessage` — the SDK's
       // documented authoritative field. Most failure modes set
@@ -558,6 +558,15 @@ function makeSubscribeHandler(live: LiveSession): () => void {
         // Drop the client on send failure — Phase 5's SSE adapter will
         // also call disposeClient on its socket close hook.
         live.clients.delete(client);
+      }
+    }
+    if (renamedEvent !== undefined) {
+      for (const client of live.clients) {
+        try {
+          client.send(renamedEvent);
+        } catch {
+          live.clients.delete(client);
+        }
       }
     }
 
