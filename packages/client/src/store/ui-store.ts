@@ -68,6 +68,10 @@ interface UiState {
   /** Bump `promptsRefreshTrigger`. Called from PromptsTab after every
    *  global / project-scope toggle. */
   bumpPromptsRefresh: () => void;
+  /** Monotonic refresh trigger for the chat input's effective skill list. */
+  skillsRefreshTrigger: number;
+  /** Bump `skillsRefreshTrigger` after a Skills settings change. */
+  bumpSkillsRefresh: () => void;
   /**
    * Monotonic counters feeding the `seq` field on cross-component
    * requests. These NEVER reset on `clear*` — that's the whole point.
@@ -140,6 +144,10 @@ export const useUiStore = create<UiState>((set, get) => ({
   promptsRefreshTrigger: 0,
   bumpPromptsRefresh: () => {
     set((s) => ({ promptsRefreshTrigger: s.promptsRefreshTrigger + 1 }));
+  },
+  skillsRefreshTrigger: 0,
+  bumpSkillsRefresh: () => {
+    set((s) => ({ skillsRefreshTrigger: s.skillsRefreshTrigger + 1 }));
   },
   todoPanelOpen: (() => {
     try {
