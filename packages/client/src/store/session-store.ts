@@ -366,7 +366,16 @@ interface SessionState {
   consumePendingScroll: (sessionId: string) => number | undefined;
   /** Force the chat viewport to pin to the bottom for a user-originated entry. */
   requestScrollToBottom: (sessionId: string) => void;
-  sendPrompt: (sessionId: string, text: string, attachments?: File[]) => Promise<void>;
+  /**
+   * Send a prompt, optionally skipping the local user-message insert for an
+   * extension command that may finish without creating an agent turn.
+   */
+  sendPrompt: (
+    sessionId: string,
+    text: string,
+    attachments?: File[],
+    optimisticUserMessage?: boolean,
+  ) => Promise<void>;
   sendSteer: (sessionId: string, text: string, mode?: "steer" | "followUp") => Promise<void>;
   abortSession: (sessionId: string) => Promise<void>;
   disposeSession: (sessionId: string) => Promise<void>;
@@ -669,56 +678,54 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  sendPrompt: async (sessionId, text, attachments) => {
+  sendPrompt: async (sessionId, text, attachments, optimisticUserMessage = true) => {
     set((s) => ({
       error: undefined,
       bannerBySession: { ...s.bannerBySession, [sessionId]: undefined },
     }));
-    // Optimistically append the user message so the chat reflects the input
-    // immediately. If the server rejects (no API key, no model, etc.) the
-    // catch below rolls it back. If it accepts, the eventual messages
-    // refetch on agent_end will replace this with the canonical entry.
-    //
-    // For attachments, we render image thumbnails inline and chips for
-    // text files. The optimistic shape mirrors what the SDK produces
-    // for user messages with attachments — text content + image
-    // blocks — so the renderer doesn't have to special-case the
-    // pre-refetch state.
-    const optimisticContent: Record<string, unknown>[] = [{ type: "text", text }];
-    if (attachments !== undefined) {
-      for (const f of attachments) {
-        if (f.type.startsWith("image/")) {
-          // Use a blob URL for the optimistic preview — cheap to
-          // render and gets garbage-collected when the canonical
-          // refetch replaces this entry.
-          optimisticContent.push({
-            type: "image",
-            mimeType: f.type,
-            data: URL.createObjectURL(f),
-            // Mark this is a blob URL the renderer should treat as a
-            // direct src rather than re-prefixing with `data:...`.
-            __blobUrl: true,
-          });
-        } else {
-          optimisticContent.push({
-            type: "file",
-            filename: f.name,
-            size: f.size,
-          });
+    // Extension commands can finish without an agent turn or a canonical user
+    // message. Their caller disables this insert so the transcript never
+    // retains a phantom entry. Normal prompts keep the immediate feedback.
+    let optimistic: AgentMessageLike | undefined;
+    if (optimisticUserMessage) {
+      // If the server rejects (no API key, no model, etc.) the catch below
+      // rolls this back. On agent_end, the canonical refetch replaces it.
+      const optimisticContent: Record<string, unknown>[] = [{ type: "text", text }];
+      if (attachments !== undefined) {
+        for (const f of attachments) {
+          if (f.type.startsWith("image/")) {
+            // Use a blob URL for the optimistic preview — cheap to render and
+            // garbage-collected when the canonical refetch replaces it.
+            optimisticContent.push({
+              type: "image",
+              mimeType: f.type,
+              data: URL.createObjectURL(f),
+              // Mark this is a blob URL the renderer should treat as a direct
+              // src rather than re-prefixing with `data:...`.
+              __blobUrl: true,
+            });
+          } else {
+            optimisticContent.push({
+              type: "file",
+              filename: f.name,
+              size: f.size,
+            });
+          }
         }
       }
+      const optimisticMessage: AgentMessageLike = {
+        role: "user",
+        content: optimisticContent,
+        timestamp: Date.now(),
+      };
+      optimistic = optimisticMessage;
+      set((s) => ({
+        messagesBySession: {
+          ...s.messagesBySession,
+          [sessionId]: [...(s.messagesBySession[sessionId] ?? []), optimisticMessage],
+        },
+      }));
     }
-    const optimistic: AgentMessageLike = {
-      role: "user",
-      content: optimisticContent,
-      timestamp: Date.now(),
-    };
-    set((s) => ({
-      messagesBySession: {
-        ...s.messagesBySession,
-        [sessionId]: [...(s.messagesBySession[sessionId] ?? []), optimistic],
-      },
-    }));
     try {
       const opts: Parameters<typeof api.prompt>[2] = {};
       if (attachments !== undefined && attachments.length > 0) opts.attachments = attachments;
@@ -731,14 +738,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // Roll back the optimistic append on failure. Revoke any blob
       // URLs the optimistic message owns BEFORE we drop the
       // reference, otherwise they stay alive forever.
-      revokeOptimisticBlobUrls([optimistic]);
+      if (optimistic !== undefined) revokeOptimisticBlobUrls([optimistic]);
       set((s) => {
         const cur = s.messagesBySession[sessionId] ?? [];
         return {
-          messagesBySession: {
-            ...s.messagesBySession,
-            [sessionId]: cur.filter((m) => m !== optimistic),
-          },
+          messagesBySession:
+            optimistic === undefined
+              ? s.messagesBySession
+              : {
+                  ...s.messagesBySession,
+                  [sessionId]: cur.filter((m) => m !== optimistic),
+                },
           error: err instanceof ApiError ? err.code : (err as Error).message,
           bannerBySession: {
             ...s.bannerBySession,

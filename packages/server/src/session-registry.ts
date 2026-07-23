@@ -415,6 +415,7 @@ function makeSubscribeHandler(live: LiveSession): () => void {
       success?: boolean;
       finalError?: string;
       errorMessage?: string;
+      name?: string;
     };
 
     if (verbose) {
@@ -476,6 +477,17 @@ function makeSubscribeHandler(live: LiveSession): () => void {
     // enrichment, a context-overflow / 401 / 5xx ends up emitting an
     // `agent_end` with no detail, the chat UI hides its spinner with
     // no error banner, and the user sees an empty assistant message.
+    if (e.type === "session_info_changed") {
+      // Extensions rename sessions through pi.setSessionName(), which emits
+      // this SDK-only event. Translate it to the established forge-native
+      // UI frame so the sidebar updates without a REST refresh.
+      outboundEvent = {
+        type: "session_renamed",
+        sessionId: live.sessionId,
+        projectId: live.projectId,
+        name: typeof e.name === "string" ? e.name : undefined,
+      } as unknown as AgentSessionEvent;
+    }
     if (e.type === "agent_end") {
       // Primary: session-level `errorMessage` — the SDK's
       // documented authoritative field. Most failure modes set
@@ -764,6 +776,25 @@ export function getSession(sessionId: string): LiveSession | undefined {
 }
 
 /**
+ * Registered SDK extension commands for a live session. Command names omit
+ * the slash because that is the SDK's canonical invocation-name format.
+ */
+export interface ExtensionCommandSummary {
+  name: string;
+  description?: string;
+}
+
+export function listExtensionCommands(sessionId: string): ExtensionCommandSummary[] | undefined {
+  const live = registry.get(sessionId);
+  if (live === undefined) return undefined;
+  return live.session.extensionRunner.getRegisteredCommands().map((command) => {
+    const summary: ExtensionCommandSummary = { name: command.invocationName };
+    if (command.description !== undefined) summary.description = command.description;
+    return summary;
+  });
+}
+
+/**
  * Return the live sessions, optionally filtered by project. Order is the
  * registry's Map insertion order — caller is responsible for sorting if a
  * particular order is wanted. Use `listSessionsForProject` if you want a
@@ -808,19 +839,9 @@ export function maybeNameSessionFromFirstPrompt(
   }
 
   live.lastActivityAt = new Date();
-  const event = {
-    type: "session_renamed" as const,
-    sessionId: live.sessionId,
-    projectId: live.projectId,
-    name: title,
-  };
-  for (const client of live.clients) {
-    try {
-      client.send(event);
-    } catch {
-      live.clients.delete(client);
-    }
-  }
+  // setSessionName emits the SDK's session_info_changed event. The registry
+  // subscription translates that event into the UI's session_renamed SSE
+  // frame, which also covers extension-initiated renames.
   return title;
 }
 
