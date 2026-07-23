@@ -183,6 +183,9 @@ const ALLOWED_EVENT_TYPES = new Set<string>([
   // Forge-native per-session rename event. Used for deterministic first-
   // prompt names and manual/cross-tab-compatible sidebar updates.
   "session_renamed",
+  // SDK extension-command UI notifications are bridged by session-registry
+  // into the authenticated session stream.
+  "extension_ui_notification",
 ]);
 
 export function isAllowedEvent(event: { type: string }): boolean {

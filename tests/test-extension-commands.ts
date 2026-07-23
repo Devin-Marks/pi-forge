@@ -35,18 +35,21 @@ async function request(base: string, path: string, init?: RequestInit): Promise<
   return { status: res.status, body: text === "" ? undefined : JSON.parse(text) };
 }
 
-async function waitForSseEvent(
+async function waitForSseEvents(
   response: Response,
-  matches: (event: Record<string, unknown>) => boolean,
-): Promise<Record<string, unknown>> {
+  matches: ((event: Record<string, unknown>) => boolean)[],
+): Promise<Record<string, unknown>[]> {
   const reader = response.body?.getReader();
   if (reader === undefined) throw new Error("SSE response has no body");
   const decoder = new TextDecoder();
+  const found: (Record<string, unknown> | undefined)[] = [];
+  for (let i = 0; i < matches.length; i += 1) found.push(undefined);
+  let foundCount = 0;
   let pending = "";
   try {
     for (;;) {
       const { done, value } = await reader.read();
-      if (done) throw new Error("SSE stream ended before matching event");
+      if (done) throw new Error("SSE stream ended before matching events");
       pending += decoder.decode(value, { stream: true });
       for (;;) {
         const boundary = pending.indexOf("\n\n");
@@ -56,7 +59,16 @@ async function waitForSseEvent(
         const line = frame.split("\n").find((entry) => entry.startsWith("data: "));
         if (line === undefined) continue;
         const event = JSON.parse(line.slice("data: ".length)) as Record<string, unknown>;
-        if (matches(event)) return event;
+        for (let i = 0; i < matches.length; i += 1) {
+          const matcher = matches[i];
+          if (matcher !== undefined && found[i] === undefined && matcher(event)) {
+            found[i] = event;
+            foundCount += 1;
+          }
+        }
+        if (foundCount === matches.length) {
+          return found.filter((match): match is Record<string, unknown> => match !== undefined);
+        }
       }
     }
   } finally {
@@ -85,7 +97,9 @@ async function main(): Promise<void> {
       "export default function testCommand(pi) {",
       '  pi.registerCommand("test-command", {',
       '    description: "Set the session name from command arguments",',
-      "    handler: async (args) => {",
+      "    handler: async (args, ctx) => {",
+      '      await ctx.ui.confirm("Test dialog", "This dialog is intentionally unsupported in Pi Forge");',
+      '      ctx.ui.notify(`Command feedback: ${args}`, "info");',
       "      pi.setSessionName(`extension:${args}`);",
       "    },",
       "  });",
@@ -162,12 +176,19 @@ async function main(): Promise<void> {
       signal: sseController.signal,
     });
     assert("open SSE stream for extension rename → 200", stream.status === 200);
-    const renamedEvent =
+    const extensionEvents =
       stream.status === 200
-        ? waitForSseEvent(
-            stream,
+        ? waitForSseEvents(stream, [
+            (event) =>
+              event.type === "extension_ui_notification" &&
+              event.message ===
+                "This extension requested an interactive dialog, which Pi Forge does not support.",
+            (event) =>
+              event.type === "extension_ui_notification" &&
+              event.message === "Command feedback: normal" &&
+              event.level === "info",
             (event) => event.type === "session_renamed" && event.name === "extension:normal",
-          )
+          ])
         : undefined;
 
     const invoke = await request(base, `/api/v1/sessions/${sessionId}/prompt`, {
@@ -180,15 +201,15 @@ async function main(): Promise<void> {
       invoke.status === 202,
       JSON.stringify(invoke.body),
     );
-    let rename: Record<string, unknown> | undefined;
+    let receivedEvents: Record<string, unknown>[] | undefined;
     try {
-      if (invoke.status === 202 && renamedEvent !== undefined) {
+      if (invoke.status === 202 && extensionEvents !== undefined) {
         await new Promise((resolveFn) => setTimeout(resolveFn, 25));
-        rename = await Promise.race([
-          renamedEvent,
+        receivedEvents = await Promise.race([
+          extensionEvents,
           new Promise<never>((_, reject) =>
             setTimeout(
-              () => reject(new Error("timed out waiting for extension rename SSE")),
+              () => reject(new Error("timed out waiting for extension UI SSE events")),
               1_000,
             ),
           ),
@@ -196,28 +217,31 @@ async function main(): Promise<void> {
       }
     } catch (err) {
       assert(
-        "extension session_info_changed reaches UI as session_renamed SSE",
+        "extension UI feedback reaches the authenticated session SSE stream",
         false,
         err instanceof Error ? err.message : String(err),
       );
     } finally {
       // Always close the stream: Fastify.close() waits for open SSE clients.
       sseController.abort();
-      await renamedEvent?.catch(() => undefined);
+      await extensionEvents?.catch(() => undefined);
     }
-    if (rename !== undefined) {
-      assert(
-        "extension session_info_changed reaches UI as session_renamed SSE",
-        rename.sessionId === sessionId && rename.name === "extension:normal",
-        JSON.stringify(rename),
-      );
-    } else {
-      assert(
-        "extension session_info_changed reaches UI as session_renamed SSE",
-        false,
-        "extension command request was not accepted or the SSE stream was unavailable",
-      );
-    }
+    const [dialogFallback, notification, rename] = receivedEvents ?? [];
+    assert(
+      "unsupported extension dialog has a visible SSE fallback",
+      dialogFallback?.level === "warning",
+      JSON.stringify(dialogFallback),
+    );
+    assert(
+      "extension ctx.ui.notify reaches the authenticated session SSE stream",
+      notification?.sessionId === sessionId && notification?.message === "Command feedback: normal",
+      JSON.stringify(notification),
+    );
+    assert(
+      "extension session_info_changed reaches UI as session_renamed SSE",
+      rename?.sessionId === sessionId && rename?.name === "extension:normal",
+      JSON.stringify(rename),
+    );
     const afterNormal = await request(base, `/api/v1/sessions/${sessionId}`);
     assert(
       "normal prompt path invokes extension handler with args",

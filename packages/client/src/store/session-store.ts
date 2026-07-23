@@ -110,6 +110,11 @@ export interface ActiveTool {
   summary?: string;
 }
 
+export interface ExtensionUiNotification {
+  message: string;
+  level: "info" | "warning" | "error";
+}
+
 /**
  * Wire-shape of an SSE event from the bridge. `snapshot` carries the full
  * messages array on connect; everything else is an AgentSessionEvent
@@ -190,6 +195,8 @@ function removeSessionFromState(current: SessionState, sessionId: string): Parti
   delete nextStreaming[sessionId];
   const nextBanner = { ...current.bannerBySession };
   delete nextBanner[sessionId];
+  const nextExtensionNotifications = { ...current.extensionNotificationsBySession };
+  delete nextExtensionNotifications[sessionId];
   const nextStreamingText = { ...current.streamingTextBySession };
   delete nextStreamingText[sessionId];
   const nextActiveTool = { ...current.activeToolBySession };
@@ -214,6 +221,7 @@ function removeSessionFromState(current: SessionState, sessionId: string): Parti
     messagesBySession: nextMessages,
     streamingBySession: nextStreaming,
     bannerBySession: nextBanner,
+    extensionNotificationsBySession: nextExtensionNotifications,
     streamingTextBySession: nextStreamingText,
     activeToolBySession: nextActiveTool,
     toolCallGenerationBySession: nextToolCallGeneration,
@@ -256,6 +264,12 @@ interface SessionState {
   streamingBySession: Record<string, boolean>;
   /** Per-session last-known toolEvent + retry banners (lightly modelled). */
   bannerBySession: Record<string, string | undefined>;
+  /**
+   * Extension-command notifications awaiting display. This is deliberately
+   * separate from banners: banners represent current session state, whereas
+   * notifications are transient feedback that must be shown in order.
+   */
+  extensionNotificationsBySession: Record<string, ExtensionUiNotification[] | undefined>;
   /**
    * Live assistant text being streamed in by message_update events. Reset on
    * agent_start, accumulates deltas, cleared on agent_end (the authoritative
@@ -388,6 +402,13 @@ interface SessionState {
    * the banner reappears on the next event.
    */
   clearBanner: (sessionId: string) => void;
+  /** Add extension feedback without overwriting a state banner or earlier notification. */
+  enqueueExtensionUiNotification: (
+    sessionId: string,
+    notification: ExtensionUiNotification,
+  ) => void;
+  /** Dismiss the visible extension notification and advance its session queue. */
+  dismissExtensionUiNotification: (sessionId: string) => void;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -398,6 +419,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   pendingDraftBySession: {},
   streamingBySession: {},
   bannerBySession: {},
+  extensionNotificationsBySession: {},
   streamingTextBySession: {},
   activeToolBySession: {},
   toolCallGenerationBySession: {},
@@ -820,6 +842,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       bannerBySession: { ...s.bannerBySession, [sessionId]: undefined },
     }));
   },
+  enqueueExtensionUiNotification: (sessionId, notification) => {
+    set((s) => ({
+      extensionNotificationsBySession: {
+        ...s.extensionNotificationsBySession,
+        [sessionId]: [...(s.extensionNotificationsBySession[sessionId] ?? []), notification],
+      },
+    }));
+  },
+  dismissExtensionUiNotification: (sessionId) => {
+    set((s) => {
+      const notifications = s.extensionNotificationsBySession[sessionId] ?? [];
+      if (notifications.length === 0) return {};
+      const next = { ...s.extensionNotificationsBySession };
+      if (notifications.length === 1) delete next[sessionId];
+      else next[sessionId] = notifications.slice(1);
+      return { extensionNotificationsBySession: next };
+    });
+  },
 }));
 
 /**
@@ -1070,6 +1110,19 @@ function applyEvent(
     const name = typeof event.name === "string" ? event.name : undefined;
     set((s) => renameSessionInLists(s, renamedSessionId, name));
     postCrossTab({ type: "session_renamed", sessionId: renamedSessionId, name });
+    return;
+  }
+
+  if (event.type === "extension_ui_notification") {
+    const message = typeof event.message === "string" ? event.message.trim() : "";
+    if (message.length === 0) return;
+    const level =
+      event.level === "warning" || event.level === "error" || event.level === "info"
+        ? event.level
+        : "info";
+    // Notifications are independent from state banners. Consecutive extension
+    // calls must remain visible in arrival order, including dialog fallbacks.
+    get().enqueueExtensionUiNotification(sessionId, { message, level });
     return;
   }
 

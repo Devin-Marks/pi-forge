@@ -74,6 +74,7 @@ const ChatDiffViewContext = createContext<{
 });
 
 const CHAT_VIEW_TYPE_KEY = "forge.chat.viewType";
+const EXTENSION_NOTIFICATION_TIMEOUT_MS = 6_000;
 function readChatViewType(): ChatViewType {
   try {
     return localStorage.getItem(CHAT_VIEW_TYPE_KEY) === "split" ? "split" : "unified";
@@ -114,6 +115,13 @@ export function ChatView({ sessionId }: Props) {
   const generatingToolCall = useSessionStore((s) => s.toolCallGenerationBySession[sessionId]);
   const banner = useSessionStore((s) => s.bannerBySession[sessionId]);
   const clearBanner = useSessionStore((s) => s.clearBanner);
+  const extensionNotification = useSessionStore(
+    (s) => s.extensionNotificationsBySession[sessionId]?.[0],
+  );
+  const extensionNotificationCount = useSessionStore(
+    (s) => s.extensionNotificationsBySession[sessionId]?.length ?? 0,
+  );
+  const dismissExtensionUiNotification = useSessionStore((s) => s.dismissExtensionUiNotification);
   const queued = useSessionStore((s) => s.queuedBySession[sessionId]);
   const openStream = useSessionStore((s) => s.openStream);
   const closeStream = useSessionStore((s) => s.closeStream);
@@ -143,6 +151,15 @@ export function ChatView({ sessionId }: Props) {
       // ignore — choice still applies for this session
     }
   };
+
+  useEffect(() => {
+    if (extensionNotification === undefined) return;
+    const timer = window.setTimeout(
+      () => dismissExtensionUiNotification(sessionId),
+      EXTENSION_NOTIFICATION_TIMEOUT_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [dismissExtensionUiNotification, extensionNotification, sessionId]);
 
   // Phase 15 — session tree overlay. The button lives in a tiny
   // toolbar above the scroll container so it's always visible
@@ -440,6 +457,37 @@ export function ChatView({ sessionId }: Props) {
               className="-mr-1 shrink-0 rounded p-0.5 text-amber-300 hover:bg-amber-900/40 hover:text-amber-100 light:text-amber-700 light:hover:bg-amber-100 light:hover:text-amber-900"
               title="Dismiss"
               aria-label="Dismiss banner"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+        {extensionNotification !== undefined && (
+          <div
+            className={`flex items-start gap-2 border-b px-6 py-2 text-xs ${
+              extensionNotification.level === "error"
+                ? "border-red-700/40 bg-red-900/20 text-red-200 light:border-red-300 light:bg-red-50 light:text-red-800"
+                : extensionNotification.level === "warning"
+                  ? "border-amber-700/40 bg-amber-900/20 text-amber-200 light:border-amber-300 light:bg-amber-50 light:text-amber-800"
+                  : "border-sky-700/40 bg-sky-900/20 text-sky-200 light:border-sky-300 light:bg-sky-50 light:text-sky-800"
+            }`}
+            role="status"
+            aria-live="polite"
+          >
+            <div className="flex-1">
+              <span className="font-medium">Extension:</span> {extensionNotification.message}
+              {extensionNotificationCount > 1 && (
+                <span className="ml-2 text-neutral-400 light:text-neutral-600">
+                  ({extensionNotificationCount} pending)
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => dismissExtensionUiNotification(sessionId)}
+              className="-mr-1 shrink-0 rounded p-0.5 hover:bg-neutral-900/30 hover:text-white light:hover:bg-neutral-200"
+              title="Dismiss"
+              aria-label="Dismiss extension notification"
             >
               <X size={14} />
             </button>

@@ -322,6 +322,32 @@ UI action: show "Retrying in 4s..." banner with a countdown.
 
 UI action: hide retry banner.
 
+## Extension UI notifications
+
+### `extension_ui_notification`
+
+Sent when an extension command calls `ctx.ui.notify()`. Pi Forge also emits a
+warning notification when an extension requests an interactive dialog, which is
+not supported in the browser UI.
+
+```json
+{
+  "type": "extension_ui_notification",
+  "sessionId": "01J7...",
+  "message": "Command feedback: normal",
+  "level": "info"
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `message` | string | The extension-provided notification text. |
+| `level` | `"info" \| "warning" \| "error"` | Visual severity; defaults to `"info"`. |
+
+UI action: display each notification transiently in arrival order. These are
+separate from session-state banners, so multiple notifications are not lost
+when emitted consecutively.
+
 ## Ordering guarantees
 
 Within a single SSE connection:
