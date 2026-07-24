@@ -152,6 +152,7 @@ async function main(): Promise<void> {
   await mkdir(join(projectPath, "node_modules", "fake-pkg"), { recursive: true });
   await mkdir(join(projectPath, ".git", "objects"), { recursive: true });
   await mkdir(join(projectPath, "dist"), { recursive: true });
+  await mkdir(join(projectPath, "build"), { recursive: true });
   await fsWrite(join(projectPath, "src", "index.ts"), "export const x = 1;\n", "utf8");
   await fsWrite(join(projectPath, "src", "deep", "nested.txt"), "deep content\n", "utf8");
   await fsWrite(join(deepVisibleDir, "leaf.txt"), "visible deep leaf\n", "utf8");
@@ -159,6 +160,8 @@ async function main(): Promise<void> {
   await symlink(join("src", "index.ts"), join(projectPath, "linked-index.ts"));
   await fsWrite(join(projectPath, "node_modules", "fake-pkg", "index.js"), "module.exports={};\n");
   await fsWrite(join(projectPath, ".git", "HEAD"), "ref: refs/heads/main\n");
+  await fsWrite(join(projectPath, "dist", "output.js"), "export {};\n", "utf8");
+  await fsWrite(join(projectPath, "build", "output.js"), "export {};\n", "utf8");
   // A binary fixture (NUL-byte triggers binary detection).
   const bin = Buffer.concat([Buffer.from("PNG\0"), Buffer.alloc(16)]);
   await fsWrite(join(projectPath, "logo.png"), bin);
@@ -240,6 +243,7 @@ async function main(): Promise<void> {
       );
       assert("tree EXCLUDES .git", !paths.some((p) => p.startsWith("directory:.git")));
       assert("tree EXCLUDES dist", !paths.some((p) => p.startsWith("directory:dist")));
+      assert("tree EXCLUDES build", !paths.some((p) => p.startsWith("directory:build")));
       assert(
         "tree default depth includes level 7 leaf",
         paths.includes("file:d1/d2/d3/d4/d5/d6/d7/leaf.txt"),
@@ -251,6 +255,36 @@ async function main(): Promise<void> {
         !paths.includes(`file:${cappedParts.join("/")}/leaf.txt`),
       );
       assert("tree project_not_found → 404", true); // sanity: covered below
+    }
+    {
+      const r = await jget(
+        `${base}/api/v1/files/tree?projectId=${encodeURIComponent(projectId)}&includeExcluded=true`,
+        auth,
+      );
+      assert("GET /files/tree?includeExcluded=true → 200", r.status === 200);
+      const paths = flattenTree(r.body as TreeNode);
+      assert("tree includes excluded node_modules", paths.includes("directory:node_modules"));
+      assert("tree includes excluded .git", paths.includes("directory:.git"));
+      assert("tree includes excluded dist", paths.includes("directory:dist"));
+      assert("tree includes excluded dist contents", paths.includes("file:dist/output.js"));
+      assert("tree includes excluded build", paths.includes("directory:build"));
+      assert("tree includes excluded build contents", paths.includes("file:build/output.js"));
+    }
+    {
+      const r = await jget(
+        `${base}/api/v1/files/tree?projectId=${encodeURIComponent(projectId)}&includeExcluded=false`,
+        auth,
+      );
+      assert("GET /files/tree?includeExcluded=false → 200", r.status === 200);
+      const paths = flattenTree(r.body as TreeNode);
+      assert("tree with includeExcluded=false excludes dist", !paths.includes("directory:dist"));
+    }
+    {
+      const r = await jget(
+        `${base}/api/v1/files/tree?projectId=${encodeURIComponent(projectId)}&includeExcluded=yes`,
+        auth,
+      );
+      assert("GET /files/tree?includeExcluded=yes → 400", r.status === 400);
     }
     {
       const r = await jget(

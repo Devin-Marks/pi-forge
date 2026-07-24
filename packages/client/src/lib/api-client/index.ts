@@ -2614,9 +2614,10 @@ export const api = {
   },
 
   // ---------------- files ----------------
-  filesTree: (projectId: string, maxDepth?: number) => {
+  filesTree: (projectId: string, maxDepth?: number, includeExcluded = false) => {
     const qs = new URLSearchParams({ projectId });
     if (maxDepth !== undefined) qs.set("maxDepth", String(maxDepth));
+    if (includeExcluded) qs.set("includeExcluded", "true");
     return request(`/api/v1/files/tree?${qs.toString()}`, vFileTreeNode);
   },
   filesRead: (projectId: string, path: string) => {

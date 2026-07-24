@@ -302,14 +302,17 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  fastify.get<{ Querystring: { projectId: string; maxDepth?: string } }>(
+  fastify.get<{
+    Querystring: { projectId: string; maxDepth?: string; includeExcluded?: "true" | "false" };
+  }>(
     "/files/tree",
     {
       schema: {
         description:
-          "Recursive directory tree for the project. Skips noisy folders " +
+          "Recursive directory tree for the project. By default skips noisy folders " +
           "(node_modules, .git, dist, build, __pycache__, .next, .nuxt, " +
-          "coverage, .vite, .turbo, .cache). Recursion is capped at " +
+          "coverage, .vite, .turbo, .cache); includeExcluded=true shows all folders. " +
+          "Recursion is capped at " +
           "max depth 32 to avoid unbounded filesystem walks.",
         tags: ["files"],
         querystring: {
@@ -318,9 +321,10 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
           properties: {
             projectId: { type: "string", minLength: 1 },
             maxDepth: { type: "string", pattern: "^[0-9]+$" },
+            includeExcluded: { type: "string", enum: ["true", "false"] },
           },
         },
-        response: { 200: treeNodeSchema, 404: errorSchema, 500: errorSchema },
+        response: { 200: treeNodeSchema, 400: errorSchema, 404: errorSchema, 500: errorSchema },
       },
     },
     async (req, reply) => {
@@ -336,7 +340,10 @@ export const fileRoutes: FastifyPluginAsync = async (fastify) => {
           const n = Number.parseInt(req.query.maxDepth, 10);
           maxDepth = Math.min(Math.max(n, 1), 32);
         }
-        const tree = await getTree(project.path, maxDepth !== undefined ? { maxDepth } : {});
+        const tree = await getTree(project.path, {
+          ...(maxDepth !== undefined ? { maxDepth } : {}),
+          includeExcluded: req.query.includeExcluded === "true",
+        });
         return tree;
       } catch (err) {
         return mapError(reply, err);
