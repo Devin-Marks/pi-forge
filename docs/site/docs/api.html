@@ -472,14 +472,15 @@ curl -s -X PUT -H &quot;Authorization: Bearer $KEY&quot; -H &quot;Content-Type: 
 # Patch is shallow-merged; pass null to delete a key.
 </code></pre>
 <h3>Read / write models.json (custom providers)</h3>
-<pre><code class="language-bash"># GET returns the file with `apiKey` / `apiKeyCommand` REPLACED by
-# &quot;***REDACTED***&quot; so the raw secret never leaves the server. The
-# persisted file is unchanged; PUT takes the actual values.
+<pre><code class="language-bash"># GET returns the file with `apiKey` REPLACED by &quot;***REDACTED***&quot; so the
+# raw secret never leaves the server. SDK 0.80 command-valued apiKey strings
+# such as &quot;!op read ...&quot; are also redacted; legacy apiKeyCommand is migrated.
+# The persisted file is otherwise unchanged; PUT takes the actual values.
 curl -s -H &quot;Authorization: Bearer $KEY&quot; $BASE/api/v1/config/models
 
 curl -s -X PUT -H &quot;Authorization: Bearer $KEY&quot; -H &quot;Content-Type: application/json&quot; \
   $BASE/api/v1/config/models \
-  -d &#39;{&quot;providers&quot;:{&quot;vllm-local&quot;:{&quot;api&quot;:&quot;openai-completions&quot;,&quot;url&quot;:&quot;http://localhost:8000/v1&quot;,&quot;models&quot;:[...]}}}&#39;
+  -d &#39;{&quot;providers&quot;:{&quot;vllm-local&quot;:{&quot;api&quot;:&quot;openai-completions&quot;,&quot;baseUrl&quot;:&quot;http://localhost:8000/v1&quot;,&quot;apiKey&quot;:&quot;$VLLM_API_KEY&quot;,&quot;models&quot;:[...]}}}&#39;
 </code></pre>
 <h3>List / toggle skills</h3>
 <pre><code class="language-bash"># Merged skills (global from ~/.pi/agent/skills/ + project-local from

@@ -225,6 +225,11 @@ pi-forge:</p>
 <td>Shorter = smaller blast radius if a token leaks</td>
 </tr>
 <tr>
+<td><code>LOGIN_INACTIVITY_TIMEOUT_SECONDS</code></td>
+<td><code>3600</code> (1 h) for shared/kiosk browsers; default <code>0</code> disables idle expiry</td>
+<td>Logs out browser JWTs after no mutating authenticated requests for the configured interval; passive GET polling / SSE reconnects do not extend it</td>
+</tr>
+<tr>
 <td><code>RATE_LIMIT_LOGIN_MAX</code></td>
 <td>default <code>10</code> is fine</td>
 <td>Per-IP login attempts per minute</td>

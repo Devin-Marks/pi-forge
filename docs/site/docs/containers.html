@@ -268,7 +268,7 @@ when you need them.</p>
 </tr>
 <tr>
 <td><code>AGENT_TOOL_SANDBOX_CHOWN_PATHS</code></td>
-<td>unset by default; optional comma/whitespace list of existing non-secret paths that the root sandbox server recursively chowns to <code>AGENT_TOOL_UID:GID</code> on startup</td>
+<td>unset by default; optional comma/whitespace list of existing non-secret paths that the root sandbox server recursively prepares at startup: each path is owned by <code>AGENT_TOOL_UID</code> with the server process group (root group in this sandbox overlay) and group rwX bits</td>
 </tr>
 </tbody></table>
 <p>Set <code>UI_PASSWORD</code> and / or <code>API_KEY</code> in <code>.env</code> for any non-loopback
@@ -351,11 +351,13 @@ readable by the agent.</li>
 capabilities, and does not need <code>CHOWN</code>, <code>SETUID</code>, or <code>SETGID</code>. The optional
 <code>docker-compose.sandbox.yml</code> overlay starts as root and adds back
 only <code>CHOWN</code>, <code>SETUID</code>, and <code>SETGID</code>: <code>SETUID</code> / <code>SETGID</code> are required for
-the sandbox identity switch, and <code>CHOWN</code> is required so browser upload and
-new-file APIs can hand created workspace files/directories to <code>pi-tools</code>.
-<code>CHOWN</code> is also required when <code>AGENT_TOOL_SANDBOX_CHOWN_PATHS</code> is set;
-deployments that remove <code>CHOWN</code> must leave that env var unset or startup
-fails on the first chown. No privileged mode or host PID is needed.</li>
+the sandbox identity switch, and <code>CHOWN</code> is required for sandbox startup
+mount/workspace ownership preparation even when
+<code>AGENT_TOOL_SANDBOX_CHOWN_PATHS</code> is unset, and so browser upload and new-file
+APIs can hand created workspace files/directories to <code>pi-tools</code>. Setting that
+option adds further permitted paths to prepare at startup, so sandbox
+deployments that remove <code>CHOWN</code> fail on the first ownership change. No
+privileged mode or host PID is needed.</li>
 <li><strong>Secret mounts.</strong> Mount Pi config, forge data, LDAP/UI secret files,
 and cloud credentials so they are readable by the root server but not
 by <code>pi-tools</code> (for example mode <code>0600</code> root-owned files or <code>0700</code>

@@ -439,8 +439,8 @@ pi-forge app container starts.
 
 The app container must start as UID 0 so the server can drop tool children to
 `AGENT_TOOL_UID:GID`. `SETUID`/`SETGID` are required for that identity switch;
-`CHOWN` is additionally required only if `AGENT_TOOL_SANDBOX_CHOWN_PATHS` is set
-(otherwise startup fails on the chown step):
+`CHOWN` is also required because container startup performs mount-preparation
+`chown` operations even when `AGENT_TOOL_SANDBOX_CHOWN_PATHS` is unset:
 
 ```yaml
 securityContext:
@@ -466,7 +466,7 @@ env:
     value: "1001"
   - name: AGENT_TOOL_HOME
     value: /home/pi-tools
-  # Optional; requires CHOWN in the app container capabilities above.
+  # Optional; CHOWN remains required for standard mount preparation.
   - name: AGENT_TOOL_SANDBOX_CHOWN_PATHS
     value: ""
 ```
@@ -582,8 +582,9 @@ identity-switch behavior pi-forge needs:
 
 - UID 0 for the server container
 - `SETUID` and `SETGID` for the app container's sandbox UID/GID switch
-- `CHOWN` for browser-created workspace ownership handoff and the optional
-  `AGENT_TOOL_SANDBOX_CHOWN_PATHS` startup helper
+- `CHOWN` for container startup mount preparation, browser-created workspace
+  ownership handoff, and the optional `AGENT_TOOL_SANDBOX_CHOWN_PATHS` startup
+  helper
 - `CHOWN` and `FOWNER` for the initContainer's PVC permission bootstrap
 - no privileged mode
 - no host namespaces or host networking
@@ -697,10 +698,11 @@ Security trade-offs:
 - The SCC intentionally allows UID 0 in the container. Keep the grant scoped to
   only the pi-forge ServiceAccount.
 - `SETUID` and `SETGID` are required so the server can switch shell-like tool
-  surfaces to `AGENT_TOOL_UID:GID`; `CHOWN` lets the app hand browser-created
-  workspace files to the tool identity and is required when
-  `AGENT_TOOL_SANDBOX_CHOWN_PATHS` is configured. `CHOWN` and `FOWNER` are also
-  required by the initContainer that fixes PVC ownership/modes before startup.
+  surfaces to `AGENT_TOOL_UID:GID`; `CHOWN` lets the app prepare standard mounts
+  at container startup and hand browser-created workspace files to the tool
+  identity, even when `AGENT_TOOL_SANDBOX_CHOWN_PATHS` is unset. `CHOWN` and
+  `FOWNER` are also required by the initContainer that fixes PVC ownership/modes
+  before startup.
   Do not add broader capabilities unless your own storage or platform policy
   requires them.
 - `readOnlyRootFilesystem` is not forced by the SCC so operators can use
@@ -712,9 +714,9 @@ Security trade-offs:
 
 Use the Kubernetes initContainer permission commands above, plus either the
 `anyuid` RoleBinding or the custom SCC/RBAC resources. The custom SCC still
-needs UID 0 plus `SETUID`/`SETGID` for the app container and `CHOWN`/`FOWNER`
-for app startup chown support and the initContainer; it does not need privileged
-mode.
+needs UID 0 plus `SETUID`/`SETGID` for the app container, `CHOWN` for its
+startup mount preparation, and `CHOWN`/`FOWNER` for the initContainer; it does
+not need privileged mode.
 
 ## pi-subagents package disabled in sandbox mode
 

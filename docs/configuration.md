@@ -329,6 +329,54 @@ These files are **forge-private**, not pi-side state — pi has no native
 concept of per-project skill/tool toggles. Backups via Settings → Backup
 include them so a restore preserves per-project preferences.
 
+## Slash commands
+
+Start a chat-input draft with `/` to open the slash-command palette. It lists
+pi-forge commands, enabled prompt templates and skills for the active project,
+and commands registered by extensions on the active session. Type after `/` to
+filter; use the arrow keys or click to choose an entry. Selecting a pi-forge
+UI command executes it immediately and clears the input. Selecting a prompt
+template, skill, or extension command inserts its exact invocation and a
+trailing space, ready for arguments and Enter to submit.
+
+A registered extension command takes precedence over a pi-forge UI command
+with the same `/name`; submitting that name runs the extension handler. The
+exception is an exact invocation of an enabled skill (`/skill:<name>`): it
+always uses the validated skill flow, even if an extension registers the same
+name. A disabled or unknown skill name is not a skill invocation and follows
+the normal slash-command dispatch rules.
+
+### Skills
+
+Skills use the syntax `/skill:<name> [instructions]`. The palette exposes only
+effective skills, but invocation is validated again against the active project's
+configuration and the live session's loaded skills. It also runs the normal
+model/auth preflight before the SDK receives the native skill command.
+
+`[instructions]` is optional, free-form text; it may span multiple lines after
+the skill has been selected. Skills start a fresh agent run, not a mid-turn
+steer, and cannot run while the session is streaming. Wait for the active run
+to finish before submitting one.
+
+### Extension commands
+
+Local extensions and externally installed extension packages can register
+commands. Their session-specific entries appear in the same palette as
+`/<name>`. Submit `/name` or `/name <arguments>` to send the exact text through
+the normal session prompt flow. A literal space separates the name from
+arguments, following the SDK's space-delimited command grammar. A registered
+extension command bypasses model/auth preflight, may run while the agent is
+streaming, and is not converted into a steer message. This bypass applies only
+to a command that is registered on the live session; other prompt submissions
+use the normal prompt flow.
+
+An extension command may call `ctx.ui.notify()` to emit Markdown feedback in
+the chat timeline. Each notification remains there until dismissed during the
+current browser session; it is not persisted through reload. Multiple info,
+warning, and error messages remain independently visible. See
+[`sse-events.md`](./sse-events.md#extension-ui-notifications) for the event
+payload.
+
 ## MCP servers
 
 MCP server definitions and global MCP behavior settings live in

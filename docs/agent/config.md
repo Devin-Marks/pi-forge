@@ -36,9 +36,10 @@ reverse proxy that drops/reopens streams can keep a browser login alive forever.
 numeric `AGENT_TOOL_UID` and `AGENT_TOOL_GID`, sandbox shell surfaces receive
 `HOME=${AGENT_TOOL_HOME}` (default `/home/pi-tools`), and LDAP bind-password file
 references are rejected. `AGENT_TOOL_SANDBOX_CHOWN_PATHS` is a comma/whitespace
-list of existing non-secret paths that startup may recursively chown to the tool
-UID/GID; keep its allowed scope narrow. Keep sandbox env parsing in `config.ts`
-and the CLI surface in `cli.ts` together.
+list of existing non-secret paths that startup may recursively prepare with
+`AGENT_TOOL_UID` and the server process group (the root group in the documented
+container overlay), with group rwX bits; keep its allowed scope narrow. Keep
+sandbox env parsing in `config.ts` and the CLI surface in `cli.ts` together.
 
 ---
 

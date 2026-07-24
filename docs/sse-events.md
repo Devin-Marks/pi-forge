@@ -341,11 +341,13 @@ not supported in the browser UI.
 
 | Field | Type | Notes |
 |---|---|---|
-| `message` | string | The extension-provided notification text. |
+| `message` | string | The extension-provided Markdown text. |
 | `level` | `"info" \| "warning" \| "error"` | Visual severity; defaults to `"info"`. |
 
-UI action: display each notification transiently in arrival order. These are
-separate from session-state banners, so multiple notifications are not lost
+UI action: render each notification as Markdown in the chat timeline in arrival
+order. Notifications remain until the user dismisses them during the current
+browser session; they are not persisted through reload. They are separate from
+session-state banners, so multiple notifications stay independently visible
 when emitted consecutively.
 
 ## Ordering guarantees

@@ -143,9 +143,21 @@ const marked = new Marked({ gfm: true, breaks: false });
 
 // Add target=_blank to external links via a renderer override —
 // internal anchors (#section) and relative links shouldn't get it.
+// Keep repository Markdown links intact while emitting the Pages URL for
+// the extension-notification reference in the generated configuration page.
+const SITE_HREFS = new Map([
+  ["./sse-events.md#extension-ui-notifications", "./sse-events.html#extension-ui-notifications"],
+]);
+const SITE_HEADING_IDS = new Map([["Extension UI notifications", "extension-ui-notifications"]]);
+
 const renderer = {
+  heading(token) {
+    const id = SITE_HEADING_IDS.get(token.text);
+    const idAttr = id ? ` id="${id}"` : "";
+    return `<h${token.depth}${idAttr}>${this.parser.parseInline(token.tokens)}</h${token.depth}>\n`;
+  },
   link(token) {
-    const href = token.href;
+    const href = SITE_HREFS.get(token.href) ?? token.href;
     const text = this.parser.parseInline(token.tokens);
     const isExternal = /^https?:/i.test(href);
     const attrs = isExternal ? ` target="_blank" rel="noopener noreferrer"` : "";

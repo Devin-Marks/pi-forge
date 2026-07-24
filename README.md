@@ -128,6 +128,10 @@ For source builds and a development setup see
 - **Quick actions** — operator-defined chips in the chat toolbar
   that either run a shell command in the active project's cwd or
   insert/send a templated prompt to the active session.
+- **Skill and extension slash commands** — discover enabled skills and
+  registered local or external extension commands from the chat input's `/`
+  palette. Skills use the validated skill flow; extensions use their registered
+  prompt handlers and can leave dismissible Markdown feedback in the timeline.
 - **Provider management** — Anthropic / OpenAI / Google / OpenRouter built-in,
   plus custom OpenAI-compatible endpoints (vLLM, LiteLLM, Ollama, internal
   gateways) via `models.json`.
@@ -155,7 +159,7 @@ The full feature grid (with categories and screenshots) is on the
 - [Security model](./SECURITY.md) — threat model + vulnerability reporting
 
 **Configure & extend**
-- [Configuration & env vars](./docs/configuration.md) — every flag, env var, and pi config file
+- [Configuration & env vars](./docs/configuration.md) — every flag, env var, pi config file, and slash-command behavior
 - [MCP servers](./docs/mcp.md) — remote + stdio servers, per-project trust gate, per-tool toggles
 - [Webhooks](./docs/webhooks.md) — HTTPS POSTs on agent/session events, HMAC signing, retry
 - [Session orchestration](./docs/orchestration.md) — supervisor sessions that spawn and coordinate workers

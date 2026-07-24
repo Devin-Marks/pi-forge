@@ -158,6 +158,26 @@ or shell environment. The most-touched ones:</p>
 <td>HS256 signing key. Auto-generated and persisted to <code>${FORGE_DATA_DIR}/jwt-secret</code> (mode 0600) when <code>UI_PASSWORD</code>, LDAP auth, or <code>password-hash</code> is in play. Set explicitly (<code>openssl rand -hex 32</code>) to override; delete the file to rotate.</td>
 </tr>
 <tr>
+<td><code>JWT_EXPIRES_IN_SECONDS</code></td>
+<td><code>604800</code></td>
+<td>Absolute browser JWT lifetime (7 days by default). Equivalent CLI: <code>--jwt-expires-in-seconds</code>.</td>
+</tr>
+<tr>
+<td><code>LOGIN_INACTIVITY_TIMEOUT_SECONDS</code></td>
+<td><code>0</code></td>
+<td>Optional idle timeout for browser JWTs. <code>0</code> disables inactivity expiry; a positive value logs out browser sessions after that many seconds without mutating authenticated requests. Passive GETs such as SSE reconnects and status polling do not extend the idle window. Equivalent CLI: <code>--login-inactivity-timeout-seconds</code>.</td>
+</tr>
+<tr>
+<td><code>LOGIN_ATTEMPT_LIMIT_MAX</code></td>
+<td><code>10</code></td>
+<td>Failed browser login attempts allowed before pi-forge temporarily locks that login identity. Equivalent CLI: <code>--login-attempt-limit-max</code>.</td>
+</tr>
+<tr>
+<td><code>LOGIN_LOCKOUT_MS</code></td>
+<td><code>300000</code></td>
+<td>Browser login lockout duration after too many failed attempts (5 minutes by default). Lockout state is in-memory and clears on server restart. Equivalent CLI: <code>--login-lockout-ms</code>.</td>
+</tr>
+<tr>
 <td><code>LDAP_ENABLED</code></td>
 <td><code>false</code></td>
 <td>Enables LDAP username/password browser login. Requires the LDAP variables below.</td>
@@ -228,9 +248,34 @@ or shell environment. The most-touched ones:</p>
 <td>When true, renders <code>AUTH_BANNER_TEXT</code> as sanitized HTML instead of plain text. Scripts, styles, event handlers, and unsafe links are stripped client-side. Leave false unless you need links or simple formatting.</td>
 </tr>
 <tr>
+<td><code>LOGO_URL_MODE</code></td>
+<td><code>cache</code></td>
+<td>Logo URL handling mode. <code>cache</code> fetches configured logo URLs at server startup into <code>FORGE_DATA_DIR/cache/logos/</code> and returns same-origin <code>/cache/logos/...</code> URLs. <code>direct</code> returns configured raw URLs so the browser loads them directly. Accepted values: <code>cache</code>, <code>direct</code>.</td>
+</tr>
+<tr>
+<td><code>LOGO_IMG_SRC_ALLOWLIST</code></td>
+<td>(unset)</td>
+<td>Extra Content-Security-Policy <code>img-src</code> sources for <code>LOGO_URL_MODE=direct</code>, comma- or whitespace-separated. Entries must be exact <code>http(s)</code> origins such as <code>https://cdn.example.com</code>, scheme sources such as <code>https:</code>, or explicit <code>*</code>. The configured logo URL origins are added automatically; use this only for known redirect/CDN origins.</td>
+</tr>
+<tr>
+<td><code>AUTH_URL_LOGO</code></td>
+<td>(unset)</td>
+<td>Optional absolute <code>http://</code> or <code>https://</code> URL for the login/auth logo. In <code>cache</code> mode, failed fetch/validation falls back to the built-in logo. In <code>direct</code> mode, the raw URL is returned without server fetch validation and browser/CSP/network behavior applies.</td>
+</tr>
+<tr>
 <td><code>AUTH_LOGO_URL</code></td>
 <td>(unset)</td>
-<td>Optional absolute <code>http://</code> or <code>https://</code> URL for the login/auth logo (and app header logo). Exposed as public UI config.</td>
+<td>Legacy alias for <code>AUTH_URL_LOGO</code>.</td>
+</tr>
+<tr>
+<td><code>APP_LOGO_DARK_URL</code></td>
+<td>(unset)</td>
+<td>Optional absolute <code>http://</code> or <code>https://</code> URL for the app header logo in dark-mode themes. Follows <code>LOGO_URL_MODE</code>; invalid or unreachable URLs fall back only in <code>cache</code> mode.</td>
+</tr>
+<tr>
+<td><code>APP_LOGO_LIGHT_URL</code></td>
+<td>(unset)</td>
+<td>Optional absolute <code>http://</code> or <code>https://</code> URL for the app header logo in light-mode themes. Follows <code>LOGO_URL_MODE</code>; invalid or unreachable URLs fall back only in <code>cache</code> mode.</td>
 </tr>
 <tr>
 <td><code>AUTH_COLOR_SCHEME</code></td>
@@ -280,9 +325,27 @@ or shell environment. The most-touched ones:</p>
 <tr>
 <td><code>AGENT_TOOL_SANDBOX_CHOWN_PATHS</code></td>
 <td>(empty)</td>
-<td>Comma- or whitespace-separated existing paths to recursively <code>chown</code> to <code>AGENT_TOOL_UID:AGENT_TOOL_GID</code> at server startup when sandbox mode is enabled. Paths are limited to <code>/workspace</code>, <code>AGENT_TOOL_HOME</code>, and non-secret Pi resource subtrees (<code>skills</code>, <code>npm</code>, <code>git</code>, <code>extensions</code>, <code>prompts</code>, <code>themes</code>).</td>
+<td>Optional comma- or whitespace-separated existing extra paths to recursively prepare for sandbox sharing at server startup when sandbox mode is enabled. <code>WORKSPACE_PATH</code> is always prepared automatically. Prepared paths are owned by <code>AGENT_TOOL_UID</code> with the server&#39;s group and group rwX bits so both the sandbox tool identity and root server without <code>DAC_OVERRIDE</code> can access them. Extra paths are limited to <code>WORKSPACE_PATH</code>, <code>AGENT_TOOL_HOME</code>, and non-secret Pi resource subtrees (<code>skills</code>, <code>npm</code>, <code>git</code>, <code>extensions</code>, <code>prompts</code>, <code>themes</code>).</td>
 </tr>
 </tbody></table>
+<p>Logo URL mode examples:</p>
+<pre><code class="language-bash"># Default: server fetches logos once at startup and serves /cache/logos/... same-origin.
+AUTH_URL_LOGO=https://assets.example.com/pi-forge-auth.svg \
+APP_LOGO_DARK_URL=https://assets.example.com/pi-forge-dark.svg \
+pi-forge
+
+# Direct: browser loads the raw configured URLs. Their origins are added to img-src automatically.
+LOGO_URL_MODE=direct \
+AUTH_URL_LOGO=https://assets.example.com/pi-forge-auth.svg \
+APP_LOGO_DARK_URL=https://assets.example.com/pi-forge-dark.svg \
+pi-forge
+
+# If a direct logo URL redirects to another trusted CDN origin, allow it explicitly.
+LOGO_URL_MODE=direct \
+LOGO_IMG_SRC_ALLOWLIST=https://cdn.example.net \
+AUTH_URL_LOGO=https://assets.example.com/pi-forge-auth.svg \
+pi-forge
+</code></pre>
 <p>Production-tuning knobs (rate limits, JWT lifetime, TLS / proxy posture)
 are documented in <a href="./deployment.md"><code>deployment.md</code></a>.</p>
 <h3>Agent tool identity sandbox</h3>
@@ -375,7 +438,8 @@ internal proxy.</p>
   &quot;providers&quot;: {
     &quot;vllm-local&quot;: {
       &quot;api&quot;: &quot;openai-completions&quot;,
-      &quot;url&quot;: &quot;http://localhost:8000/v1&quot;,
+      &quot;baseUrl&quot;: &quot;http://localhost:8000/v1&quot;,
+      &quot;apiKey&quot;: &quot;$VLLM_API_KEY&quot;,
       &quot;models&quot;: [
         {
           &quot;id&quot;: &quot;Qwen/Qwen2.5-Coder-32B-Instruct&quot;,
@@ -391,6 +455,13 @@ internal proxy.</p>
   }
 }
 </code></pre>
+<p><code>apiKey</code> is optional when credentials come from <code>auth.json</code>, <code>/login</code>, or a
+runtime environment supported by the SDK. In SDK 0.80+, this single field also
+supports value resolution: use <code>$ENV_VAR</code> / <code>${ENV_VAR}</code> for environment
+interpolation or prefix a command with <code>!</code>, for example
+<code>&quot;apiKey&quot;: &quot;!op read &#39;op://vault/item/credential&#39;&quot;</code>. Older pi-forge
+<code>apiKeyCommand</code> entries are migrated automatically to this <code>apiKey</code> command
+syntax on the next config read/write or session start.</p>
 <p><strong>Per-model fields:</strong></p>
 <table>
 <thead>
@@ -527,11 +598,52 @@ input&#39;s slash palette without a project switch (cross-tab signal via
 <p>These files are <strong>forge-private</strong>, not pi-side state — pi has no native
 concept of per-project skill/tool toggles. Backups via Settings → Backup
 include them so a restore preserves per-project preferences.</p>
+<h2>Slash commands</h2>
+<p>Start a chat-input draft with <code>/</code> to open the slash-command palette. It lists
+pi-forge commands, enabled prompt templates and skills for the active project,
+and commands registered by extensions on the active session. Type after <code>/</code> to
+filter; use the arrow keys or click to choose an entry. Selecting a pi-forge
+UI command executes it immediately and clears the input. Selecting a prompt
+template, skill, or extension command inserts its exact invocation and a
+trailing space, ready for arguments and Enter to submit.</p>
+<p>A registered extension command takes precedence over a pi-forge UI command
+with the same <code>/name</code>; submitting that name runs the extension handler. The
+exception is an exact invocation of an enabled skill (<code>/skill:&lt;name&gt;</code>): it
+always uses the validated skill flow, even if an extension registers the same
+name. A disabled or unknown skill name is not a skill invocation and follows
+the normal slash-command dispatch rules.</p>
+<h3>Skills</h3>
+<p>Skills use the syntax <code>/skill:&lt;name&gt; [instructions]</code>. The palette exposes only
+effective skills, but invocation is validated again against the active project&#39;s
+configuration and the live session&#39;s loaded skills. It also runs the normal
+model/auth preflight before the SDK receives the native skill command.</p>
+<p><code>[instructions]</code> is optional, free-form text; it may span multiple lines after
+the skill has been selected. Skills start a fresh agent run, not a mid-turn
+steer, and cannot run while the session is streaming. Wait for the active run
+to finish before submitting one.</p>
+<h3>Extension commands</h3>
+<p>Local extensions and externally installed extension packages can register
+commands. Their session-specific entries appear in the same palette as
+<code>/&lt;name&gt;</code>. Submit <code>/name</code> or <code>/name &lt;arguments&gt;</code> to send the exact text through
+the normal session prompt flow. A literal space separates the name from
+arguments, following the SDK&#39;s space-delimited command grammar. A registered
+extension command bypasses model/auth preflight, may run while the agent is
+streaming, and is not converted into a steer message. This bypass applies only
+to a command that is registered on the live session; other prompt submissions
+use the normal prompt flow.</p>
+<p>An extension command may call <code>ctx.ui.notify()</code> to emit Markdown feedback in
+the chat timeline. Each notification remains there until dismissed during the
+current browser session; it is not persisted through reload. Multiple info,
+warning, and error messages remain independently visible. See
+<a href="./sse-events.html#extension-ui-notifications"><code>sse-events.md</code></a> for the event
+payload.</p>
 <h2>MCP servers</h2>
-<p>MCP server definitions live in <code>${FORGE_DATA_DIR}/mcp.json</code> (global)
-and <code>&lt;project&gt;/.mcp.json</code> (project-scoped). Manage via <strong>Settings →
-MCP</strong> or edit the files directly. See <a href="./mcp.md"><code>mcp.md</code></a> for the
-field reference, transport options, auth model, and troubleshooting.</p>
+<p>MCP server definitions and global MCP behavior settings live in
+<code>${FORGE_DATA_DIR}/mcp.json</code> (global). Project-scoped server definitions
+live in <code>&lt;project&gt;/.mcp.json</code>. Manage global entries and MCP result
+truncation via <strong>Settings → MCP</strong> or edit the files directly. See
+<a href="./mcp.md"><code>mcp.md</code></a> for the field reference, transport options, auth
+model, truncation semantics, and troubleshooting.</p>
 <h2>Pi plugins</h2>
 <p>The pi CLI installs community plugins with <code>pi install npm:&lt;package&gt;</code>.
 Plugin sources land under <code>${PI_CONFIG_DIR}/packages/&lt;name&gt;</code> and
