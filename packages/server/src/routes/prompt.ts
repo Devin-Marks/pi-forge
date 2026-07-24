@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { ConversionError, convertAttachment, pickConverter } from "../attachment-converters.js";
 import { config } from "../config.js";
-import { syncStoredApiKeyToRuntime } from "../config-manager.js";
+import { listSkills, syncStoredApiKeyToRuntime } from "../config-manager.js";
 import { formatErrorChain } from "../diagnostics.js";
 import { expandFileReferences, languageHintForPath } from "../file-references.js";
 import {
@@ -299,7 +299,7 @@ function composePromptText(parsed: ParsedMultipart): string {
  * sends are awaited for clean ordering of any onSend hooks (security
  * headers etc.) before the route handler proceeds.
  */
-async function preflight(
+async function requireLiveSession(
   req: FastifyRequest,
   reply: FastifyReply,
 ): Promise<LiveSession | undefined> {
@@ -344,6 +344,15 @@ async function preflight(
       .send({ error: "session_not_found", message: "no live session with that id" });
     return undefined;
   }
+  return live;
+}
+
+async function preflight(
+  req: FastifyRequest,
+  reply: FastifyReply,
+): Promise<LiveSession | undefined> {
+  const live = await requireLiveSession(req, reply);
+  if (live === undefined) return undefined;
   const model = live.session.model;
   if (model === undefined) {
     await reply.code(400).send({
@@ -609,6 +618,139 @@ export const promptRoutes: FastifyPluginAsync = async (fastify) => {
             ? { accepted: true, sessionName: generatedSessionName }
             : { accepted: true },
         );
+    },
+  );
+
+  fastify.post<{
+    Params: { id: string };
+    Body: { name: string; instructions?: string };
+  }>(
+    "/sessions/:id/skill",
+    {
+      config: {
+        rateLimit: {
+          max: config.rateLimits.promptMax,
+          timeWindow: config.rateLimits.promptWindowMs,
+        },
+      },
+      schema: {
+        description:
+          "Invoke an enabled skill already available to this live session. Returns 202 immediately; " +
+          "the expanded skill runs through the normal session prompt and streams over GET /sessions/:id/stream.",
+        tags: ["sessions"],
+        params: {
+          type: "object",
+          required: ["id"],
+          properties: { id: { type: "string" } },
+        },
+        body: {
+          type: "object",
+          required: ["name"],
+          additionalProperties: false,
+          properties: {
+            name: { type: "string", minLength: 1 },
+            instructions: { type: "string" },
+          },
+        },
+        response: {
+          202: {
+            type: "object",
+            required: ["accepted"],
+            properties: { accepted: { type: "boolean", const: true } },
+          },
+          400: errorSchema,
+          404: errorSchema,
+          409: errorSchema,
+          500: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const live = await preflight(req, reply);
+      if (live === undefined) return reply;
+
+      // Validate against both views deliberately. `listSkills` tells us whether
+      // the skill is known and currently effective for this project, while the
+      // live resource loader is the authority for what THIS session loaded at
+      // creation/resume time. A skill can be enabled after a session starts,
+      // but the SDK will not make it available until a fresh session loads it.
+      let configuredSkills: Awaited<ReturnType<typeof listSkills>>["skills"];
+      try {
+        configuredSkills = (await listSkills(live.workspacePath, live.projectId)).skills;
+      } catch (err) {
+        reply.log.error({ err }, "skill invocation validation failed");
+        return reply.code(500).send({ error: "internal_error" });
+      }
+      const skill = configuredSkills.find((candidate) => candidate.name === req.body.name);
+      if (skill === undefined) {
+        return reply.code(404).send({
+          error: "skill_not_found",
+          message: `No skill named "${req.body.name}" is configured for this project.`,
+        });
+      }
+      if (!skill.effective) {
+        return reply.code(409).send({
+          error: "skill_not_effective",
+          message: `Skill "${req.body.name}" is disabled for this project.`,
+        });
+      }
+      if (
+        !live.session.resourceLoader
+          .getSkills()
+          .skills.some((candidate) => candidate.name === skill.name)
+      ) {
+        return reply.code(409).send({
+          error: "skill_unavailable_in_session",
+          message: `Skill "${req.body.name}" is not available to this live session. Start a new session after enabling or adding it.`,
+        });
+      }
+
+      // A skill starts a fresh SDK prompt rather than steering the current
+      // turn. Check immediately before calling the SDK because listSkills()
+      // above awaits and another request may have started a turn meanwhile.
+      // Letting the SDK reject later would hit the generic failure handler and
+      // falsely end that live turn.
+      if (live.session.isStreaming) {
+        return reply.code(409).send({
+          error: "session_streaming",
+          message: "Cannot invoke a skill while the session is streaming.",
+        });
+      }
+
+      // SDK 0.80.10 has no AgentSession.skill API. Its native slash-command
+      // expansion lives inside prompt(), so feed it the exact command form.
+      const skillPrompt = `/skill:${skill.name}${req.body.instructions ? ` ${req.body.instructions}` : ""}`;
+      try {
+        live.session.prompt(skillPrompt).catch((err: unknown) => {
+          const f = formatErrorChain(err);
+          process.stderr.write(
+            `${JSON.stringify({
+              level: "warn",
+              time: new Date().toISOString(),
+              msg: "session skill prompt rejected",
+              sessionId: req.params.id,
+              skill: skill.name,
+              error: f.message,
+              chain: f.chain,
+              stack: f.stack,
+            })}\n`,
+          );
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          for (const client of live.clients) {
+            try {
+              client.send({ type: "agent_end", sessionId: req.params.id, errorMessage });
+            } catch {
+              // A single client send-failure should not stop fan-out.
+            }
+          }
+        });
+      } catch (err) {
+        reply.log.warn(
+          { err: err instanceof Error ? err.message : String(err), sessionId: req.params.id },
+          "session skill prompt threw synchronously",
+        );
+      }
+      return reply.code(202).send({ accepted: true });
     },
   );
 };

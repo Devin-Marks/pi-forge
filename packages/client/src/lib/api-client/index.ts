@@ -1884,6 +1884,14 @@ export const api = {
     if (opts?.streamingBehavior !== undefined) body.streamingBehavior = opts.streamingBehavior;
     return request(path, vAccepted, { method: "POST", body });
   },
+  invokeSkill: (id: string, name: string, instructions?: string) => {
+    const body: Record<string, unknown> = { name };
+    if (instructions !== undefined) body.instructions = instructions;
+    return request(`/api/v1/sessions/${encodeURIComponent(id)}/skill`, vAccepted, {
+      method: "POST",
+      body,
+    });
+  },
   steer: (id: string, text: string, mode?: "steer" | "followUp") => {
     const body: Record<string, unknown> = { text };
     if (mode !== undefined) body.mode = mode;
