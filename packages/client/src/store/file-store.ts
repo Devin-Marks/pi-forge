@@ -62,6 +62,15 @@ export interface OpenFile {
  * project's files into view.
  */
 const TABS_KEY_PREFIX = "forge.editor.tabs.v1:";
+const SHOW_EXCLUDED_TREE_ENTRIES_KEY = "pi-forge/files-show-excluded";
+
+function readShowExcludedTreeEntries(): boolean {
+  try {
+    return localStorage.getItem(SHOW_EXCLUDED_TREE_ENTRIES_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
 
 interface PersistedTabs {
   paths: string[];
@@ -104,6 +113,9 @@ interface FileState {
   treeByProject: Record<string, FileTreeNode | undefined>;
   /** Loading flag per project so the panel can spinner during refreshes. */
   treeLoading: Record<string, boolean>;
+  /** Whether the Files tree includes directories normally excluded as noisy output. */
+  showExcludedTreeEntries: boolean;
+  setShowExcludedTreeEntries: (show: boolean) => void;
   /** Open editor tabs, in user-visible order. */
   openFiles: OpenFile[];
   /** Path of the currently-active tab. */
@@ -256,6 +268,15 @@ function persist(
 export const useFileStore = create<FileState>((set, get) => ({
   treeByProject: {},
   treeLoading: {},
+  showExcludedTreeEntries: readShowExcludedTreeEntries(),
+  setShowExcludedTreeEntries: (show) => {
+    try {
+      localStorage.setItem(SHOW_EXCLUDED_TREE_ENTRIES_KEY, String(show));
+    } catch {
+      // Keep the in-memory preference if browser storage is unavailable.
+    }
+    set({ showExcludedTreeEntries: show });
+  },
   openFiles: [],
   activePath: undefined,
   error: undefined,
@@ -282,14 +303,19 @@ export const useFileStore = create<FileState>((set, get) => ({
   },
 
   loadTree: async (projectId) => {
+    const includeExcluded = get().showExcludedTreeEntries;
     set((s) => ({ treeLoading: { ...s.treeLoading, [projectId]: true }, error: undefined }));
     try {
-      const tree = await api.filesTree(projectId);
+      const tree = await api.filesTree(projectId, undefined, includeExcluded);
+      // A newer toggle state triggers its own request. Do not let this
+      // older response replace the tree with the wrong visibility mode.
+      if (get().showExcludedTreeEntries !== includeExcluded) return;
       set((s) => ({
         treeByProject: { ...s.treeByProject, [projectId]: tree },
         treeLoading: { ...s.treeLoading, [projectId]: false },
       }));
     } catch (err) {
+      if (get().showExcludedTreeEntries !== includeExcluded) return;
       set((s) => ({
         treeLoading: { ...s.treeLoading, [projectId]: false },
         error: err instanceof ApiError ? err.code : (err as Error).message,

@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  Eye,
   FilePlus2,
   FolderPlus,
   Loader2,
@@ -57,6 +58,8 @@ export function FileBrowserPanel() {
   );
   const error = useFileStore((s) => s.error);
   const loadTree = useFileStore((s) => s.loadTree);
+  const showExcludedTreeEntries = useFileStore((s) => s.showExcludedTreeEntries);
+  const setShowExcludedTreeEntries = useFileStore((s) => s.setShowExcludedTreeEntries);
   const openFile = useFileStore((s) => s.openFile);
   const createFile = useFileStore((s) => s.createFile);
   const createFolder = useFileStore((s) => s.createFolder);
@@ -106,8 +109,7 @@ export function FileBrowserPanel() {
 
   useEffect(() => {
     if (project !== undefined) void loadTree(project.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.id, loadTree]);
+  }, [project?.id, showExcludedTreeEntries, loadTree]);
 
   if (project === undefined) {
     return (
@@ -438,6 +440,25 @@ export function FileBrowserPanel() {
             title="Download project as .tar.gz (skips node_modules, .git, dist, etc.)"
           >
             <Download size={14} />
+          </button>
+          <button
+            onClick={() => setShowExcludedTreeEntries(!showExcludedTreeEntries)}
+            className={`rounded p-1 hover:bg-neutral-800 hover:text-neutral-200 ${
+              showExcludedTreeEntries ? "bg-neutral-800 text-sky-300" : "text-neutral-400"
+            }`}
+            title={
+              showExcludedTreeEntries
+                ? "Hide normally excluded files and folders"
+                : "Show all files and folders"
+            }
+            aria-label={
+              showExcludedTreeEntries
+                ? "Hide normally excluded files and folders"
+                : "Show all files and folders"
+            }
+            aria-pressed={showExcludedTreeEntries}
+          >
+            <Eye size={14} />
           </button>
           <button
             onClick={() => void loadTree(project.id)}

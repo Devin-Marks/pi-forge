@@ -311,6 +311,8 @@ export interface TreeNode {
 
 export interface GetTreeOptions {
   maxDepth?: number;
+  /** Include directories normally omitted from the Files tree. */
+  includeExcluded?: boolean;
 }
 
 export async function getTree(rootPath: string, opts: GetTreeOptions = {}): Promise<TreeNode> {
@@ -322,7 +324,7 @@ export async function getTree(rootPath: string, opts: GetTreeOptions = {}): Prom
     throw new NotFoundError(root);
   }
   const maxDepth = opts.maxDepth ?? DEFAULT_TREE_DEPTH;
-  return walk(root, root, "", 0, maxDepth);
+  return walk(root, root, "", 0, maxDepth, opts.includeExcluded ?? false);
 }
 
 async function walk(
@@ -331,6 +333,7 @@ async function walk(
   relPath: string,
   depth: number,
   maxDepth: number,
+  includeExcluded: boolean,
 ): Promise<TreeNode> {
   const name = relPath === "" ? "" : (relPath.split(sep).pop() ?? "");
   const node: TreeNode = {
@@ -362,11 +365,11 @@ async function walk(
     return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
   });
   for (const ent of entries) {
-    if (ent.isDirectory() && TREE_SKIP_DIRS.has(ent.name)) continue;
+    if (!includeExcluded && ent.isDirectory() && TREE_SKIP_DIRS.has(ent.name)) continue;
     const childRel = relPath === "" ? ent.name : `${relPath}${sep}${ent.name}`;
     const childAbs = join(dir, ent.name);
     if (ent.isDirectory()) {
-      const sub = await walk(childAbs, root, childRel, depth + 1, maxDepth);
+      const sub = await walk(childAbs, root, childRel, depth + 1, maxDepth, includeExcluded);
       node.children?.push(sub);
     } else if (ent.isFile()) {
       node.children?.push({
@@ -377,8 +380,8 @@ async function walk(
     } else if (ent.isSymbolicLink()) {
       const linked = await safeLinkedStat(childAbs, root).catch(() => undefined);
       if (linked?.isDirectory()) {
-        if (TREE_SKIP_DIRS.has(ent.name)) continue;
-        const sub = await walk(childAbs, root, childRel, depth + 1, maxDepth);
+        if (!includeExcluded && TREE_SKIP_DIRS.has(ent.name)) continue;
+        const sub = await walk(childAbs, root, childRel, depth + 1, maxDepth, includeExcluded);
         node.children?.push(sub);
       } else if (linked?.isFile()) {
         node.children?.push({
