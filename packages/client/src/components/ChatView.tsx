@@ -92,7 +92,6 @@ interface Props {
 
 type TransientChatTimelineItem =
   | { kind: "extension"; notification: ExtensionUiNotification; position: ChatTimelinePosition }
-  | { kind: "streaming"; position: ChatTimelinePosition }
   | {
       kind: "queued";
       queued: { steering: string[]; followUp: string[] };
@@ -137,9 +136,6 @@ export function ChatView({ sessionId }: Props) {
   );
   const dismissExtensionUiNotification = useSessionStore((s) => s.dismissExtensionUiNotification);
   const queued = useSessionStore((s) => s.queuedBySession[sessionId]);
-  const streamingTimelinePosition = useSessionStore(
-    (s) => s.streamingTimelinePositionBySession[sessionId],
-  );
   const queuedTimelinePosition = useSessionStore(
     (s) => s.queuedTimelinePositionBySession[sessionId],
   );
@@ -183,15 +179,6 @@ export function ChatView({ sessionId }: Props) {
         position: { timestamp: run.startedAt, order: run.timelineOrder },
       })),
     ];
-    if (isStreaming) {
-      transientItems.push({
-        item: {
-          kind: "streaming",
-          position: streamingTimelinePosition ?? FALLBACK_TIMELINE_POSITION,
-        },
-        position: streamingTimelinePosition ?? FALLBACK_TIMELINE_POSITION,
-      });
-    }
     if (queued !== undefined) {
       transientItems.push({
         item: {
@@ -203,15 +190,7 @@ export function ChatView({ sessionId }: Props) {
       });
     }
     return placeChatTimelineItems(messages, transientItems);
-  }, [
-    extensionNotifications,
-    isStreaming,
-    messages,
-    queued,
-    queuedTimelinePosition,
-    sessionRuns,
-    streamingTimelinePosition,
-  ]);
+  }, [extensionNotifications, messages, queued, queuedTimelinePosition, sessionRuns]);
 
   const [chatViewType, setChatViewType] = useState<ChatViewType>(readChatViewType);
   const setAndPersistChatViewType = (next: ChatViewType): void => {
@@ -631,16 +610,6 @@ export function ChatView({ sessionId }: Props) {
                         }
                       />,
                     );
-                  } else if (entry.kind === "streaming") {
-                    out.push(
-                      <StreamingTimelineEntry
-                        key={`streaming-${entry.position.timestamp}-${entry.position.order}`}
-                        streamingText={streamingText}
-                        activeTool={activeTool}
-                        generatingToolCall={generatingToolCall}
-                        onVisibleOrUpdate={followChatToBottom}
-                      />,
-                    );
                   } else if (entry.kind === "queued") {
                     out.push(
                       <QueuedMessages
@@ -756,6 +725,17 @@ export function ChatView({ sessionId }: Props) {
               // bottom for completeness.
               renderCardsAt(messages.length);
               renderTimelineEntriesAt(messages.length);
+              if (isStreaming) {
+                out.push(
+                  <StreamingTimelineEntry
+                    key="streaming-active"
+                    streamingText={streamingText}
+                    activeTool={activeTool}
+                    generatingToolCall={generatingToolCall}
+                    onVisibleOrUpdate={followChatToBottom}
+                  />,
+                );
+              }
               return out;
             })()}
           </div>
