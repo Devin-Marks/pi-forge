@@ -8,6 +8,7 @@ import {
   type QuickActionRun,
 } from "../store/quick-actions-store";
 import { useUiConfigStore } from "../store/ui-config-store";
+import { createChatTimelinePosition } from "../lib/chat-timeline";
 import { useSessionStore } from "../store/session-store";
 import { useComposerStore } from "../store/composer-store";
 import { createClientId } from "../lib/client-id";
@@ -96,12 +97,14 @@ export function QuickActionsMenu({ sessionId, projectId }: Props) {
   const handleCommand = (action: QuickAction): void => {
     const runId = randomId();
     const controller = new AbortController();
+    const timelinePosition = createChatTimelinePosition();
     const run: QuickActionRun = {
       runId,
       sessionId,
       actionId: action.id,
       actionName: action.name,
-      startedAt: Date.now(),
+      startedAt: timelinePosition.timestamp,
+      timelineOrder: timelinePosition.order,
       status: "running",
       abort: () => {
         try {

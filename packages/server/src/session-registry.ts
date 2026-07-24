@@ -6,6 +6,8 @@ import {
   createAgentSession,
   SessionManager,
   SettingsManager,
+  type ExtensionCommandContextActions,
+  type ExtensionUIContext,
   type PackageSource,
   type SessionInfo,
 } from "@earendil-works/pi-coding-agent";
@@ -365,6 +367,106 @@ export function findLastAssistantErrorMessage(
   return undefined;
 }
 
+const EXTENSION_UI_NOTIFICATION_MAX_LENGTH = 4_000;
+
+function emitExtensionUiNotification(
+  live: LiveSession,
+  message: string,
+  level: "info" | "warning" | "error" = "info",
+): void {
+  const text = message.trim().slice(0, EXTENSION_UI_NOTIFICATION_MAX_LENGTH);
+  if (text.length === 0) return;
+  const event = {
+    type: "extension_ui_notification" as const,
+    sessionId: live.sessionId,
+    message: text,
+    level,
+  };
+  for (const client of live.clients) {
+    try {
+      client.send(event);
+    } catch {
+      live.clients.delete(client);
+    }
+  }
+}
+
+/**
+ * Bind the SDK extension command context to Pi Forge's authenticated SSE
+ * session. Browser clients can show notifications, while terminal-only dialogs
+ * fail safely and explain their unsupported state to the user.
+ */
+async function bindWebExtensionContext(live: LiveSession): Promise<void> {
+  const unsupportedDialog = (): void => {
+    emitExtensionUiNotification(
+      live,
+      "This extension requested an interactive dialog, which Pi Forge does not support.",
+      "warning",
+    );
+  };
+  const uiContext = {
+    select: async () => {
+      unsupportedDialog();
+      return undefined;
+    },
+    confirm: async () => {
+      unsupportedDialog();
+      return false;
+    },
+    input: async () => {
+      unsupportedDialog();
+      return undefined;
+    },
+    notify: (message: string, level?: "info" | "warning" | "error") => {
+      emitExtensionUiNotification(live, message, level);
+    },
+    onTerminalInput: () => () => undefined,
+    setStatus: () => undefined,
+    setWorkingMessage: () => undefined,
+    setWorkingVisible: () => undefined,
+    setWorkingIndicator: () => undefined,
+    setHiddenThinkingLabel: () => undefined,
+    setWidget: () => undefined,
+    setFooter: () => undefined,
+    setHeader: () => undefined,
+    setTitle: () => undefined,
+    custom: async <T>() => {
+      unsupportedDialog();
+      return undefined as T;
+    },
+    pasteToEditor: () => undefined,
+    setEditorText: () => undefined,
+    getEditorText: () => "",
+    editor: async () => {
+      unsupportedDialog();
+      return undefined;
+    },
+    addAutocompleteProvider: () => undefined,
+    setEditorComponent: () => undefined,
+    getEditorComponent: () => undefined,
+    theme: {} as ExtensionUIContext["theme"],
+    getAllThemes: () => [],
+    getTheme: () => undefined,
+    setTheme: () => ({ success: false, error: "UI not available in Pi Forge" }),
+    getToolsExpanded: () => false,
+    setToolsExpanded: () => undefined,
+  } satisfies ExtensionUIContext;
+  const commandContextActions = {
+    waitForIdle: () => live.session.waitForIdle(),
+    newSession: async () => ({ cancelled: true }),
+    fork: async () => ({ cancelled: true }),
+    navigateTree: async () => ({ cancelled: true }),
+    switchSession: async () => ({ cancelled: true }),
+    reload: async () => undefined,
+  } satisfies ExtensionCommandContextActions;
+
+  await live.session.bindExtensions({
+    uiContext,
+    mode: "rpc",
+    commandContextActions,
+  });
+}
+
 function makeSubscribeHandler(live: LiveSession): () => void {
   const verbose = process.env.DEBUG_AGENT_EVENTS === "1";
   return live.session.subscribe((event: AgentSessionEvent) => {
@@ -415,6 +517,7 @@ function makeSubscribeHandler(live: LiveSession): () => void {
       success?: boolean;
       finalError?: string;
       errorMessage?: string;
+      name?: string;
     };
 
     if (verbose) {
@@ -476,6 +579,17 @@ function makeSubscribeHandler(live: LiveSession): () => void {
     // enrichment, a context-overflow / 401 / 5xx ends up emitting an
     // `agent_end` with no detail, the chat UI hides its spinner with
     // no error banner, and the user sees an empty assistant message.
+    // Preserve the SDK event for registry subscribers, while also emitting
+    // the forge-native frame that the SSE bridge exposes to the UI.
+    const renamedEvent =
+      e.type === "session_info_changed"
+        ? {
+            type: "session_renamed" as const,
+            sessionId: live.sessionId,
+            projectId: live.projectId,
+            name: typeof e.name === "string" ? e.name : undefined,
+          }
+        : undefined;
     if (e.type === "agent_end") {
       // Primary: session-level `errorMessage` — the SDK's
       // documented authoritative field. Most failure modes set
@@ -546,6 +660,15 @@ function makeSubscribeHandler(live: LiveSession): () => void {
         // Drop the client on send failure — Phase 5's SSE adapter will
         // also call disposeClient on its socket close hook.
         live.clients.delete(client);
+      }
+    }
+    if (renamedEvent !== undefined) {
+      for (const client of live.clients) {
+        try {
+          client.send(renamedEvent);
+        } catch {
+          live.clients.delete(client);
+        }
       }
     }
 
@@ -724,6 +847,7 @@ export async function createSession(
   };
   live.unsubscribe = makeSubscribeHandler(live);
   registry.set(live.sessionId, live);
+  await bindWebExtensionContext(live);
 
   // Set a meaningful default name on the new session so the sidebar
   // doesn't show every fresh-create as the indistinguishable
@@ -761,6 +885,25 @@ export async function createSession(
 
 export function getSession(sessionId: string): LiveSession | undefined {
   return registry.get(sessionId);
+}
+
+/**
+ * Registered SDK extension commands for a live session. Command names omit
+ * the slash because that is the SDK's canonical invocation-name format.
+ */
+export interface ExtensionCommandSummary {
+  name: string;
+  description?: string;
+}
+
+export function listExtensionCommands(sessionId: string): ExtensionCommandSummary[] | undefined {
+  const live = registry.get(sessionId);
+  if (live === undefined) return undefined;
+  return live.session.extensionRunner.getRegisteredCommands().map((command) => {
+    const summary: ExtensionCommandSummary = { name: command.invocationName };
+    if (command.description !== undefined) summary.description = command.description;
+    return summary;
+  });
 }
 
 /**
@@ -808,19 +951,9 @@ export function maybeNameSessionFromFirstPrompt(
   }
 
   live.lastActivityAt = new Date();
-  const event = {
-    type: "session_renamed" as const,
-    sessionId: live.sessionId,
-    projectId: live.projectId,
-    name: title,
-  };
-  for (const client of live.clients) {
-    try {
-      client.send(event);
-    } catch {
-      live.clients.delete(client);
-    }
-  }
+  // setSessionName emits the SDK's session_info_changed event. The registry
+  // subscription translates that event into the UI's session_renamed SSE
+  // frame, which also covers extension-initiated renames.
   return title;
 }
 
@@ -1059,6 +1192,7 @@ export async function resumeSession(
     };
     live.unsubscribe = makeSubscribeHandler(live);
     registry.set(live.sessionId, live);
+    await bindWebExtensionContext(live);
     return live;
   });
 }
@@ -1739,6 +1873,7 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
   };
   live.unsubscribe = makeSubscribeHandler(live);
   registry.set(live.sessionId, live);
+  await bindWebExtensionContext(live);
 
   // Disambiguate the fork's display name from its source. The SDK
   // copies session_info entries forward when forking, so the new
@@ -1841,6 +1976,7 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
       source.lastActivityAt = new Date();
       source.lastAgentStartIndex = undefined;
       source.unsubscribe = makeSubscribeHandler(source);
+      await bindWebExtensionContext(source);
     } catch (err) {
       // Log but don't fail the fork — the new session is fine.
       // The source is corrupted in memory; surface as a server log
@@ -1973,6 +2109,7 @@ export async function rebuildAgentSessionForTools(
   live.lastActivityAt = new Date();
   live.lastAgentStartIndex = undefined;
   live.unsubscribe = makeSubscribeHandler(live);
+  await bindWebExtensionContext(live);
   return live;
 }
 

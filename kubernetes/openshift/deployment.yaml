@@ -63,8 +63,9 @@ spec:
             capabilities:
               drop: ["ALL"]
               # SETUID/SETGID are required for sandbox user switching.
-              # CHOWN is required only when AGENT_TOOL_SANDBOX_CHOWN_PATHS
-              # is set; without CHOWN, startup fails on the chown step.
+              # CHOWN is required for sandbox startup mount/workspace ownership
+              # preparation even when AGENT_TOOL_SANDBOX_CHOWN_PATHS is unset;
+              # that option adds further permitted paths to prepare.
               add: ["SETUID", "SETGID", "CHOWN"]
             readOnlyRootFilesystem: true
           ports:
@@ -95,9 +96,9 @@ spec:
               value: "1001"
             - name: AGENT_TOOL_GID
               value: "1001"
-            # Optional: comma/space-separated existing non-secret paths
-            # to chown to AGENT_TOOL_UID:GID at startup. Requires CHOWN
-            # in the container capabilities above.
+            # Optional: comma/space-separated existing non-secret paths to prepare
+            # for AGENT_TOOL_UID with the server process group at startup. CHOWN is
+            # already required for standard sandbox mount/workspace preparation above.
             - name: AGENT_TOOL_SANDBOX_CHOWN_PATHS
               value: ""
             - name: LOG_LEVEL

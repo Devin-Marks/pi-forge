@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api, ApiError, type SessionSummary, type UnifiedSession } from "../lib/api-client";
 import { streamSSE } from "../lib/sse-client";
 import { extractToolCallGeneration, type ToolCallGeneration } from "../lib/tool-call-streaming";
+import { createChatTimelinePosition, type ChatTimelinePosition } from "../lib/chat-timeline";
 import { postCrossTab, subscribeCrossTab } from "../lib/cross-tab";
 import { useAskUserQuestionStore, type PendingAskQuestion } from "./ask-user-question-store";
 import { useTodoStore, type Task as TodoTaskShape } from "./todo-store";
@@ -21,6 +22,7 @@ export const EMPTY_SESSIONS: UnifiedSession[] = [];
 export const EMPTY_MESSAGES: AgentMessageLike[] = [];
 export const EMPTY_STRING = "";
 export const EMPTY_COMPACTIONS: CompactionEvent[] = [];
+export const EMPTY_EXTENSION_NOTIFICATIONS: ExtensionUiNotification[] = [];
 
 /**
  * Per-session pending streaming-text delta buffer + RAF id. We accumulate
@@ -110,6 +112,18 @@ export interface ActiveTool {
   summary?: string;
 }
 
+export interface ExtensionUiNotification {
+  id: string;
+  message: string;
+  level: "info" | "warning" | "error";
+  /** Receive-side timestamp; extension feedback is never written to Pi's transcript. */
+  receivedAt: number;
+  /** Monotonic tie-breaker for feedback received in the same millisecond. */
+  arrivalOrder: number;
+}
+
+export type ExtensionUiNotificationInput = Pick<ExtensionUiNotification, "message" | "level">;
+
 /**
  * Wire-shape of an SSE event from the bridge. `snapshot` carries the full
  * messages array on connect; everything else is an AgentSessionEvent
@@ -190,6 +204,8 @@ function removeSessionFromState(current: SessionState, sessionId: string): Parti
   delete nextStreaming[sessionId];
   const nextBanner = { ...current.bannerBySession };
   delete nextBanner[sessionId];
+  const nextExtensionNotifications = { ...current.extensionNotificationsBySession };
+  delete nextExtensionNotifications[sessionId];
   const nextStreamingText = { ...current.streamingTextBySession };
   delete nextStreamingText[sessionId];
   const nextActiveTool = { ...current.activeToolBySession };
@@ -204,6 +220,8 @@ function removeSessionFromState(current: SessionState, sessionId: string): Parti
   delete nextTurnWriteCount[sessionId];
   const nextQueued = { ...current.queuedBySession };
   delete nextQueued[sessionId];
+  const nextQueuedTimelinePosition = { ...current.queuedTimelinePositionBySession };
+  delete nextQueuedTimelinePosition[sessionId];
   const nextBottomPinRequest = { ...current.bottomPinRequestBySession };
   delete nextBottomPinRequest[sessionId];
   const byProject: Record<string, UnifiedSession[]> = {};
@@ -214,6 +232,7 @@ function removeSessionFromState(current: SessionState, sessionId: string): Parti
     messagesBySession: nextMessages,
     streamingBySession: nextStreaming,
     bannerBySession: nextBanner,
+    extensionNotificationsBySession: nextExtensionNotifications,
     streamingTextBySession: nextStreamingText,
     activeToolBySession: nextActiveTool,
     toolCallGenerationBySession: nextToolCallGeneration,
@@ -221,6 +240,7 @@ function removeSessionFromState(current: SessionState, sessionId: string): Parti
     fileRefreshCountBySession: nextFileRefreshCount,
     turnWriteCountBySession: nextTurnWriteCount,
     queuedBySession: nextQueued,
+    queuedTimelinePositionBySession: nextQueuedTimelinePosition,
     bottomPinRequestBySession: nextBottomPinRequest,
     byProject,
     activeSessionId: current.activeSessionId === sessionId ? undefined : current.activeSessionId,
@@ -256,6 +276,12 @@ interface SessionState {
   streamingBySession: Record<string, boolean>;
   /** Per-session last-known toolEvent + retry banners (lightly modelled). */
   bannerBySession: Record<string, string | undefined>;
+  /**
+   * Extension-command notifications awaiting display. This is deliberately
+   * separate from banners: banners represent current session state, whereas
+   * notifications are transient feedback that must be shown in order.
+   */
+  extensionNotificationsBySession: Record<string, ExtensionUiNotification[] | undefined>;
   /**
    * Live assistant text being streamed in by message_update events. Reset on
    * agent_start, accumulates deltas, cleared on agent_end (the authoritative
@@ -315,6 +341,8 @@ interface SessionState {
    * pop entries optimistically.
    */
   queuedBySession: Record<string, { steering: string[]; followUp: string[] } | undefined>;
+  /** Receipt position for the current queued-input snapshot. */
+  queuedTimelinePositionBySession: Record<string, ChatTimelinePosition | undefined>;
   /**
    * Per-session pending scroll target (zero-based message index) set
    * by the global search bar when a result is clicked. ChatView reads
@@ -366,7 +394,16 @@ interface SessionState {
   consumePendingScroll: (sessionId: string) => number | undefined;
   /** Force the chat viewport to pin to the bottom for a user-originated entry. */
   requestScrollToBottom: (sessionId: string) => void;
-  sendPrompt: (sessionId: string, text: string, attachments?: File[]) => Promise<void>;
+  /**
+   * Send a prompt, optionally skipping the local user-message insert for an
+   * extension command that may finish without creating an agent turn.
+   */
+  sendPrompt: (
+    sessionId: string,
+    text: string,
+    attachments?: File[],
+    optimisticUserMessage?: boolean,
+  ) => Promise<void>;
   sendSteer: (sessionId: string, text: string, mode?: "steer" | "followUp") => Promise<void>;
   abortSession: (sessionId: string) => Promise<void>;
   disposeSession: (sessionId: string) => Promise<void>;
@@ -379,6 +416,13 @@ interface SessionState {
    * the banner reappears on the next event.
    */
   clearBanner: (sessionId: string) => void;
+  /** Add store-only extension feedback at its arrival position in the chat timeline. */
+  enqueueExtensionUiNotification: (
+    sessionId: string,
+    notification: ExtensionUiNotificationInput,
+  ) => void;
+  /** Dismiss one extension notification without changing Pi's canonical transcript. */
+  dismissExtensionUiNotification: (sessionId: string, notificationId?: string) => void;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -389,6 +433,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   pendingDraftBySession: {},
   streamingBySession: {},
   bannerBySession: {},
+  extensionNotificationsBySession: {},
   streamingTextBySession: {},
   activeToolBySession: {},
   toolCallGenerationBySession: {},
@@ -397,6 +442,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   turnWriteCountBySession: {},
   compactionEndCountBySession: {},
   queuedBySession: {},
+  queuedTimelinePositionBySession: {},
   pendingScrollByMessageIndex: {},
   bottomPinRequestBySession: {},
   error: undefined,
@@ -669,56 +715,54 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  sendPrompt: async (sessionId, text, attachments) => {
+  sendPrompt: async (sessionId, text, attachments, optimisticUserMessage = true) => {
     set((s) => ({
       error: undefined,
       bannerBySession: { ...s.bannerBySession, [sessionId]: undefined },
     }));
-    // Optimistically append the user message so the chat reflects the input
-    // immediately. If the server rejects (no API key, no model, etc.) the
-    // catch below rolls it back. If it accepts, the eventual messages
-    // refetch on agent_end will replace this with the canonical entry.
-    //
-    // For attachments, we render image thumbnails inline and chips for
-    // text files. The optimistic shape mirrors what the SDK produces
-    // for user messages with attachments — text content + image
-    // blocks — so the renderer doesn't have to special-case the
-    // pre-refetch state.
-    const optimisticContent: Record<string, unknown>[] = [{ type: "text", text }];
-    if (attachments !== undefined) {
-      for (const f of attachments) {
-        if (f.type.startsWith("image/")) {
-          // Use a blob URL for the optimistic preview — cheap to
-          // render and gets garbage-collected when the canonical
-          // refetch replaces this entry.
-          optimisticContent.push({
-            type: "image",
-            mimeType: f.type,
-            data: URL.createObjectURL(f),
-            // Mark this is a blob URL the renderer should treat as a
-            // direct src rather than re-prefixing with `data:...`.
-            __blobUrl: true,
-          });
-        } else {
-          optimisticContent.push({
-            type: "file",
-            filename: f.name,
-            size: f.size,
-          });
+    // Extension commands can finish without an agent turn or a canonical user
+    // message. Their caller disables this insert so the transcript never
+    // retains a phantom entry. Normal prompts keep the immediate feedback.
+    let optimistic: AgentMessageLike | undefined;
+    if (optimisticUserMessage) {
+      // If the server rejects (no API key, no model, etc.) the catch below
+      // rolls this back. On agent_end, the canonical refetch replaces it.
+      const optimisticContent: Record<string, unknown>[] = [{ type: "text", text }];
+      if (attachments !== undefined) {
+        for (const f of attachments) {
+          if (f.type.startsWith("image/")) {
+            // Use a blob URL for the optimistic preview — cheap to render and
+            // garbage-collected when the canonical refetch replaces it.
+            optimisticContent.push({
+              type: "image",
+              mimeType: f.type,
+              data: URL.createObjectURL(f),
+              // Mark this is a blob URL the renderer should treat as a direct
+              // src rather than re-prefixing with `data:...`.
+              __blobUrl: true,
+            });
+          } else {
+            optimisticContent.push({
+              type: "file",
+              filename: f.name,
+              size: f.size,
+            });
+          }
         }
       }
+      const optimisticMessage: AgentMessageLike = {
+        role: "user",
+        content: optimisticContent,
+        timestamp: Date.now(),
+      };
+      optimistic = optimisticMessage;
+      set((s) => ({
+        messagesBySession: {
+          ...s.messagesBySession,
+          [sessionId]: [...(s.messagesBySession[sessionId] ?? []), optimisticMessage],
+        },
+      }));
     }
-    const optimistic: AgentMessageLike = {
-      role: "user",
-      content: optimisticContent,
-      timestamp: Date.now(),
-    };
-    set((s) => ({
-      messagesBySession: {
-        ...s.messagesBySession,
-        [sessionId]: [...(s.messagesBySession[sessionId] ?? []), optimistic],
-      },
-    }));
     try {
       const opts: Parameters<typeof api.prompt>[2] = {};
       if (attachments !== undefined && attachments.length > 0) opts.attachments = attachments;
@@ -731,14 +775,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // Roll back the optimistic append on failure. Revoke any blob
       // URLs the optimistic message owns BEFORE we drop the
       // reference, otherwise they stay alive forever.
-      revokeOptimisticBlobUrls([optimistic]);
+      if (optimistic !== undefined) revokeOptimisticBlobUrls([optimistic]);
       set((s) => {
         const cur = s.messagesBySession[sessionId] ?? [];
         return {
-          messagesBySession: {
-            ...s.messagesBySession,
-            [sessionId]: cur.filter((m) => m !== optimistic),
-          },
+          messagesBySession:
+            optimistic === undefined
+              ? s.messagesBySession
+              : {
+                  ...s.messagesBySession,
+                  [sessionId]: cur.filter((m) => m !== optimistic),
+                },
           error: err instanceof ApiError ? err.code : (err as Error).message,
           bannerBySession: {
             ...s.bannerBySession,
@@ -809,6 +856,35 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set((s) => ({
       bannerBySession: { ...s.bannerBySession, [sessionId]: undefined },
     }));
+  },
+  enqueueExtensionUiNotification: (sessionId, notification) => {
+    const position = createChatTimelinePosition();
+    const entry: ExtensionUiNotification = {
+      ...notification,
+      id: `extension-notification-${position.order}`,
+      receivedAt: position.timestamp,
+      arrivalOrder: position.order,
+    };
+    set((s) => ({
+      extensionNotificationsBySession: {
+        ...s.extensionNotificationsBySession,
+        [sessionId]: [...(s.extensionNotificationsBySession[sessionId] ?? []), entry],
+      },
+    }));
+  },
+  dismissExtensionUiNotification: (sessionId, notificationId) => {
+    set((s) => {
+      const notifications = s.extensionNotificationsBySession[sessionId] ?? [];
+      if (notifications.length === 0) return {};
+      const next = { ...s.extensionNotificationsBySession };
+      const remaining =
+        notificationId === undefined
+          ? notifications.slice(1)
+          : notifications.filter((notification) => notification.id !== notificationId);
+      if (remaining.length === 0) delete next[sessionId];
+      else next[sessionId] = remaining;
+      return { extensionNotificationsBySession: next };
+    });
   },
 }));
 
@@ -986,6 +1062,11 @@ function applyEvent(
         [sessionId]:
           steering.length === 0 && followUp.length === 0 ? undefined : { steering, followUp },
       },
+      queuedTimelinePositionBySession: {
+        ...s.queuedTimelinePositionBySession,
+        [sessionId]:
+          steering.length === 0 && followUp.length === 0 ? undefined : createChatTimelinePosition(),
+      },
     }));
     return;
   }
@@ -1060,6 +1141,19 @@ function applyEvent(
     const name = typeof event.name === "string" ? event.name : undefined;
     set((s) => renameSessionInLists(s, renamedSessionId, name));
     postCrossTab({ type: "session_renamed", sessionId: renamedSessionId, name });
+    return;
+  }
+
+  if (event.type === "extension_ui_notification") {
+    const message = typeof event.message === "string" ? event.message.trim() : "";
+    if (message.length === 0) return;
+    const level =
+      event.level === "warning" || event.level === "error" || event.level === "info"
+        ? event.level
+        : "info";
+    // Notifications are independent from state banners. Consecutive extension
+    // calls must remain visible in arrival order, including dialog fallbacks.
+    get().enqueueExtensionUiNotification(sessionId, { message, level });
     return;
   }
 

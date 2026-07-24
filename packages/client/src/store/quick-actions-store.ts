@@ -70,6 +70,8 @@ export interface QuickActionRun {
   actionId: string;
   actionName: string;
   startedAt: number;
+  /** Monotonic tie-breaker for runs started in the same millisecond. */
+  timelineOrder: number;
   status: "running" | "done" | "aborted";
   result?: QuickActionRunResult;
   error?: string;

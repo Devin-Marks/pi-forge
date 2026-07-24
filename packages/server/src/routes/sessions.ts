@@ -8,6 +8,7 @@ import {
   findProjectIdForSession,
   findSessionLocation,
   getSession,
+  listExtensionCommands,
   listSessionsForProject,
   rejectOrDisposeExternallyActiveSession,
   resumeSessionById,
@@ -341,6 +342,59 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
         bodyArgs.externalState = external.state;
       }
       return liveSummaryBody(bodyArgs);
+    },
+  );
+
+  fastify.get<{ Params: { id: string } }>(
+    "/sessions/:id/extension-commands",
+    {
+      schema: {
+        description:
+          "List SDK extension commands registered on a session, lazily resuming cold sessions when needed.",
+        tags: ["sessions"],
+        params: {
+          type: "object",
+          required: ["id"],
+          properties: { id: { type: "string" } },
+        },
+        response: {
+          200: {
+            type: "object",
+            required: ["commands"],
+            properties: {
+              commands: {
+                type: "array",
+                items: {
+                  type: "object",
+                  required: ["name"],
+                  properties: {
+                    name: { type: "string" },
+                    description: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+          404: errorSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      let live = getSession(req.params.id);
+      if (live === undefined) {
+        try {
+          // ChatInput requests this alongside the SSE stream on session open.
+          // Resume here too so an initial request cannot lose a race with the
+          // stream's lazy resume and permanently hide extension commands.
+          live = await resumeSessionById(req.params.id);
+        } catch {
+          return notFound(reply);
+        }
+      }
+      if (await rejectExternalIfNeeded(req.params.id, live.projectId, live.workspacePath, reply)) {
+        return reply;
+      }
+      return { commands: listExtensionCommands(req.params.id) ?? [] };
     },
   );
 

@@ -32,6 +32,7 @@ import {
   type ServerThemeColors,
   type UiConfigResponse,
   type UnifiedSession,
+  type ExtensionCommandSummary,
   type SessionSummary,
   type PromptSummary,
   type SkillDiagnostic,
@@ -530,6 +531,24 @@ function vSkillOverrides(
     out[pid] = { enable, disable };
   }
   return { projects: out };
+}
+
+function vExtensionCommandList(
+  value: unknown,
+  status: number,
+): { commands: ExtensionCommandSummary[] } {
+  if (!isObject(value) || !Array.isArray(value.commands)) {
+    fail(status, "expected { commands: ExtensionCommandSummary[] }");
+  }
+  const commands = value.commands.map((command) => {
+    if (!isObject(command) || typeof command.name !== "string") {
+      fail(status, "expected ExtensionCommandSummary");
+    }
+    const summary: ExtensionCommandSummary = { name: command.name };
+    if (typeof command.description === "string") summary.description = command.description;
+    return summary;
+  });
+  return { commands };
 }
 
 function vPromptSummary(p: unknown, status: number): PromptSummary {
@@ -1788,6 +1807,8 @@ export const api = {
     }),
   getSession: (id: string) =>
     request(`/api/v1/sessions/${encodeURIComponent(id)}`, vSessionSummary),
+  listExtensionCommands: (id: string) =>
+    request(`/api/v1/sessions/${encodeURIComponent(id)}/extension-commands`, vExtensionCommandList),
   getMessages: (id: string) =>
     request(`/api/v1/sessions/${encodeURIComponent(id)}/messages`, (v, s) => {
       if (!isObject(v) || !Array.isArray(v.messages)) {
@@ -1883,6 +1904,14 @@ export const api = {
     const body: Record<string, unknown> = { text };
     if (opts?.streamingBehavior !== undefined) body.streamingBehavior = opts.streamingBehavior;
     return request(path, vAccepted, { method: "POST", body });
+  },
+  invokeSkill: (id: string, name: string, instructions?: string) => {
+    const body: Record<string, unknown> = { name };
+    if (instructions !== undefined) body.instructions = instructions;
+    return request(`/api/v1/sessions/${encodeURIComponent(id)}/skill`, vAccepted, {
+      method: "POST",
+      body,
+    });
   },
   steer: (id: string, text: string, mode?: "steer" | "followUp") => {
     const body: Record<string, unknown> = { text };

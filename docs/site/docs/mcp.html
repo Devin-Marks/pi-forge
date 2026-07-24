@@ -131,6 +131,10 @@ to swap a global server for a project-specific one).</p>
 <p><code>mcp.json</code> (pi-forge-native shape, written by the UI):</p>
 <pre><code class="language-json">{
   &quot;disabled&quot;: false,
+  &quot;truncation&quot;: {
+    &quot;enabled&quot;: true,
+    &quot;maxChars&quot;: 30000
+  },
   &quot;servers&quot;: {
     &quot;weather&quot;: {
       &quot;url&quot;: &quot;https://mcp.example.com/sse&quot;,
@@ -237,6 +241,20 @@ shape, so existing files don&#39;t need rewriting:</p>
 <td>—</td>
 <td><code>false</code></td>
 <td>Master kill-switch. When <code>true</code>, NO MCP tools reach the agent regardless of per-server <code>enabled</code>.</td>
+</tr>
+<tr>
+<td><code>truncation.enabled</code></td>
+<td>boolean (top-level)</td>
+<td>—</td>
+<td><code>true</code></td>
+<td>When true, text MCP results are capped before they enter agent context.</td>
+</tr>
+<tr>
+<td><code>truncation.maxChars</code></td>
+<td>integer (top-level)</td>
+<td>—</td>
+<td><code>30000</code></td>
+<td>Total text-character cap across all text blocks in one MCP result. Images pass through unchanged.</td>
 </tr>
 </tbody></table>
 <h2>Stdio env passthrough</h2>
@@ -363,11 +381,15 @@ this browser tab refresh automatically on the shared MCP ticker. Unchanged statu
 payloads keep their existing UI state to avoid unnecessary churn.</p>
 <h2>Tool result truncation</h2>
 <p>Very large text results from MCP tools are capped before they enter the agent
-context. When truncation happens, the returned text starts with a concise
+context. The default cap is 30,000 characters across all text blocks in a single
+MCP result; Settings → MCP lets you disable this or choose a different cap, and
+stores the choice in <code>${FORGE_DATA_DIR}/mcp.json</code> as <code>truncation.enabled</code> /
+<code>truncation.maxChars</code>.</p>
+<p>When truncation happens, the returned text starts with a concise
 <code>MCP_RESULT_TRUNCATED</code> warning that includes the omitted size and tells the model
 to retry with a smaller scope, narrower filter, or pagination. The visible payload
 then keeps the start and end of the original result with a marker where the middle
-was omitted.</p>
+was omitted. Image blocks pass through unchanged.</p>
 <h2>Troubleshooting</h2>
 <p><strong>Status stuck in <code>error</code></strong> — Settings → MCP, expand the row, read
 <code>lastError</code>. Common causes:</p>

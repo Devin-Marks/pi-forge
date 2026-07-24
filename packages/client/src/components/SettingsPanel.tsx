@@ -843,6 +843,7 @@ function SelectSetting({
 function SkillsTab({ onError }: { onError: (msg: string | undefined) => void }) {
   const project = useActiveProject();
   const projects = useProjectStore((s) => s.projects);
+  const bumpSkillsRefresh = useUiStore((s) => s.bumpSkillsRefresh);
   const [skills, setSkills] = useState<SkillSummary[] | undefined>(undefined);
   /**
    * SDK-emitted warnings about skill files the loader rejected. The
@@ -899,6 +900,7 @@ function SkillsTab({ onError }: { onError: (msg: string | undefined) => void }) 
     try {
       const { skills: updated } = await api.setSkillEnabled(project.id, name, next, "global");
       setSkills(updated);
+      bumpSkillsRefresh();
     } catch (err) {
       onError(`Toggle failed: ${errorCode(err)}`);
     } finally {
@@ -923,6 +925,7 @@ function SkillsTab({ onError }: { onError: (msg: string | undefined) => void }) 
       // Pull the canonical state for both the active project's
       // skills view AND the cascade map.
       await refresh();
+      bumpSkillsRefresh();
     } catch (err) {
       onError(`Override write failed: ${errorCode(err)}`);
     } finally {

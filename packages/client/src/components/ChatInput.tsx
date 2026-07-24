@@ -28,6 +28,7 @@ import { deriveCounts, selectTodoState, useTodoStore } from "../store/todo-store
 import { countRunning, selectProcesses, useProcessesStore } from "../store/processes-store";
 import { extractClipboardImageFiles } from "../lib/clipboard-images";
 import { isChatSubmitShortcut } from "../lib/chat-input-keys";
+import { parseSkillInvocation } from "../lib/skill-command";
 import { ProcessesPopover, TodosPopover } from "./InputPopovers";
 
 /**
@@ -429,10 +430,10 @@ export function ChatInput({ sessionId }: Props) {
   const openSettings = useUiStore((s) => s.openSettings);
   const chatInsertRequest = useUiStore((s) => s.chatInsertRequest);
   const clearChatInsertRequest = useUiStore((s) => s.clearChatInsertRequest);
-  // Bumped by Settings → Prompts after every toggle so the slash
-  // palette refetches without requiring a project switch or full
-  // reload. Included in the prompts-fetch effect's deps.
+  // Bumped by Settings → Prompts / Skills after every toggle so the slash
+  // palette refetches without requiring a project switch or full reload.
   const promptsRefreshTrigger = useUiStore((s) => s.promptsRefreshTrigger);
+  const skillsRefreshTrigger = useUiStore((s) => s.skillsRefreshTrigger);
   const lastChatInsertSeqRef = useRef(0);
   const [slashSelectedIdx, setSlashSelectedIdx] = useState(0);
   const slashOpen = text.startsWith("/") && !text.includes("\n");
@@ -455,6 +456,9 @@ export function ChatInput({ sessionId }: Props) {
    */
   const [availablePrompts, setAvailablePrompts] = useState<
     { name: string; description: string; argumentHint?: string }[]
+  >([]);
+  const [extensionCommands, setExtensionCommands] = useState<
+    { name: string; description?: string }[]
   >([]);
   useEffect(() => {
     if (project === undefined) {
@@ -490,6 +494,57 @@ export function ChatInput({ sessionId }: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id, promptsRefreshTrigger]);
+
+  /**
+   * Skills loaded by the active live-session project. The server validates
+   * against the live session again on invocation; this list only drives
+   * discovery and exact slash-command dispatch in the palette.
+   */
+  const [availableSkills, setAvailableSkills] = useState<{ name: string; description: string }[]>(
+    [],
+  );
+  useEffect(() => {
+    if (project === undefined) {
+      setAvailableSkills([]);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .listSkills(project.id)
+      .then((res) => {
+        if (cancelled) return;
+        setAvailableSkills(
+          res.skills
+            .filter((skill) => skill.effective)
+            .map((skill) => ({ name: skill.name, description: skill.description })),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setAvailableSkills([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id, skillsRefreshTrigger]);
+
+  // Extension commands are session-specific: packages and project settings
+  // are resolved when the live SDK session is created. A failed lookup leaves
+  // the built-in palette usable (for example while an old session is loading).
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .listExtensionCommands(sessionId)
+      .then((res) => {
+        if (!cancelled) setExtensionCommands(res.commands);
+      })
+      .catch(() => {
+        if (!cancelled) setExtensionCommands([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
 
   // Quick-action prompt chips with `mode: "insert"` (and the "Use as
   // context" button on completed run cards) bridge through
@@ -625,6 +680,27 @@ export function ChatInput({ sessionId }: Props) {
         },
       },
     ];
+    // SDK extension commands take precedence over pi-forge UI commands,
+    // matching the SDK's own prompt dispatch. Selection fills the exact
+    // invocation into the editor; submit then uses the ordinary prompt route
+    // so the SDK can run the handler immediately, including while streaming.
+    for (const command of [...extensionCommands].reverse()) {
+      commands.unshift({
+        name: `/${command.name}`,
+        description: command.description ?? "Extension command",
+        available: true,
+        run: () => {
+          const insert = `/${command.name} `;
+          setText(insert);
+          requestAnimationFrame(() => {
+            const ta = textareaRef.current;
+            if (ta === null) return;
+            ta.focus();
+            ta.setSelectionRange(insert.length, insert.length);
+          });
+        },
+      });
+    }
     // Append pi prompt templates after the built-in commands. The
     // SDK's `session.prompt()` expands `/<promptname> args` to the
     // template body at send time (`expandPromptTemplates: true` by
@@ -652,6 +728,25 @@ export function ChatInput({ sessionId }: Props) {
         },
       });
     }
+    for (const skill of availableSkills) {
+      commands.push({
+        name: `/skill:${skill.name}`,
+        description: skill.description,
+        available: !isStreaming,
+        run: () => {
+          // Skills accept free-form additional instructions. Insert the exact
+          // command so Enter routes it to the validated skill endpoint.
+          const insert = `/skill:${skill.name} `;
+          setText(insert);
+          requestAnimationFrame(() => {
+            const ta = textareaRef.current;
+            if (ta === null) return;
+            ta.focus();
+            ta.setSelectionRange(insert.length, insert.length);
+          });
+        },
+      });
+    }
     return commands;
   }, [
     isStreaming,
@@ -661,6 +756,8 @@ export function ChatInput({ sessionId }: Props) {
     openSettings,
     minimalUi,
     availablePrompts,
+    availableSkills,
+    extensionCommands,
   ]);
 
   const slashFiltered = useMemo(() => {
@@ -676,6 +773,8 @@ export function ChatInput({ sessionId }: Props) {
    * — pi's `session.prompt()` will expand the template at send time.
    * Without this bypass, Enter on `/<name> foo` re-fires the prompt
    * entry's `run()` which re-inserts `/<name> ` and clobbers the args.
+   * SDK extension commands use the same normal-submit path via
+   * `isExtensionCommandInvocation` below.
    *
    * Distinguishes from the still-typing-the-name case (e.g. text is
    * `/sum` while a prompt is named `summarize`) — that DOES go through
@@ -688,6 +787,24 @@ export function ChatInput({ sessionId }: Props) {
     if (!availablePrompts.some((p) => p.name === firstWord)) return false;
     return text === `/${firstWord}` || text.startsWith(`/${firstWord} `);
   }, [slashOpen, text, availablePrompts]);
+
+  // Unlike the palette, exact known skill invocations may carry multiline
+  // free-form instructions. Keep their dispatch independent of `slashOpen`,
+  // which deliberately closes once the input contains a newline.
+  const skillInvocation = useMemo(
+    () => parseSkillInvocation(text, new Set(availableSkills.map((skill) => skill.name))),
+    [text, availableSkills],
+  );
+
+  // The SDK parses extension commands using only a literal space as the
+  // separator. Preserve that exact invocation contract: bypass the local
+  // slash dispatcher and let the normal prompt endpoint call session.prompt.
+  const isExtensionCommandInvocation = useMemo(() => {
+    if (!slashOpen) return false;
+    const spaceIndex = text.indexOf(" ");
+    const name = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
+    return extensionCommands.some((command) => command.name === name);
+  }, [slashOpen, text, extensionCommands]);
 
   /**
    * Run the highlighted command. `overrideIdx` lets a tap handler
@@ -1233,10 +1350,14 @@ export function ChatInput({ sessionId }: Props) {
     // /-command dispatch — the keyboard path (Enter) handles this
     // first, but a click on Send also lands here and a `/foo` typed
     // input shouldn't slip through to the LLM as a regular prompt.
-    // Exception: pi prompt templates in `/<name> ...args` form bypass
-    // dispatch — the SDK's `session.prompt()` expands them at send
-    // time. See `isPromptInvocation` for the predicate.
-    if (slashOpen && !isPromptInvocation) {
+    // Prompt templates and SDK extension commands use the normal prompt path;
+    // exact known skill commands use the validated skill endpoint below.
+    if (
+      slashOpen &&
+      !isPromptInvocation &&
+      skillInvocation === undefined &&
+      !isExtensionCommandInvocation
+    ) {
       if (slashFiltered.length > 0) {
         slashRunSelected();
       } else {
@@ -1281,7 +1402,19 @@ export function ChatInput({ sessionId }: Props) {
         historyDraftRef.current = "";
         return;
       }
-      if (isStreaming) {
+      if (skillInvocation !== undefined) {
+        if (isStreaming) {
+          setAttachmentError(
+            "Skills cannot run while the agent is streaming. Wait for the current run to finish.",
+          );
+          return;
+        }
+        if (attachments.length > 0) {
+          clearAttachments();
+          setAttachmentError("Attachments aren't sent with skills. Cleared.");
+        }
+        await api.invokeSkill(sessionId, skillInvocation.name, skillInvocation.instructions);
+      } else if (isStreaming && !isExtensionCommandInvocation) {
         // Steer doesn't accept attachments today — the SDK's steer()
         // takes (text, images?) which we COULD wire, but cleaner to
         // ship steer-with-text-only first. Clear immediately + warn
@@ -1293,7 +1426,15 @@ export function ChatInput({ sessionId }: Props) {
         }
         await sendSteer(sessionId, rawValue);
       } else {
-        await sendPrompt(sessionId, rawValue, attachments.length > 0 ? attachments : undefined);
+        // Extension commands always use session.prompt(), not steer: the SDK
+        // executes them immediately during streaming and preserves their
+        // command-handler semantics.
+        await sendPrompt(
+          sessionId,
+          rawValue,
+          attachments.length > 0 ? attachments : undefined,
+          !isExtensionCommandInvocation,
+        );
       }
       setText("");
       clearAttachments();
@@ -1345,15 +1486,13 @@ export function ChatInput({ sessionId }: Props) {
           return;
         }
         if (e.key === "Enter" || e.key === "Tab") {
-          // Pi-prompt invocation form (`/<knownname>` or
-          // `/<knownname> ...args`) — fall through to normal textarea
-          // handling. Shift+Enter inserts a newline for multiline
-          // prompt args; regular desktop Enter and Cmd/Ctrl+Enter
-          // submit and let pi expand the template at send time.
-          // Without this branch, Enter would re-fire the prompt
-          // entry's `run()` and clobber any args the user typed.
-          // (Tab still discovers / fills in.)
-          if (isPromptInvocation && e.key === "Enter") {
+          // Prompt-template, skill, and SDK extension-command invocations
+          // fall through to normal textarea handling on Enter. This preserves
+          // typed arguments; Tab still discovers or fills commands in.
+          if (
+            (isPromptInvocation || skillInvocation !== undefined || isExtensionCommandInvocation) &&
+            e.key === "Enter"
+          ) {
             // Intentionally fall through.
           } else {
             e.preventDefault();

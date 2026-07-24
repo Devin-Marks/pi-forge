@@ -342,6 +342,42 @@ message at the position of the compaction; UI should refresh.</p>
 <pre><code class="language-json">{ &quot;type&quot;: &quot;auto_retry_end&quot;, &quot;sessionId&quot;: &quot;01J7...&quot; }
 </code></pre>
 <p>UI action: hide retry banner.</p>
+<h2 id="extension-ui-notifications">Extension UI notifications</h2>
+<h3><code>extension_ui_notification</code></h3>
+<p>Sent when an extension command calls <code>ctx.ui.notify()</code>. Pi Forge also emits a
+warning notification when an extension requests an interactive dialog, which is
+not supported in the browser UI.</p>
+<pre><code class="language-json">{
+  &quot;type&quot;: &quot;extension_ui_notification&quot;,
+  &quot;sessionId&quot;: &quot;01J7...&quot;,
+  &quot;message&quot;: &quot;Command feedback: normal&quot;,
+  &quot;level&quot;: &quot;info&quot;
+}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>message</code></td>
+<td>string</td>
+<td>The extension-provided Markdown text.</td>
+</tr>
+<tr>
+<td><code>level</code></td>
+<td><code>&quot;info&quot; | &quot;warning&quot; | &quot;error&quot;</code></td>
+<td>Visual severity; defaults to <code>&quot;info&quot;</code>.</td>
+</tr>
+</tbody></table>
+<p>UI action: render each notification as Markdown in the chat timeline in arrival
+order. Notifications remain until the user dismisses them during the current
+browser session; they are not persisted through reload. They are separate from
+session-state banners, so multiple notifications stay independently visible
+when emitted consecutively.</p>
 <h2>Ordering guarantees</h2>
 <p>Within a single SSE connection:</p>
 <ol>
