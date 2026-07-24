@@ -457,6 +457,9 @@ export function ChatInput({ sessionId }: Props) {
   const [availablePrompts, setAvailablePrompts] = useState<
     { name: string; description: string; argumentHint?: string }[]
   >([]);
+  const [extensionCommands, setExtensionCommands] = useState<
+    { name: string; description?: string }[]
+  >([]);
   useEffect(() => {
     if (project === undefined) {
       setAvailablePrompts([]);
@@ -524,6 +527,24 @@ export function ChatInput({ sessionId }: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id, skillsRefreshTrigger]);
+
+  // Extension commands are session-specific: packages and project settings
+  // are resolved when the live SDK session is created. A failed lookup leaves
+  // the built-in palette usable (for example while an old session is loading).
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .listExtensionCommands(sessionId)
+      .then((res) => {
+        if (!cancelled) setExtensionCommands(res.commands);
+      })
+      .catch(() => {
+        if (!cancelled) setExtensionCommands([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
 
   // Quick-action prompt chips with `mode: "insert"` (and the "Use as
   // context" button on completed run cards) bridge through
@@ -659,6 +680,27 @@ export function ChatInput({ sessionId }: Props) {
         },
       },
     ];
+    // SDK extension commands take precedence over pi-forge UI commands,
+    // matching the SDK's own prompt dispatch. Selection fills the exact
+    // invocation into the editor; submit then uses the ordinary prompt route
+    // so the SDK can run the handler immediately, including while streaming.
+    for (const command of [...extensionCommands].reverse()) {
+      commands.unshift({
+        name: `/${command.name}`,
+        description: command.description ?? "Extension command",
+        available: true,
+        run: () => {
+          const insert = `/${command.name} `;
+          setText(insert);
+          requestAnimationFrame(() => {
+            const ta = textareaRef.current;
+            if (ta === null) return;
+            ta.focus();
+            ta.setSelectionRange(insert.length, insert.length);
+          });
+        },
+      });
+    }
     // Append pi prompt templates after the built-in commands. The
     // SDK's `session.prompt()` expands `/<promptname> args` to the
     // template body at send time (`expandPromptTemplates: true` by
@@ -715,6 +757,7 @@ export function ChatInput({ sessionId }: Props) {
     minimalUi,
     availablePrompts,
     availableSkills,
+    extensionCommands,
   ]);
 
   const slashFiltered = useMemo(() => {
@@ -730,6 +773,8 @@ export function ChatInput({ sessionId }: Props) {
    * — pi's `session.prompt()` will expand the template at send time.
    * Without this bypass, Enter on `/<name> foo` re-fires the prompt
    * entry's `run()` which re-inserts `/<name> ` and clobbers the args.
+   * SDK extension commands use the same normal-submit path via
+   * `isExtensionCommandInvocation` below.
    *
    * Distinguishes from the still-typing-the-name case (e.g. text is
    * `/sum` while a prompt is named `summarize`) — that DOES go through
@@ -750,6 +795,16 @@ export function ChatInput({ sessionId }: Props) {
     () => parseSkillInvocation(text, new Set(availableSkills.map((skill) => skill.name))),
     [text, availableSkills],
   );
+
+  // The SDK parses extension commands using only a literal space as the
+  // separator. Preserve that exact invocation contract: bypass the local
+  // slash dispatcher and let the normal prompt endpoint call session.prompt.
+  const isExtensionCommandInvocation = useMemo(() => {
+    if (!slashOpen) return false;
+    const spaceIndex = text.indexOf(" ");
+    const name = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
+    return extensionCommands.some((command) => command.name === name);
+  }, [slashOpen, text, extensionCommands]);
 
   /**
    * Run the highlighted command. `overrideIdx` lets a tap handler
@@ -1295,10 +1350,14 @@ export function ChatInput({ sessionId }: Props) {
     // /-command dispatch — the keyboard path (Enter) handles this
     // first, but a click on Send also lands here and a `/foo` typed
     // input shouldn't slip through to the LLM as a regular prompt.
-    // Exceptions: pi prompt templates still go through normal prompt
-    // submission, while exact known skill commands go to the validated
-    // skill endpoint below. See `isPromptInvocation` / `skillInvocation`.
-    if (slashOpen && !isPromptInvocation && skillInvocation === undefined) {
+    // Prompt templates and SDK extension commands use the normal prompt path;
+    // exact known skill commands use the validated skill endpoint below.
+    if (
+      slashOpen &&
+      !isPromptInvocation &&
+      skillInvocation === undefined &&
+      !isExtensionCommandInvocation
+    ) {
       if (slashFiltered.length > 0) {
         slashRunSelected();
       } else {
@@ -1355,7 +1414,7 @@ export function ChatInput({ sessionId }: Props) {
           setAttachmentError("Attachments aren't sent with skills. Cleared.");
         }
         await api.invokeSkill(sessionId, skillInvocation.name, skillInvocation.instructions);
-      } else if (isStreaming) {
+      } else if (isStreaming && !isExtensionCommandInvocation) {
         // Steer doesn't accept attachments today — the SDK's steer()
         // takes (text, images?) which we COULD wire, but cleaner to
         // ship steer-with-text-only first. Clear immediately + warn
@@ -1367,7 +1426,15 @@ export function ChatInput({ sessionId }: Props) {
         }
         await sendSteer(sessionId, rawValue);
       } else {
-        await sendPrompt(sessionId, rawValue, attachments.length > 0 ? attachments : undefined);
+        // Extension commands always use session.prompt(), not steer: the SDK
+        // executes them immediately during streaming and preserves their
+        // command-handler semantics.
+        await sendPrompt(
+          sessionId,
+          rawValue,
+          attachments.length > 0 ? attachments : undefined,
+          !isExtensionCommandInvocation,
+        );
       }
       setText("");
       clearAttachments();
@@ -1419,12 +1486,13 @@ export function ChatInput({ sessionId }: Props) {
           return;
         }
         if (e.key === "Enter" || e.key === "Tab") {
-          // Pi-prompt invocations and exact known skill invocations
-          // fall through to normal submit handling on Enter. This keeps
-          // prompt-template behavior unchanged and preserves all skill
-          // arguments instead of re-running a palette entry that would
-          // clobber them. Tab still discovers / fills in.
-          if ((isPromptInvocation || skillInvocation !== undefined) && e.key === "Enter") {
+          // Prompt-template, skill, and SDK extension-command invocations
+          // fall through to normal textarea handling on Enter. This preserves
+          // typed arguments; Tab still discovers or fills commands in.
+          if (
+            (isPromptInvocation || skillInvocation !== undefined || isExtensionCommandInvocation) &&
+            e.key === "Enter"
+          ) {
             // Intentionally fall through.
           } else {
             e.preventDefault();

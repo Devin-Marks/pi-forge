@@ -347,19 +347,27 @@ async function requireLiveSession(
   return live;
 }
 
-async function preflight(
-  req: FastifyRequest,
-  reply: FastifyReply,
-): Promise<LiveSession | undefined> {
-  const live = await requireLiveSession(req, reply);
-  if (live === undefined) return undefined;
+/**
+ * SDK extension commands are handled by `session.prompt()` before model/auth
+ * preflight and execute immediately even during an active agent run. Match
+ * the SDK's space-only parser exactly so this route neither misclassifies a
+ * command nor alters the text passed to its handler.
+ */
+function isRegisteredExtensionCommand(live: LiveSession, text: string): boolean {
+  if (!text.startsWith("/")) return false;
+  const spaceIndex = text.indexOf(" ");
+  const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
+  return live.session.extensionRunner.getCommand(commandName) !== undefined;
+}
+
+async function validateModelForPrompt(live: LiveSession, reply: FastifyReply): Promise<boolean> {
   const model = live.session.model;
   if (model === undefined) {
     await reply.code(400).send({
       error: "no_model_configured",
       message: "no model is configured for this session",
     });
-    return undefined;
+    return false;
   }
   await live.session.modelRuntime.reloadConfig();
   await syncStoredApiKeyToRuntime(live.session.modelRuntime, model.provider);
@@ -368,9 +376,9 @@ async function preflight(
       error: "no_api_key",
       message: `No API key configured for provider "${model.provider}". Add one via PUT /api/v1/config/auth/${model.provider}.`,
     });
-    return undefined;
+    return false;
   }
-  return live;
+  return true;
 }
 
 export const promptRoutes: FastifyPluginAsync = async (fastify) => {
@@ -447,7 +455,7 @@ export const promptRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const live = await preflight(req, reply);
+      const live = await requireLiveSession(req, reply);
       if (live === undefined) return reply;
 
       let promptText: string;
@@ -491,7 +499,11 @@ export const promptRoutes: FastifyPluginAsync = async (fastify) => {
           return reply.code(400).send(parsed);
         }
         titleSourceText = parsed.text;
-        promptText = composePromptText(parsed);
+        // Commands receive only their typed invocation. Attachments are LLM
+        // context, so they have no command-handler representation.
+        promptText = isRegisteredExtensionCommand(live, parsed.text)
+          ? parsed.text
+          : composePromptText(parsed);
         streamingBehavior = parsed.streamingBehavior;
         images = parsed.images;
       } else {
@@ -500,20 +512,27 @@ export const promptRoutes: FastifyPluginAsync = async (fastify) => {
         streamingBehavior = req.body.streamingBehavior;
       }
 
-      // Expand `@<path>` file references inline (the chat input's
-      // `@`-autocomplete inserts these markers; server-side
-      // expansion keeps the LLM context as the source of truth and
-      // matches how attachments work). A path that doesn't resolve
-      // to a real file inside the workspace passes through untouched
-      // — see file-references.ts for the rules.
-      promptText = await expandFileReferences(promptText, live.workspacePath);
+      const isExtensionCommand = isRegisteredExtensionCommand(live, promptText);
+      if (!isExtensionCommand && !(await validateModelForPrompt(live, reply))) return reply;
 
-      // Name a brand-new, still-generic session from the user's first
-      // prompt before the agent run starts. This is deterministic (no
-      // extra LLM call), best-effort, and uses the user's typed text
-      // rather than expanded @file blocks / attachment bodies so large
-      // context blobs do not dominate the tab title.
-      const generatedSessionName = maybeNameSessionFromFirstPrompt(live, titleSourceText);
+      // Extension command handlers receive the exact text typed by the user.
+      // In particular, do not expand file references or create a session title
+      // before forwarding the command to the SDK's normal prompt path.
+      if (!isExtensionCommand) {
+        // Expand `@<path>` file references inline (the chat input's
+        // `@`-autocomplete inserts these markers; server-side expansion keeps
+        // the LLM context as the source of truth and matches attachments).
+        // A path that doesn't resolve to a real file inside the workspace
+        // passes through untouched — see file-references.ts for the rules.
+        promptText = await expandFileReferences(promptText, live.workspacePath);
+      }
+
+      // Name a brand-new, still-generic session from the user's first normal
+      // prompt before the agent run starts. Extension commands need not start
+      // an LLM run and must not change the session name as a side effect.
+      const generatedSessionName = isExtensionCommand
+        ? undefined
+        : maybeNameSessionFromFirstPrompt(live, titleSourceText);
 
       // No app-level composed-prompt cap: per-file size limits
       // already prevent runaway memory pressure during multipart
@@ -666,8 +685,9 @@ export const promptRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (req, reply) => {
-      const live = await preflight(req, reply);
+      const live = await requireLiveSession(req, reply);
       if (live === undefined) return reply;
+      if (!(await validateModelForPrompt(live, reply))) return reply;
 
       // Validate against both views deliberately. `listSkills` tells us whether
       // the skill is known and currently effective for this project, while the

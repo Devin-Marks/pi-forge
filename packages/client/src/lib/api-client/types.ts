@@ -382,6 +382,12 @@ export interface UnifiedSession {
 
 export type ModelThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
+export interface ExtensionCommandSummary {
+  /** SDK invocation name without the leading slash. */
+  name: string;
+  description?: string;
+}
+
 export interface SessionSummary {
   sessionId: string;
   projectId: string;
