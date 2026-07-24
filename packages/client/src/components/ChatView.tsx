@@ -77,7 +77,6 @@ const ChatDiffViewContext = createContext<{
 });
 
 const CHAT_VIEW_TYPE_KEY = "forge.chat.viewType";
-const EXTENSION_NOTIFICATION_TIMEOUT_MS = 6_000;
 function readChatViewType(): ChatViewType {
   try {
     return localStorage.getItem(CHAT_VIEW_TYPE_KEY) === "split" ? "split" : "unified";
@@ -223,16 +222,6 @@ export function ChatView({ sessionId }: Props) {
       // ignore — choice still applies for this session
     }
   };
-
-  useEffect(() => {
-    const timers = extensionNotifications.map((notification) =>
-      window.setTimeout(
-        () => dismissExtensionUiNotification(sessionId, notification.id),
-        Math.max(0, notification.receivedAt + EXTENSION_NOTIFICATION_TIMEOUT_MS - Date.now()),
-      ),
-    );
-    return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [dismissExtensionUiNotification, extensionNotifications, sessionId]);
 
   // Phase 15 — session tree overlay. The button lives in a tiny
   // toolbar above the scroll container so it's always visible
@@ -785,8 +774,8 @@ export function ChatView({ sessionId }: Props) {
 
 /**
  * Extension feedback is intentionally rendered in the scrolling timeline,
- * not as a session-state banner. It remains store-only and is dismissed after
- * a short delay, so extension output never becomes part of Pi's transcript.
+ * not as a session-state banner. It remains store-only until the user dismisses
+ * it, so extension output never becomes part of Pi's transcript.
  */
 function ExtensionNotificationEntry({
   notification,

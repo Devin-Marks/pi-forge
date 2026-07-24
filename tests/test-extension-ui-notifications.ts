@@ -53,20 +53,30 @@ try {
     message: "Command feedback: normal",
     level: "info",
   });
+  receivedAt = 2_750;
+  store.enqueueExtensionUiNotification(sessionId, {
+    message: "Command feedback: failed",
+    level: "error",
+  });
 } finally {
   Date.now = realDateNow;
 }
 
 let notifications = useSessionStore.getState().extensionNotificationsBySession[sessionId] ?? [];
 assert(
-  "queues consecutive extension notifications in arrival order",
-  notifications.length === 2 &&
+  "keeps info, warning, and error extension feedback in arrival order",
+  notifications.length === 3 &&
     notifications[0]?.level === "warning" &&
     notifications[0]?.receivedAt === 2_000 &&
     notifications[0]?.message.includes("**Interactive dialog unavailable.**") &&
+    notifications[1]?.level === "info" &&
     notifications[1]?.receivedAt === 2_500 &&
     notifications[1]?.arrivalOrder > (notifications[0]?.arrivalOrder ?? Number.MAX_SAFE_INTEGER) &&
-    notifications[1]?.message === "Command feedback: normal",
+    notifications[1]?.message === "Command feedback: normal" &&
+    notifications[2]?.level === "error" &&
+    notifications[2]?.receivedAt === 2_750 &&
+    notifications[2]?.arrivalOrder > (notifications[1]?.arrivalOrder ?? Number.MAX_SAFE_INTEGER) &&
+    notifications[2]?.message === "Command feedback: failed",
   JSON.stringify(notifications),
 );
 assert(
@@ -82,7 +92,7 @@ assert(
       position: { timestamp: notification.receivedAt, order: notification.arrivalOrder },
     })),
   )[1]?.join(" | ") ===
-    "**Interactive dialog unavailable.** Use the [attachment button](#upload). | Command feedback: normal",
+    "**Interactive dialog unavailable.** Use the [attachment button](#upload). | Command feedback: normal | Command feedback: failed",
 );
 assert(
   "orders extension feedback with streaming, queued, and quick-action entries",
@@ -96,7 +106,7 @@ assert(
       },
     },
     { item: "queued", position: { timestamp: 2_250, order: 3 } },
-    { item: "quick-action", position: { timestamp: 2_750, order: 4 } },
+    { item: "quick-action", position: { timestamp: 2_900, order: 4 } },
   ])[1]?.join(" | ") === "streaming | extension | queued | quick-action",
 );
 assert(
@@ -109,14 +119,24 @@ assert(
 useSessionStore.getState().dismissExtensionUiNotification(sessionId, notifications[0]?.id);
 notifications = useSessionStore.getState().extensionNotificationsBySession[sessionId] ?? [];
 assert(
-  "dismissing the visible notification advances to the next notification",
-  notifications.length === 1 && notifications[0]?.message === "Command feedback: normal",
+  "dismissing one notification preserves the remaining feedback",
+  notifications.length === 2 &&
+    notifications[0]?.message === "Command feedback: normal" &&
+    notifications[1]?.message === "Command feedback: failed",
   JSON.stringify(notifications),
 );
 
-useSessionStore.getState().dismissExtensionUiNotification(sessionId);
+useSessionStore.getState().dismissExtensionUiNotification(sessionId, notifications[0]?.id);
+notifications = useSessionStore.getState().extensionNotificationsBySession[sessionId] ?? [];
 assert(
-  "dismissing the final notification clears its queue",
+  "dismissing the next notification preserves later feedback",
+  notifications.length === 1 && notifications[0]?.message === "Command feedback: failed",
+  JSON.stringify(notifications),
+);
+
+useSessionStore.getState().dismissExtensionUiNotification(sessionId, notifications[0]?.id);
+assert(
+  "explicitly dismissing the final notification clears its queue",
   useSessionStore.getState().extensionNotificationsBySession[sessionId] === undefined,
 );
 
