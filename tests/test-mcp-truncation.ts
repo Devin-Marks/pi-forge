@@ -21,8 +21,10 @@
  *     entry coming from an MCP server gets truncated end-to-end.
  *   - The 60/40 head/tail ratio is honored.
  */
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -59,6 +61,33 @@ interface ToolBridgeModule {
   MCP_TEXT_HEAD_RATIO: number;
   getMcpResultTruncationSettings: () => { enabled: boolean; maxChars: number };
   setMcpResultTruncationSettings: (settings: { enabled: boolean; maxChars: number }) => void;
+  getMcpResultSpoolingSettings: () => {
+    enabled: boolean;
+    thresholdChars: number;
+    directory: string;
+    format: "json";
+  };
+  setMcpResultSpoolingSettings: (settings: {
+    enabled: boolean;
+    thresholdChars: number;
+    directory: string;
+    format: "json";
+  }) => void;
+  measureMcpResultTextChars: (res: unknown) => number;
+  bridgeMcpTool: (opts: {
+    serverName: string;
+    toolName: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+    getClient: () => unknown;
+    spoolingContext?: { workspacePath: string };
+  }) => {
+    execute: (
+      toolCallId: string,
+      params: unknown,
+      signal?: AbortSignal,
+    ) => Promise<{ content: ContentBlock[] }>;
+  };
 }
 
 async function main(): Promise<void> {
@@ -72,6 +101,10 @@ async function main(): Promise<void> {
     MCP_TEXT_HEAD_RATIO,
     getMcpResultTruncationSettings,
     setMcpResultTruncationSettings,
+    getMcpResultSpoolingSettings,
+    setMcpResultSpoolingSettings,
+    measureMcpResultTextChars,
+    bridgeMcpTool,
   } = mod;
 
   const headLen = Math.floor(MCP_TEXT_CAP_CHARS * MCP_TEXT_HEAD_RATIO);
@@ -274,6 +307,220 @@ async function main(): Promise<void> {
     }
   }
   setMcpResultTruncationSettings({ enabled: true, maxChars: MCP_TEXT_CAP_CHARS });
+
+  // ---------- spooling: disabled preserves truncation ----------
+  {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-forge-mcp-spool-disabled-"));
+    try {
+      setMcpResultSpoolingSettings({
+        enabled: false,
+        thresholdChars: 100,
+        directory: ".mcp-results",
+        format: "json",
+      });
+      const tool = bridgeMcpTool({
+        serverName: "srv",
+        toolName: "disabled",
+        description: "",
+        inputSchema: { type: "object", properties: {} },
+        getClient: () => ({
+          callTool: async () => ({ content: [{ type: "text", text: "D".repeat(50_000) }] }),
+        }),
+        spoolingContext: { workspacePath: workspace },
+      });
+      const out = await tool.execute("call-disabled", {});
+      const text = out.content[0]?.type === "text" ? out.content[0].text : "";
+      assert(
+        "spooling disabled: truncation still applies",
+        text.startsWith("MCP_RESULT_TRUNCATED:") && !text.includes("MCP_RESULT_SPOOLED"),
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }
+
+  // ---------- spooling: below threshold remains inline ----------
+  {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-forge-mcp-spool-small-"));
+    try {
+      setMcpResultSpoolingSettings({
+        enabled: true,
+        thresholdChars: 100,
+        directory: ".mcp-results",
+        format: "json",
+      });
+      const tool = bridgeMcpTool({
+        serverName: "srv",
+        toolName: "small",
+        description: "",
+        inputSchema: { type: "object", properties: {} },
+        getClient: () => ({
+          callTool: async () => ({ content: [{ type: "text", text: "short result" }] }),
+        }),
+        spoolingContext: { workspacePath: workspace },
+      });
+      const out = await tool.execute("call-1", {});
+      assert(
+        "spooling below threshold: stays inline",
+        out.content[0]?.type === "text" && out.content[0].text === "short result",
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }
+
+  // ---------- spooling: above threshold writes complete raw JSON ----------
+  {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-forge-mcp-spool-large-"));
+    try {
+      const fullText = "L".repeat(240);
+      setMcpResultSpoolingSettings({
+        enabled: true,
+        thresholdChars: 100,
+        directory: ".mcp-results",
+        format: "json",
+      });
+      const tool = bridgeMcpTool({
+        serverName: "server/name",
+        toolName: "tool name",
+        description: "",
+        inputSchema: { type: "object", properties: {} },
+        getClient: () => ({
+          callTool: async () => ({
+            content: [
+              { type: "text", text: fullText },
+              { type: "image", data: "base64-image", mimeType: "image/png" },
+            ],
+            structuredContent: { count: 1 },
+          }),
+        }),
+        spoolingContext: { workspacePath: workspace },
+      });
+      const out = await tool.execute("call-2", {});
+      const summary = out.content[0]?.type === "text" ? out.content[0].text : "";
+      const pathMatch = /^Path: (.+)$/m.exec(summary);
+      assert(
+        "spooling above threshold: summary returned",
+        summary.startsWith("MCP_RESULT_SPOOLED:"),
+      );
+      assert("spooling above threshold: path included", pathMatch !== null, summary.slice(0, 300));
+      assert("spooling above threshold: image data not inline", !summary.includes("base64-image"));
+      assert(
+        "spooling above threshold: no payload preview inline",
+        !summary.includes("L".repeat(24)),
+      );
+      assert(
+        "spooling above threshold: tells model preview is omitted",
+        summary.includes("No result preview is included inline"),
+      );
+      if (pathMatch?.[1] !== undefined) {
+        const stored = await readFile(join(workspace, pathMatch[1]), "utf8");
+        assert("spooling above threshold: writes raw text", stored.includes(fullText));
+        assert("spooling above threshold: preserves image JSON", stored.includes("base64-image"));
+        assert(
+          "spooling above threshold: path is in configured dir",
+          pathMatch[1].startsWith(".mcp-results/"),
+        );
+      }
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }
+
+  // ---------- spooling: invalid directory falls back to truncation ----------
+  {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-forge-mcp-spool-invalid-"));
+    try {
+      setMcpResultSpoolingSettings({
+        enabled: true,
+        thresholdChars: 100,
+        directory: "../escape",
+        format: "json",
+      });
+      const tool = bridgeMcpTool({
+        serverName: "srv",
+        toolName: "escape",
+        description: "",
+        inputSchema: { type: "object", properties: {} },
+        getClient: () => ({
+          callTool: async () => ({ content: [{ type: "text", text: "E".repeat(50_000) }] }),
+        }),
+        spoolingContext: { workspacePath: workspace },
+      });
+      const out = await tool.execute("call-3", {});
+      const text = out.content[0]?.type === "text" ? out.content[0].text : "";
+      assert("spooling invalid dir: warning returned", text.startsWith("MCP_RESULT_SPOOL_FAILED:"));
+      assert(
+        "spooling invalid dir: truncation still applies",
+        text.includes("MCP_RESULT_TRUNCATED"),
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }
+
+  // ---------- spooling: isError bypasses spooling ----------
+  {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-forge-mcp-spool-error-"));
+    try {
+      setMcpResultSpoolingSettings({
+        enabled: true,
+        thresholdChars: 100,
+        directory: ".mcp-results",
+        format: "json",
+      });
+      const tool = bridgeMcpTool({
+        serverName: "srv",
+        toolName: "error",
+        description: "",
+        inputSchema: { type: "object", properties: {} },
+        getClient: () => ({
+          callTool: async () => ({
+            content: [{ type: "text", text: "boom " + "B".repeat(500) }],
+            isError: true,
+          }),
+        }),
+        spoolingContext: { workspacePath: workspace },
+      });
+      const out = await tool.execute("call-4", {});
+      const text = out.content[0]?.type === "text" ? out.content[0].text : "";
+      assert(
+        "spooling isError: stays inline",
+        text.includes("[error]") && !text.includes("MCP_RESULT_SPOOLED"),
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }
+
+  // ---------- spooling settings + measurement ----------
+  {
+    const settings = getMcpResultSpoolingSettings();
+    assert(
+      "spooling settings: persisted in runtime",
+      settings.enabled === true && settings.thresholdChars === 100 && settings.format === "json",
+      JSON.stringify(settings),
+    );
+    assert(
+      "measurement: sums text content",
+      measureMcpResultTextChars({
+        content: [
+          { type: "text", text: "abc" },
+          { type: "text", text: "defg" },
+        ],
+      }) === 7,
+    );
+    assert(
+      "measurement: structured-only content is measured untruncated",
+      measureMcpResultTextChars({ structuredContent: { data: "S".repeat(20_000) } }) > 20_000,
+    );
+  }
+  setMcpResultSpoolingSettings({
+    enabled: true,
+    thresholdChars: MCP_TEXT_CAP_CHARS,
+    directory: ".mcp-results",
+    format: "json",
+  });
 
   // ---------- 60/40 head/tail ratio honored ----------
   {

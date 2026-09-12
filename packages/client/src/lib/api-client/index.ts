@@ -676,9 +676,14 @@ function vMcpSettings(value: unknown, status: number): McpSettingsResponse {
     typeof value.total !== "number" ||
     !isObject(value.truncation) ||
     typeof value.truncation.enabled !== "boolean" ||
-    typeof value.truncation.maxChars !== "number"
+    typeof value.truncation.maxChars !== "number" ||
+    !isObject(value.spooling) ||
+    typeof value.spooling.enabled !== "boolean" ||
+    typeof value.spooling.thresholdChars !== "number" ||
+    typeof value.spooling.directory !== "string" ||
+    value.spooling.format !== "json"
   ) {
-    fail(status, "expected { enabled, connected, total, truncation }");
+    fail(status, "expected { enabled, connected, total, truncation, spooling }");
   }
   return {
     enabled: value.enabled,
@@ -687,6 +692,12 @@ function vMcpSettings(value: unknown, status: number): McpSettingsResponse {
     truncation: {
       enabled: value.truncation.enabled,
       maxChars: value.truncation.maxChars,
+    },
+    spooling: {
+      enabled: value.spooling.enabled,
+      thresholdChars: value.spooling.thresholdChars,
+      directory: value.spooling.directory,
+      format: "json",
     },
   };
 }
@@ -2075,6 +2086,11 @@ export const api = {
     request("/api/v1/mcp/settings", vMcpSettings, {
       method: "PUT",
       body: { truncation },
+    }),
+  setMcpSpooling: (spooling: McpSettingsResponse["spooling"]) =>
+    request("/api/v1/mcp/settings", vMcpSettings, {
+      method: "PUT",
+      body: { spooling },
     }),
   /** GLOBAL servers (config + status). Pass projectId to also include
    *  status entries for the project's `.mcp.json` servers. */

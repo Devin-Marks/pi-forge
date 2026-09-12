@@ -25,9 +25,22 @@
     "qs": ">=6.16.0",
     "tmp": ">=0.2.6",
     "uuid": ">=11.1.1",
-    "@xmldom/xmldom": "0.8.15",
+    "mammoth": {
+      "@xmldom/xmldom": "0.8.15"
+    },
+    "fast-uri": "3.1.6",
     "find-my-way": "9.7.0",
-    "tar": "7.5.22"
+    "ip-address": "10.3.1",
+    "minimatch@3.1.5": {
+      "brace-expansion": "1.1.18"
+    },
+    "minimatch@5.1.9": {
+      "brace-expansion": "2.1.4"
+    },
+    "minimatch@10.2.5": {
+      "brace-expansion": "5.0.9"
+    },
+    "@hono/node-server": "1.19.17"
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "0.84.3",
