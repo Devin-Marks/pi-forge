@@ -39,8 +39,7 @@
     },
     "minimatch@10.2.5": {
       "brace-expansion": "5.0.9"
-    },
-    "@hono/node-server": "1.19.17"
+    }
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "0.84.3",
@@ -53,7 +52,6 @@
     "eslint-config-prettier": "^10.1.2",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
-    "fastify": "^5.12.4",
     "globals": "^17.7.0",
     "marked": "^18.0.5",
     "prettier": "^3.8.4",
