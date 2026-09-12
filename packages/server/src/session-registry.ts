@@ -29,6 +29,7 @@ import {
   ensureGlobalLoaded as mcpEnsureGlobalLoaded,
   ensureProjectLoaded as mcpEnsureProjectLoaded,
   isGloballyEnabled as mcpIsGloballyEnabled,
+  refreshForNewSession as mcpRefreshForNewSession,
 } from "./mcp/manager.js";
 import { createAskUserQuestionTool } from "./ask-user-question/tool.js";
 import { createTodoTool } from "./todo/tool.js";
@@ -833,7 +834,9 @@ export async function createSession(
   // agentDir IS passed: without it, the SDK falls back to ~/.pi/agent and
   // ignores PI_CONFIG_DIR entirely, breaking auth.json/models.json wiring
   // for Phase 6's prompt route.
-  const mcpTools = await resolveMcpCustomTools(projectId, workspacePath);
+  const mcpTools = await resolveMcpCustomTools(projectId, workspacePath, {
+    refreshDiscovery: true,
+  });
   // SessionManager.getSessionId() is synchronous and stable from
   // create() onward — read it BEFORE createAgentSession so the
   // forge-native ask_user_question tool can bind to the right
@@ -2341,13 +2344,26 @@ async function buildSessionSettingsManager(
  * awaits the manager's global load/restart gate so a fast browser
  * reconnect after container recreation does not create an AgentSession
  * before persisted stdio MCP servers have respawned.
+ *
+ * Brand-new sessions pass `refreshDiscovery` so the manager re-reads MCP
+ * configuration and calls listTools() on unchanged connected servers before
+ * the SDK snapshots `customTools`. Resume/fork/tool-refresh paths keep the
+ * existing cached lifecycle to avoid changing tools underneath historical
+ * session semantics.
  */
 async function resolveMcpCustomTools(
   projectId: string,
   workspacePath: string,
+  opts: { refreshDiscovery?: boolean } = {},
 ): Promise<ReturnType<typeof mcpCustomToolsForProject>> {
-  await mcpEnsureGlobalLoaded().catch(() => undefined);
+  if (opts.refreshDiscovery === true) {
+    await mcpRefreshForNewSession(projectId, workspacePath).catch(() => undefined);
+  } else {
+    await mcpEnsureGlobalLoaded().catch(() => undefined);
+    if (mcpIsGloballyEnabled()) {
+      await mcpEnsureProjectLoaded(projectId, workspacePath).catch(() => undefined);
+    }
+  }
   if (!mcpIsGloballyEnabled()) return [];
-  await mcpEnsureProjectLoaded(projectId, workspacePath).catch(() => undefined);
   return mcpCustomToolsForProject(projectId);
 }
