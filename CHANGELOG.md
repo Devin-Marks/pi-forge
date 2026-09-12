@@ -15,6 +15,23 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.5.4] — 2026-09-11
+
+### Added
+
+- **Resizable project sidebar.** The project/session sidebar can now be dragged wider or narrower, with persisted sizing and hardened bounds so the workspace layout remains usable.
+- **MCP result spooling for large tool output.** Oversized MCP text results are written to workspace files and surfaced with a file reference instead of flooding the chat stream, keeping sessions responsive while preserving access to full output.
+
+### Changed
+
+- **Dependency vulnerability remediation for v1.5.4.** Refreshed affected runtime, build, and tooling dependencies and overrides to resolve reported npm vulnerabilities while avoiding unrelated dependency churn.
+
+### Fixed
+
+- **Tool-call aggregate errors reflect failed child calls.** Batched tool-call status now treats child tool errors as failed aggregate results so users see the correct failure state instead of a misleading success.
+- **New sessions pick up refreshed MCP tools.** MCP tool definitions are refreshed when sessions start, so newly created chats can use the latest configured server tools without requiring a server restart.
+- **Auth summary reads are safe in restricted runtimes.** Sandbox and unreadable-auth scenarios now avoid leaking raw auth file access errors into model/runtime paths while still reporting provider presence safely.
+
 ## [1.5.3] — 2026-08-26
 
 ### Added
