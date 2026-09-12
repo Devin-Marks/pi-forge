@@ -17,14 +17,14 @@
  * CLIENT_DIST_PATH override, dynamic import of the server entry. A
  * regression in the shim would only surface here.
  *
- * Note: this test runs `node publish/bin/pi-forge.mjs` while still
- * inside the repo, so Node's module resolution finds the server's
- * runtime deps via the hoisted root `node_modules/`. A real `npm i
- * pi-forge` install gets its deps from the synthetic package.json's
- * `dependencies` field — which we assert separately by shape.
+ * Before booting the bin shim, this test runs a production install
+ * inside `publish/`. Workspace installs are free to place server deps
+ * under `packages/server/node_modules/`, which the flat publish artifact
+ * cannot see; installing from the synthetic package.json catches missing
+ * runtime deps the same way a real `npm i pi-forge` consumer would.
  *
- * Builds the workspace + assembles publish/ on every run (~5s warm,
- * ~30s cold). Costly but we want the assertion that "the publish
+ * Builds the workspace + assembles publish/ + installs runtime deps on
+ * every run. Costly but we want the assertion that "the publish
  * artifact is bootable" to be green every CI run, not just on tag.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -192,6 +192,15 @@ async function main(): Promise<void> {
       `got ${synth.dependencies[dep] ?? "<missing>"}`,
     );
   }
+
+  console.log("[test-publish-package] installing publish runtime deps…");
+  const install = spawnSync("npm", ["install", "--omit=dev", "--no-audit", "--no-fund"], {
+    cwd: publishDir,
+    stdio: "inherit",
+    env: process.env,
+  });
+  assert("publish npm install exits 0", install.status === 0, `exit=${install.status ?? "null"}`);
+  if (install.status !== 0) process.exit(1);
 
   // --- Boot the bin shim ---------------------------------------------
   // Use isolated dirs so this test doesn't touch the user's real

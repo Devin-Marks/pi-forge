@@ -58,6 +58,16 @@ async function getRaw(
   return { status: res.status, buf: Buffer.from(ab), headers: res.headers };
 }
 
+async function getJson(base: string, path: string): Promise<JsonResponse> {
+  const res = await fetch(`${base}${path}`);
+  const text = await res.text();
+  return {
+    status: res.status,
+    body: text === "" ? undefined : JSON.parse(text),
+    headers: res.headers,
+  };
+}
+
 async function postMultipart(
   base: string,
   path: string,
@@ -384,7 +394,42 @@ async function main(): Promise<void> {
       );
     }
 
-    // ---- 4. Import with malformed JSON → entire import fails atomically ----
+    // ---- 4. Imported runtime MCP settings apply without server restart ----
+    {
+      const before = await getJson(base, "/api/v1/mcp/settings");
+      assert("GET /mcp/settings before disabled import → 200", before.status === 200);
+      assert(
+        "  MCP initially enabled in runtime cache",
+        (before.body as { enabled?: boolean })?.enabled === true,
+        JSON.stringify(before.body),
+      );
+
+      const tar = await makeTarGz({
+        "mcp.json": JSON.stringify({ disabled: true, servers: {} }),
+      });
+      const r = await postMultipart(
+        base,
+        "/api/v1/config/import",
+        "file",
+        "config.tar.gz",
+        "application/gzip",
+        tar,
+      );
+      assert("POST /config/import (mcp disabled) → 200", r.status === 200);
+      const summary = r.body as { imported: string[]; skipped: string[]; errors: unknown[] };
+      assert("  mcp.json imported", summary.imported.includes("mcp.json"), JSON.stringify(summary));
+      assert("  no import errors", summary.errors.length === 0, JSON.stringify(summary.errors));
+
+      const after = await getJson(base, "/api/v1/mcp/settings");
+      assert("GET /mcp/settings after import → 200", after.status === 200);
+      assert(
+        "  imported mcp.json is reflected in runtime cache without restart",
+        (after.body as { enabled?: boolean })?.enabled === false,
+        JSON.stringify(after.body),
+      );
+    }
+
+    // ---- 5. Import with malformed JSON → entire import fails atomically ----
     {
       // Snapshot current state so we can prove the failed import
       // didn't mutate anything.
@@ -437,7 +482,7 @@ async function main(): Promise<void> {
       );
     }
 
-    // ---- 5. Import with no file in the multipart → 400 ----
+    // ---- 6. Import with no file in the multipart → 400 ----
     {
       const fd = new FormData();
       fd.append("notafile", "hi");
@@ -445,7 +490,7 @@ async function main(): Promise<void> {
       assert("POST /config/import (no file) → 400", res.status === 400, `status=${res.status}`);
     }
 
-    // ---- 6. Import a non-gzip body → 400/500 with a parseable error ----
+    // ---- 7. Import a non-gzip body → 400/500 with a parseable error ----
     {
       // Plain (un-gzipped) tar still has a tar header but our buffer
       // here is just gibberish — parse failure should be surfaced as
@@ -472,7 +517,7 @@ async function main(): Promise<void> {
       );
     }
 
-    // ---- 7. Export with one file missing on disk → tar omits it ----
+    // ---- 8. Export with one file missing on disk → tar omits it ----
     {
       await rm(join(dataDir, "mcp.json"));
       const r = await getRaw(base, "/api/v1/config/export");
