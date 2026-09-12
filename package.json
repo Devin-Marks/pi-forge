@@ -44,7 +44,7 @@
   "devDependencies": {
     "@earendil-works/pi-agent-core": "0.84.3",
     "@earendil-works/pi-ai": "0.84.3",
-    "@earendil-works/pi-coding-agent": "0.84.3",
+    "@earendil-works/pi-coding-agent": "0.85.1",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.0.0",
     "concurrently": "^10.0.5",
