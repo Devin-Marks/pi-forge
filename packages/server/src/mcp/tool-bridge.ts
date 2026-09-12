@@ -334,7 +334,7 @@ interface McpCallResult {
   structuredContent?: unknown;
 }
 
-const MCP_SPOOL_PREVIEW_CHARS = 1_000;
+const MCP_SPOOL_PREVIEW_CHARS = 240;
 const MCP_SPOOL_SAFE_NAME_RE = /[^A-Za-z0-9_.-]+/g;
 
 let runtimeSpoolingSettings: McpResultSpoolingSettings = {
