@@ -3416,6 +3416,7 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
   const refreshProject = useMcpStore((s) => s.refreshProject);
   const setMcpEnabled = useMcpStore((s) => s.setMcpEnabled);
   const setMcpTruncation = useMcpStore((s) => s.setMcpTruncation);
+  const setMcpSpooling = useMcpStore((s) => s.setMcpSpooling);
   const upsertServer = useMcpStore((s) => s.upsertServer);
   const deleteServer = useMcpStore((s) => s.deleteServer);
   const probeServerStore = useMcpStore((s) => s.probeServer);
@@ -3428,6 +3429,12 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
   const [busy, setBusy] = useState(false);
   const [probing, setProbing] = useState<string | undefined>(undefined);
   const [truncationMaxDraft, setTruncationMaxDraft] = useState<string | undefined>(undefined);
+  const [spoolingThresholdDraft, setSpoolingThresholdDraft] = useState<string | undefined>(
+    undefined,
+  );
+  const [spoolingDirectoryDraft, setSpoolingDirectoryDraft] = useState<string | undefined>(
+    undefined,
+  );
 
   // Per-tool listing fetched alongside the server config so each
   // server row can cascade its tools (each tool gets its own
@@ -3498,6 +3505,25 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
       onError(undefined);
     } catch (err) {
       onError(`Failed to update MCP truncation: ${errorCode(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveSpooling = async (next: {
+    enabled: boolean;
+    thresholdChars: number;
+    directory: string;
+    format: "json";
+  }): Promise<void> => {
+    setBusy(true);
+    try {
+      await setMcpSpooling(next);
+      setSpoolingThresholdDraft(undefined);
+      setSpoolingDirectoryDraft(undefined);
+      onError(undefined);
+    } catch (err) {
+      onError(`Failed to update MCP spooling: ${errorCode(err)}`);
     } finally {
       setBusy(false);
     }
@@ -3701,6 +3727,78 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
           >
             {enabled ? "Enabled" : "Disabled"}
           </button>
+        </div>
+        <div className="flex flex-wrap items-end justify-between gap-3 border-t border-neutral-800 pt-3">
+          <div className="min-w-[240px] flex-1">
+            <div className="text-sm font-medium text-neutral-100">Result spooling</div>
+            <div className="text-[11px] text-neutral-500">
+              Writes oversized successful MCP results to workspace files before truncation. Default:
+              <code className="ml-1 font-mono">&lt;workspace&gt;/.mcp-results/</code>.
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <label className="text-[11px] text-neutral-500" htmlFor="mcp-spooling-threshold">
+              Threshold chars
+            </label>
+            <input
+              id="mcp-spooling-threshold"
+              type="number"
+              min={1}
+              max={1000000}
+              value={spoolingThresholdDraft ?? String(settings.spooling.thresholdChars)}
+              onChange={(e) => setSpoolingThresholdDraft(e.target.value)}
+              onBlur={() => {
+                const parsed = Number.parseInt(
+                  spoolingThresholdDraft ?? String(settings.spooling.thresholdChars),
+                  10,
+                );
+                if (
+                  Number.isFinite(parsed) &&
+                  parsed >= 1 &&
+                  parsed !== settings.spooling.thresholdChars
+                ) {
+                  void saveSpooling({ ...settings.spooling, thresholdChars: parsed });
+                } else {
+                  setSpoolingThresholdDraft(undefined);
+                }
+              }}
+              disabled={busy || !settings.spooling.enabled}
+              className="w-28 rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 disabled:opacity-50"
+            />
+            <label className="text-[11px] text-neutral-500" htmlFor="mcp-spooling-directory">
+              Directory
+            </label>
+            <input
+              id="mcp-spooling-directory"
+              type="text"
+              value={spoolingDirectoryDraft ?? settings.spooling.directory}
+              onChange={(e) => setSpoolingDirectoryDraft(e.target.value)}
+              onBlur={() => {
+                const next = (spoolingDirectoryDraft ?? settings.spooling.directory).trim();
+                if (next.length > 0 && next !== settings.spooling.directory) {
+                  void saveSpooling({ ...settings.spooling, directory: next });
+                } else {
+                  setSpoolingDirectoryDraft(undefined);
+                }
+              }}
+              disabled={busy || !settings.spooling.enabled}
+              className="w-40 rounded border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-100 disabled:opacity-50"
+            />
+            <label className="flex items-center gap-2 rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-300">
+              <input
+                type="checkbox"
+                checked={settings.spooling.enabled}
+                disabled={busy}
+                onChange={(e) =>
+                  void saveSpooling({
+                    ...settings.spooling,
+                    enabled: e.target.checked,
+                  })
+                }
+              />
+              <span>{settings.spooling.enabled ? "Spooling" : "Inline only"}</span>
+            </label>
+          </div>
         </div>
         <div className="flex flex-wrap items-end justify-between gap-3 border-t border-neutral-800 pt-3">
           <div className="min-w-[240px] flex-1">

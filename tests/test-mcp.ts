@@ -290,6 +290,17 @@ async function main(): Promise<void> {
         JSON.stringify({ enabled: true, maxChars: 30000 }),
       JSON.stringify(toolBridge.getMcpResultTruncationSettings()),
     );
+    assert(
+      "spooling default: enabled to .mcp-results at 30k chars",
+      JSON.stringify(toolBridge.getMcpResultSpoolingSettings()) ===
+        JSON.stringify({
+          enabled: true,
+          thresholdChars: 30000,
+          directory: ".mcp-results",
+          format: "json",
+        }),
+      JSON.stringify(toolBridge.getMcpResultSpoolingSettings()),
+    );
     const status1 = manager.getStatus();
     assert("global load: 1 server in pool", status1.length === 1);
     assert(

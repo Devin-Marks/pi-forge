@@ -2365,5 +2365,5 @@ async function resolveMcpCustomTools(
     }
   }
   if (!mcpIsGloballyEnabled()) return [];
-  return mcpCustomToolsForProject(projectId);
+  return mcpCustomToolsForProject(projectId, workspacePath);
 }
