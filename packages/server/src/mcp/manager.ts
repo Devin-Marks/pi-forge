@@ -118,13 +118,7 @@ export function isGloballyEnabled(): boolean {
 /* ----------------------------- public API ----------------------------- */
 
 export async function loadGlobal(): Promise<void> {
-  if (globalLoadPromise !== undefined) return globalLoadPromise;
-  globalLoadPromise = loadGlobalNow();
-  try {
-    await globalLoadPromise;
-  } finally {
-    globalLoadPromise = undefined;
-  }
+  await loadGlobalWithOptions();
 }
 
 export async function ensureGlobalLoaded(): Promise<void> {
@@ -132,18 +126,38 @@ export async function ensureGlobalLoaded(): Promise<void> {
   await loadGlobal();
 }
 
-async function loadGlobalNow(): Promise<void> {
+interface LoadOptions {
+  refreshConnectedTools?: boolean;
+}
+
+async function loadGlobalWithOptions(options: LoadOptions = {}): Promise<void> {
+  while (globalLoadPromise !== undefined) {
+    await globalLoadPromise;
+  }
+  globalLoadPromise = loadGlobalNow(options);
+  try {
+    await globalLoadPromise;
+  } finally {
+    globalLoadPromise = undefined;
+  }
+}
+
+async function loadGlobalNow(options: LoadOptions = {}): Promise<void> {
   const cfg = await readMcpJson();
   globallyEnabled = cfg.disabled !== true;
   setMcpResultTruncationSettings(normalizeMcpTruncationConfig(cfg.truncation));
-  await syncScope("global", cfg.servers);
+  await syncScope("global", cfg.servers, options);
   globalLoaded = true;
 }
 
-export async function loadProject(projectId: string, projectPath: string): Promise<void> {
+export async function loadProject(
+  projectId: string,
+  projectPath: string,
+  options: LoadOptions = {},
+): Promise<void> {
   cachedProjectPaths.set(projectId, projectPath);
   const cfg = await readProjectMcpJson(projectPath);
-  await syncScope({ project: projectId }, cfg);
+  await syncScope({ project: projectId }, cfg, options);
   loadedProjects.add(projectId);
 }
 
@@ -159,12 +173,20 @@ export async function ensureProjectLoaded(projectId: string, projectPath: string
  */
 export async function reloadGlobal(): Promise<void> {
   loadedProjects.clear(); // project files may reference globals too
-  globalLoadPromise = loadGlobalNow();
-  try {
-    await globalLoadPromise;
-  } finally {
-    globalLoadPromise = undefined;
-  }
+  await loadGlobalWithOptions();
+}
+
+/**
+ * Re-read configured MCP servers and refresh connected tool catalogues for
+ * a brand-new AgentSession. This keeps connection reuse intact for unchanged
+ * servers but calls listTools() again so added/removed server tools are
+ * reflected without a pi-forge process restart. Existing live sessions are
+ * intentionally left unchanged; resume/fork call sites use the cached pool.
+ */
+export async function refreshForNewSession(projectId: string, projectPath: string): Promise<void> {
+  await loadGlobalWithOptions({ refreshConnectedTools: true });
+  if (!globallyEnabled) return;
+  await loadProject(projectId, projectPath, { refreshConnectedTools: true });
 }
 
 /**
@@ -364,7 +386,11 @@ export async function disposeAll(): Promise<void> {
 
 /* ----------------------------- internals ----------------------------- */
 
-async function syncScope(scope: Scope, configs: Record<string, McpServerConfig>): Promise<void> {
+async function syncScope(
+  scope: Scope,
+  configs: Record<string, McpServerConfig>,
+  options: LoadOptions = {},
+): Promise<void> {
   // Disconnect + drop entries that no longer exist in the config (or
   // moved scope). Mutating during iteration is fine because we take a
   // snapshot of keys first.
@@ -385,11 +411,13 @@ async function syncScope(scope: Scope, configs: Record<string, McpServerConfig>)
       const sameConnectionFields = sameConnectionConfig(existing.config, cfg);
       existing.config = cfg;
       if (sameEnabled && sameConnectionFields && existing.state === "connected") {
-        // Nothing meaningful changed and the server is already usable;
-        // skip the disconnect/reconnect dance. If the previous attempt
-        // failed or the entry is idle (for example after a teardown-style
-        // reset), retry so persisted stdio servers can come back without a
+        // Nothing connection-level changed and the server is already usable;
+        // keep the connection, optionally refreshing the advertised tool
+        // catalogue for new-session discovery. If the previous attempt failed
+        // or the entry is idle (for example after a teardown-style reset),
+        // retry below so persisted stdio servers can come back without a
         // manual Probe click.
+        if (options.refreshConnectedTools === true) await refreshEntryTools(existing);
         continue;
       }
       await disconnectEntry(existing);
@@ -428,7 +456,7 @@ async function syncScope(scope: Scope, configs: Record<string, McpServerConfig>)
  */
 function sameConnectionConfig(a: McpServerConfig, b: McpServerConfig): boolean {
   if (a.url !== b.url) return false;
-  if (a.transport !== b.transport) return false;
+  if (!sameRequestedTransport(a.transport, b.transport)) return false;
   if (a.ignoreCertificateErrors !== b.ignoreCertificateErrors) return false;
   if (a.command !== b.command) return false;
   if (a.cwd !== b.cwd) return false;
@@ -436,6 +464,21 @@ function sameConnectionConfig(a: McpServerConfig, b: McpServerConfig): boolean {
   if (JSON.stringify(a.headers ?? {}) !== JSON.stringify(b.headers ?? {})) return false;
   if (JSON.stringify(a.env ?? {}) !== JSON.stringify(b.env ?? {})) return false;
   return true;
+}
+
+function sameRequestedTransport(
+  current: McpTransport | undefined,
+  next: McpTransport | undefined,
+): boolean {
+  const currentRequested = current ?? "auto";
+  const nextRequested = next ?? "auto";
+  if (currentRequested === nextRequested) return true;
+  // `connectEntry` stores the concrete transport selected for an `auto`
+  // remote config back onto the entry so Settings can display it. When the
+  // config is re-read and still says `auto`/undefined, treat the concrete
+  // cached value as connection-equivalent instead of reconnecting on every
+  // new-session refresh.
+  return nextRequested === "auto";
 }
 
 function entryScopeMatches(a: Scope, b: Scope): boolean {
@@ -469,7 +512,28 @@ async function connectEntry(entry: PoolEntry): Promise<void> {
     entry.client = client;
     entry.transport = transport;
     if (resolvedTransport !== undefined) entry.config.transport = resolvedTransport;
-    const list = await client.listTools();
+    await refreshEntryTools(entry);
+  } catch (err) {
+    delete entry.client;
+    delete entry.transport;
+    entry.tools = [];
+    entry.bridged = [];
+    entry.state = "error";
+    entry.lastError = sanitizeMcpDiagnostic(err instanceof Error ? err.message : String(err));
+    logMcpConnectionFailure(entry, err);
+  }
+}
+
+async function refreshEntryTools(entry: PoolEntry): Promise<void> {
+  if (entry.client === undefined) {
+    entry.tools = [];
+    entry.bridged = [];
+    entry.state = "error";
+    entry.lastError = "mcp: server is not connected";
+    return;
+  }
+  try {
+    const list = await entry.client.listTools();
     entry.tools = (list.tools ?? []).map((t) => ({
       name: t.name,
       description: typeof t.description === "string" ? t.description : "",
@@ -489,6 +553,7 @@ async function connectEntry(entry: PoolEntry): Promise<void> {
       }),
     );
     entry.state = "connected";
+    delete entry.lastError;
   } catch (err) {
     delete entry.client;
     delete entry.transport;
