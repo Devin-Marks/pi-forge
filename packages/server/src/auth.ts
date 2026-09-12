@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
+import type { IncomingHttpHeaders } from "node:http";
 import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import jwt from "jsonwebtoken";
 import { config } from "./config.js";
@@ -31,6 +32,8 @@ export interface JwtPayload {
   sub: "ui-user";
   iat: number;
   exp: number;
+  /** Authenticated login name used for telemetry attribution. */
+  username: string;
   /** When true, this token may only call `POST /auth/change-password`. */
   mustChangePassword: boolean;
 }
@@ -38,6 +41,17 @@ export interface JwtPayload {
 export interface IssuedToken {
   token: string;
   expiresAt: string;
+}
+
+export interface DashboardIdentityPayload {
+  iss: string;
+  aud: string;
+  sub: string;
+  email?: string;
+  groups: string[];
+  app: string;
+  iat: number;
+  exp: number;
 }
 
 export type PasswordSource = "stored" | "env" | "none";
@@ -64,7 +78,10 @@ export function constantTimeStringEqual(presented: string, expected: string): bo
   return timingSafeEqual(aPadded, bPadded) && a.length === b.length;
 }
 
-export function generateToken(opts: { mustChangePassword: boolean }): IssuedToken {
+export function generateToken(opts: {
+  mustChangePassword: boolean;
+  username: string;
+}): IssuedToken {
   if (config.auth.jwtSecret === undefined) {
     throw new Error("auth: cannot generate token — JWT_SECRET not configured");
   }
@@ -72,8 +89,9 @@ export function generateToken(opts: { mustChangePassword: boolean }): IssuedToke
   const token = jwt.sign(
     {
       sub: "ui-user",
+      username: opts.username,
       mustChangePassword: opts.mustChangePassword,
-    } satisfies Pick<JwtPayload, "sub" | "mustChangePassword">,
+    } satisfies Pick<JwtPayload, "sub" | "username" | "mustChangePassword">,
     config.auth.jwtSecret,
     {
       algorithm: "HS256",
@@ -106,7 +124,14 @@ export function verifyToken(token: string, opts: { touch?: boolean } = {}): JwtP
       typeof (decoded as { mustChangePassword?: unknown }).mustChangePassword === "boolean"
         ? (decoded as { mustChangePassword: boolean }).mustChangePassword
         : false;
-    return { sub: "ui-user", iat: decoded.iat, exp: decoded.exp, mustChangePassword };
+    // Tokens issued before username attribution existed remain valid and map
+    // to the configured local admin rather than breaking active logins.
+    const username =
+      typeof (decoded as { username?: unknown }).username === "string" &&
+      (decoded as { username: string }).username.length > 0
+        ? (decoded as { username: string }).username
+        : config.auth.localAdminUsername;
+    return { sub: "ui-user", iat: decoded.iat, exp: decoded.exp, username, mustChangePassword };
   } catch {
     // jsonwebtoken throws on malformed/expired/wrong-secret tokens.
     // Caller treats undefined as "no valid token" without
@@ -133,6 +158,73 @@ export function verifyApiKey(presented: string): boolean {
   const expected = config.auth.apiKey;
   if (expected === undefined) return false;
   return constantTimeStringEqual(presented, expected);
+}
+
+export function verifyDashboardIdentity(
+  headers: IncomingHttpHeaders,
+): DashboardIdentityPayload | undefined {
+  const secret = config.auth.dashboardIdentity.secret;
+  if (secret === undefined) return undefined;
+  const encoded = singleHeader(headers["x-dashboard-identity"]);
+  const signature = singleHeader(headers["x-dashboard-signature"]);
+  if (encoded === undefined || signature === undefined) return undefined;
+
+  const expected = createHmac("sha256", secret).update(encoded).digest("hex");
+  if (!constantTimeStringEqual(signature, expected)) return undefined;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  const payload = parsed as Record<string, unknown>;
+  if (payload.iss !== config.auth.dashboardIdentity.issuer) return undefined;
+  if (payload.aud !== config.auth.dashboardIdentity.audience) return undefined;
+  if (payload.app !== config.auth.dashboardIdentity.audience) return undefined;
+  if (typeof payload.sub !== "string" || payload.sub.length === 0) return undefined;
+  if (typeof payload.iat !== "number" || typeof payload.exp !== "number") return undefined;
+  if (!Number.isFinite(payload.iat) || !Number.isFinite(payload.exp)) return undefined;
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.exp <= now) return undefined;
+  if (payload.iat > now + config.auth.dashboardIdentity.maxFutureIatSkewSeconds) return undefined;
+  if (payload.iat < now - config.auth.dashboardIdentity.maxAgeSeconds) return undefined;
+  if (payload.exp - payload.iat > config.auth.dashboardIdentity.maxAgeSeconds) return undefined;
+  if (
+    !Array.isArray(payload.groups) ||
+    !payload.groups.every((group) => typeof group === "string")
+  ) {
+    return undefined;
+  }
+  const configuredGroups = config.auth.dashboardIdentity.allowedGroups;
+  if (configuredGroups.length > 0) {
+    const userGroups = new Set(payload.groups.map((group) => group.toLocaleLowerCase("en-US")));
+    const allowed = configuredGroups.some((group) =>
+      userGroups.has(group.toLocaleLowerCase("en-US")),
+    );
+    if (!allowed) return undefined;
+  }
+  if (payload.email !== undefined && typeof payload.email !== "string") return undefined;
+  const result: DashboardIdentityPayload = {
+    iss: payload.iss,
+    aud: payload.aud,
+    sub: payload.sub,
+    groups: payload.groups,
+    app: payload.app,
+    iat: payload.iat,
+    exp: payload.exp,
+  };
+  if (payload.email !== undefined) result.email = payload.email;
+  return result;
+}
+
+export function dashboardIdentityConfigured(): boolean {
+  return config.auth.dashboardIdentity.secret !== undefined;
+}
+
+function singleHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 export function loginLockoutKey(username: string | undefined): string {

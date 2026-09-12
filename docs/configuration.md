@@ -22,7 +22,7 @@ pi-forge --api-key @/run/secrets/api-key   # @<path> reads from file
 ```
 
 - **Sensitive flags** (`--ui-password`, `--api-key`, `--jwt-secret`,
-  `--ldap-bind-password`) accept `@<path>` to read from a file (keeps
+  `--ldap-bind-password`, `--otel-exporter-otlp-headers`) accept `@<path>` to read from a file (keeps
   secrets out of shell history and `ps`). Environment variables do not
   use `@` expansion; use the dedicated `*_FILE` env vars for mounted
   secret files.
@@ -68,7 +68,17 @@ or shell environment. The most-touched ones:
 | `LDAP_GROUP_ATTRIBUTE` | `memberOf` | User attribute checked for group DNs. Change only for directories that expose group membership under a different attribute. |
 | `LDAP_TIMEOUT_MS` | `5000` | LDAP connect/operation timeout in milliseconds. |
 | `LDAP_TLS_REJECT_UNAUTHORIZED` | `true` | Reject untrusted TLS certificates for `ldaps://` connections. Set `false` only for local/self-signed testing. |
+| `VITE_BASE_PATH` | `/` | Optional build-time Vite base path for static hosting. Dashboard app-proxy deployments should normally leave this as `/` and rely on runtime `X-Forwarded-Prefix` instead. |
+| `DASHBOARD_IDENTITY_SECRET` | (unset) | Enables dashboard SSO by verifying the dashboard proxy's signed `X-Dashboard-Identity` / `X-Dashboard-Signature` envelope. Must match pi-forge's per-app `identitySecret` in the dashboard catalog. |
+| `DASHBOARD_IDENTITY_SECRET_FILE` | (unset) | File containing the dashboard identity HMAC secret. Takes precedence over `DASHBOARD_IDENTITY_SECRET`. |
+| `DASHBOARD_IDENTITY_ISSUER` | `internal-dashboard` | Expected `iss` in signed dashboard identity envelopes. Must match the dashboard's `DASHBOARD_IDENTITY_ISSUER`. |
+| `DASHBOARD_APP_ID` | `pi-forge` | Expected `aud` and `app` in signed dashboard identity envelopes. Set this to the dashboard catalog app id for pi-forge. |
+| `DASHBOARD_IDENTITY_AUDIENCE` | (unset) | Deprecated compatibility alias for `DASHBOARD_APP_ID`; used only when `DASHBOARD_APP_ID` is unset. |
+| `DASHBOARD_IDENTITY_MAX_FUTURE_IAT_SKEW_SECONDS` | `60` | Allowed clock skew for future `iat` values in dashboard identity envelopes. |
+| `DASHBOARD_IDENTITY_MAX_AGE_SECONDS` | `300` | Maximum dashboard identity age and maximum `exp - iat` lifetime. Keeps replay windows short even if the proxy signs a longer-lived envelope. |
+| `DASHBOARD_IDENTITY_ALLOWED_GROUPS` | (unset) | Optional dashboard SSO group allowlist. Use a JSON string array for LDAP DNs, e.g. `["CN=Developers,OU=Groups,DC=company,DC=local"]`; semicolon/newline-separated values are also accepted. If unset, falls back to `LDAP_REQUIRED_GROUP_DN`. |
 | `MINIMAL_UI` | `false` | Hide terminal / git / last-turn / providers / agent-settings panels. Frontend gate; server routes unchanged. ALSO hard-disables webhook configuration, session orchestration, and the quick-actions runner. |
+| `APP_NAME` | `pi-forge` | Display-only application name shown in the browser UI. Does not rename packages, routes, CLI binaries, env vars, storage keys, telemetry service names, or other functional identifiers. Exposed by public `/api/v1/ui-config`. |
 | `AUTH_BANNER_TEXT` | (unset) | Optional public banner shown below the login prompt. Literal newlines/carriage returns are preserved; `\\n` and `\\r` escapes are decoded for single-line env/CLI surfaces. Do not put secrets here: it is exposed by public `/api/v1/ui-config`. |
 | `AUTH_BANNER_HTML` | `false` | When true, renders `AUTH_BANNER_TEXT` as sanitized HTML instead of plain text. Scripts, styles, event handlers, and unsafe links are stripped client-side. Leave false unless you need links or simple formatting. |
 | `LOGO_URL_MODE` | `cache` | Logo URL handling mode. `cache` fetches configured logo URLs at server startup into `FORGE_DATA_DIR/cache/logos/` and returns same-origin `/cache/logos/...` URLs. `direct` returns configured raw URLs so the browser loads them directly. Accepted values: `cache`, `direct`. |
@@ -78,6 +88,13 @@ or shell environment. The most-touched ones:
 | `APP_LOGO_DARK_URL` | (unset) | Optional absolute `http://` or `https://` URL for the app header logo in dark-mode themes. Follows `LOGO_URL_MODE`; invalid or unreachable URLs fall back only in `cache` mode. |
 | `APP_LOGO_LIGHT_URL` | (unset) | Optional absolute `http://` or `https://` URL for the app header logo in light-mode themes. Follows `LOGO_URL_MODE`; invalid or unreachable URLs fall back only in `cache` mode. |
 | `AUTH_COLOR_SCHEME` | (unset) | Optional comma-separated list of exactly 8 hex colors for login/auth pages only: page background, card background, border, text, muted text, button background, button text, button hover background. Example: `#ffffff,#2563eb,#1d4ed8,#ffffff,#dbeafe,#2563eb,#ffffff,#1d4ed8`. Only `#rgb` and `#rrggbb` forms are accepted; invalid values fail startup rather than becoming CSS. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | (unset) | Enables OpenTelemetry trace export over OTLP/HTTP. For Langfuse use `https://<region>.cloud.langfuse.com/api/public/otel`; pi-forge appends `/v1/traces`. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | (unset) | Comma-separated exporter headers. Langfuse requires `Authorization=Basic <base64-public-key:secret-key>,x-langfuse-ingestion-version=4`. Treat this value as a secret. |
+| `OTEL_EXPORTER_OTLP_TLS_REJECT_UNAUTHORIZED` | `true` | Verify certificates for OTLP HTTPS connections. Set to `false` only for a trusted private endpoint with a self-signed certificate; this weakens TLS verification for the telemetry exporter. |
+| `OTEL_SERVICE_NAME` | `pi-forge` | OpenTelemetry resource service name. |
+| `OTEL_SERVICE_VERSION` | `unknown` | OpenTelemetry resource service version/release label. |
+| `OTEL_CAPTURE_CONTENT` | `false` | Initial/default value for telemetry content capture. The Settings → General pane can override this at runtime and persists the override in `FORGE_DATA_DIR/telemetry-settings.json`. When true, exports full user/assistant message content and tool arguments/results. This can contain source code, credentials, personal data, and MCP responses; enable only with an approved data-retention policy. |
+| `OTEL_DEBUG` | `false` | Log OTLP exporter configuration, batch attempts, results, durations, and sanitized errors to stdout. Span contents and header values are not logged. |
 | `TRUST_PROXY` | `false` | Set when behind a reverse proxy so `req.ip` is the real client (required for per-user login rate limits). |
 | `ORCHESTRATION_DISABLED` | `false` | Disable the chat-view `Orch` toggle and orchestration REST/tool surface. Orchestration is enabled by default; hard-disabled under `MINIMAL_UI` regardless. See [`orchestration.md`](./orchestration.md). |
 | `ORCHESTRATION_ENABLED` | `true` | Legacy compatibility switch. `false` disables orchestration; `true`/unset keep the default enabled behavior. Prefer `ORCHESTRATION_DISABLED=true` for new deployments. |
@@ -108,6 +125,46 @@ LOGO_IMG_SRC_ALLOWLIST=https://cdn.example.net \
 AUTH_URL_LOGO=https://assets.example.com/pi-forge-auth.svg \
 pi-forge
 ```
+
+### OpenTelemetry and Langfuse
+
+Set an OTLP endpoint to export lifecycle spans for every session, turn,
+message, and tool execution. MCP calls are emitted as tool observations with
+`pi.tool.type=mcp`. Every observation carries `langfuse.user.id` and a
+`langfuse.session.id` formatted as `<username>:<pi-session-uuid>`; the original
+Pi UUID remains available as `pi.session.id`. Session ownership is persisted in
+`${FORGE_DATA_DIR}/session-users.json` (mode 0600), so attribution survives a
+server restart. Local-password, API-key, and unauthenticated use map to
+`FORGE_LOCAL_ADMIN_USERNAME`; LDAP sessions use the authenticated LDAP login,
+and dashboard/app-portal SSO sessions use the verified identity's `sub` claim.
+
+For a trusted private OTLP endpoint with a self-signed certificate, set
+`OTEL_EXPORTER_OTLP_TLS_REJECT_UNAUTHORIZED=false`. This exception is scoped to
+the telemetry exporter's HTTP agent, but it still permits man-in-the-middle
+attacks against exported telemetry; installing the endpoint's CA certificate is
+preferred.
+
+To troubleshoot export failures in pod logs without printing span contents or
+header values, set `OTEL_DEBUG=true`. Debug lines are prefixed with
+`[telemetry:debug]` and report whether telemetry is disabled due to a missing
+endpoint, plus the sanitized endpoint, TLS verification setting, batch size,
+duration, and exporter error message.
+
+Langfuse example:
+
+```bash
+AUTH_STRING="$(printf '%s' 'pk-lf-...:sk-lf-...' | base64 | tr -d '\n')"
+OTEL_EXPORTER_OTLP_ENDPOINT=https://cloud.langfuse.com/api/public/otel \
+OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic%20${AUTH_STRING},x-langfuse-ingestion-version=4" \
+OTEL_CAPTURE_CONTENT=true \
+pi-forge
+```
+
+Header values follow the OTLP environment-variable format and may be percent
+encoded; `%20` represents the space in `Basic <credentials>`. Prefer the CLI
+`--otel-exporter-otlp-headers @/run/secrets/otel-headers` form when a secret
+file is available. Leave `OTEL_CAPTURE_CONTENT=false` to export timing, model,
+token, role, tool-name, user, and session metadata without message/tool bodies.
 
 Production-tuning knobs (rate limits, JWT lifetime, TLS / proxy posture)
 are documented in [`deployment.md`](./deployment.md).

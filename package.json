@@ -1,6 +1,6 @@
 {
   "name": "pi-forge",
-  "version": "1.4.7",
+  "version": "1.5.3",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -24,9 +24,27 @@
     "serialize-javascript": ">=6.0.2",
     "qs": ">=6.15.2",
     "tmp": ">=0.2.6",
-    "uuid": ">=11.1.1"
+    "uuid": ">=11.1.1",
+    "mammoth": {
+      "@xmldom/xmldom": "0.8.15"
+    },
+    "fast-uri": "3.1.6",
+    "find-my-way": "9.7.0",
+    "ip-address": "10.3.1",
+    "minimatch@3.1.5": {
+      "brace-expansion": "1.1.18"
+    },
+    "minimatch@5.1.9": {
+      "brace-expansion": "2.1.4"
+    },
+    "minimatch@10.2.5": {
+      "brace-expansion": "5.0.9"
+    }
   },
   "devDependencies": {
+    "@earendil-works/pi-agent-core": "0.84.3",
+    "@earendil-works/pi-ai": "0.84.3",
+    "@earendil-works/pi-coding-agent": "0.84.3",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.0.0",
     "concurrently": "^10.0.0",

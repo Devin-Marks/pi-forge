@@ -27,7 +27,12 @@ function devApiTarget(): string {
   return `http://${host}:${port}`;
 }
 
+const basePath = process.env.VITE_BASE_PATH ?? "/";
+const basePathNoTrailingSlash = basePath.endsWith("/") ? basePath.slice(0, -1) : basePath;
+const baseAsset = (path: string): string => `${basePathNoTrailingSlash}${path}`;
+
 export default defineConfig({
+  base: basePath,
   plugins: [
     react(),
     tailwindcss(),
@@ -59,8 +64,8 @@ export default defineConfig({
         // (which would require a rebuild per user preference).
         background_color: "#0a0a0a",
         display: "standalone",
-        start_url: "/",
-        scope: "/",
+        start_url: basePath,
+        scope: basePath,
         orientation: "any",
         lang: "en",
         // App-store-style categorization. Surfaced by Chrome's
@@ -79,25 +84,25 @@ export default defineConfig({
         // installs; the rasters above also serve that path.
         icons: [
           {
-            src: "/icons/icon-192.png",
+            src: baseAsset("/icons/icon-192.png"),
             sizes: "192x192",
             type: "image/png",
             purpose: "any",
           },
           {
-            src: "/icons/icon-512.png",
+            src: baseAsset("/icons/icon-512.png"),
             sizes: "512x512",
             type: "image/png",
             purpose: "any",
           },
           {
-            src: "/icons/icon-maskable-512.png",
+            src: baseAsset("/icons/icon-maskable-512.png"),
             sizes: "512x512",
             type: "image/png",
             purpose: "maskable",
           },
           {
-            src: "/icons/icon.svg",
+            src: baseAsset("/icons/icon.svg"),
             sizes: "any",
             type: "image/svg+xml",
             purpose: "any",
@@ -118,12 +123,13 @@ export default defineConfig({
         // branded /offline.html instead — usable, in-theme, with a
         // reload button — rather than the browser's chromeless
         // "no-internet" page or the SPA shell with a red error banner.
-        navigateFallback: "/index.html",
-        navigateFallbackDenylist: [/^\/api\//],
+        navigateFallback: baseAsset("/index.html"),
+        navigateFallbackDenylist: [/^\/api\//, /^\/apps\/[^/]+\/api\//],
         globPatterns: ["**/*.{js,css,html,svg,png,ico,webmanifest}"],
         runtimeCaching: [
           {
-            urlPattern: ({ url }) => url.pathname.startsWith("/api/v1/"),
+            urlPattern: ({ url }) =>
+              url.pathname.startsWith(baseAsset("/api/v1/")) || url.pathname.startsWith("/api/v1/"),
             handler: "NetworkOnly",
           },
           {
@@ -142,7 +148,7 @@ export default defineConfig({
             options: {
               cacheName: "pi-navigation",
               networkTimeoutSeconds: 3,
-              precacheFallback: { fallbackURL: "/offline.html" },
+              precacheFallback: { fallbackURL: baseAsset("/offline.html") },
             },
           },
         ],
@@ -176,6 +182,21 @@ export default defineConfig({
     // Production / built bundle is unaffected — this is dev-server only.
     allowedHosts: parseAllowedHosts(process.env.VITE_DEV_ALLOWED_HOSTS),
     proxy: {
+      ...(basePathNoTrailingSlash.length > 0
+        ? {
+            [baseAsset("/api")]: {
+              target: devApiTarget(),
+              changeOrigin: true,
+              rewrite: (path) => path.slice(basePathNoTrailingSlash.length),
+              ws: true,
+            },
+            [baseAsset("/cache")]: {
+              target: devApiTarget(),
+              changeOrigin: true,
+              rewrite: (path) => path.slice(basePathNoTrailingSlash.length),
+            },
+          }
+        : {}),
       "/api": {
         // Root `npm run dev` / `dev:remote` pass the API server port through
         // PORT (default 3100). Mirror that default here instead of hardcoding

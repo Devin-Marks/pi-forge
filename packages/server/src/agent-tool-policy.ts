@@ -5,6 +5,12 @@ import { config } from "./config.js";
 const PROTECTED_PI_CONFIG_FILES = new Set(["auth.json", "models.json", "settings.json"]);
 const HOME_SECRET_DIRS = new Set([".ssh", ".aws", ".kube", ".gnupg"]);
 const DENIED_PREFIXES = ["/proc", "/etc", "/run/secrets", "/var/run/secrets"];
+const PI_CODING_AGENT_PACKAGE_DIR = "/app/node_modules/@earendil-works/pi-coding-agent";
+const PI_DOCUMENTATION_PATHS = [
+  { path: resolve(PI_CODING_AGENT_PACKAGE_DIR, "README.md"), allowDescendants: false },
+  { path: resolve(PI_CODING_AGENT_PACKAGE_DIR, "docs"), allowDescendants: true },
+  { path: resolve(PI_CODING_AGENT_PACKAGE_DIR, "examples"), allowDescendants: true },
+];
 
 export class AgentToolPathDeniedError extends Error {
   constructor(message: string) {
@@ -41,6 +47,21 @@ function piConfigRelativePath(
   const rel = relative(piConfigReal, candidate).split(sep).join("/");
   if (rel === "" || rel.startsWith("../")) return undefined;
   return rel;
+}
+
+function assertPiDocumentationPathAllowed(baseResolved: string, resolvedReal: string): boolean {
+  for (const allowed of PI_DOCUMENTATION_PATHS) {
+    const rootResolved = resolve(allowed.path);
+    const rootReal = realpathExistingOrParent(rootResolved);
+    if (allowed.allowDescendants) {
+      if (pathWithin(baseResolved, rootResolved) && pathWithin(resolvedReal, rootReal)) {
+        return true;
+      }
+    } else if (baseResolved === rootResolved && resolvedReal === rootReal) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function assertPiConfigPathAllowed(
@@ -87,7 +108,11 @@ function denyIfSensitiveAbsolute(abs: string, workspaceReal: string, piConfigRea
   }
 }
 
-export function resolveAgentToolPath(workspacePath: string, requestedPath: string): string {
+function resolveAgentToolPathForMode(
+  workspacePath: string,
+  requestedPath: string,
+  options: { allowPiDocumentation: boolean },
+): string {
   if (requestedPath.trim() === "") {
     throw new AgentToolPathDeniedError("empty path is not allowed");
   }
@@ -117,9 +142,28 @@ export function resolveAgentToolPath(workspacePath: string, requestedPath: strin
     return baseResolved;
   }
 
+  if (
+    options.allowPiDocumentation &&
+    assertPiDocumentationPathAllowed(baseResolved, resolvedReal)
+  ) {
+    return baseResolved;
+  }
+
   throw new AgentToolPathDeniedError(`${baseResolved} is outside allowed roots`);
+}
+
+export function resolveAgentToolPath(workspacePath: string, requestedPath: string): string {
+  return resolveAgentToolPathForMode(workspacePath, requestedPath, { allowPiDocumentation: false });
+}
+
+export function resolveAgentToolReadPath(workspacePath: string, requestedPath: string): string {
+  return resolveAgentToolPathForMode(workspacePath, requestedPath, { allowPiDocumentation: true });
 }
 
 export function assertAgentToolPathAllowed(workspacePath: string, requestedPath: string): void {
   resolveAgentToolPath(workspacePath, requestedPath);
+}
+
+export function assertAgentToolReadPathAllowed(workspacePath: string, requestedPath: string): void {
+  resolveAgentToolReadPath(workspacePath, requestedPath);
 }

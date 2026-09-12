@@ -227,7 +227,11 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
       if (project === undefined) {
         return reply.code(404).send({ error: "project_not_found" });
       }
-      const live = await createSession(project.id, project.path);
+      const live = await createSession(
+        project.id,
+        project.path,
+        req.authUsername === undefined ? {} : { username: req.authUsername },
+      );
       return reply.code(201).send(
         liveSummaryBody({
           sessionId: live.sessionId,
@@ -386,7 +390,7 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
           // ChatInput requests this alongside the SSE stream on session open.
           // Resume here too so an initial request cannot lose a race with the
           // stream's lazy resume and permanently hide extension commands.
-          live = await resumeSessionById(req.params.id);
+          live = await resumeSessionById(req.params.id, req.authUsername);
         } catch {
           return notFound(reply);
         }
@@ -648,7 +652,7 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if (live === undefined) {
         try {
-          live = await resumeSessionById(req.params.id);
+          live = await resumeSessionById(req.params.id, req.authUsername);
         } catch {
           // SessionNotFoundError, SessionTombstonedError, or SDK
           // resume failure all collapse to 404 here — the tree route
@@ -800,7 +804,7 @@ export const sessionRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if (live === undefined) {
         try {
-          live = await resumeSessionById(req.params.id);
+          live = await resumeSessionById(req.params.id, req.authUsername);
         } catch {
           // Same handling as the /tree route above — collapse all
           // resume failures (not_found, tombstoned, SDK throw) to a

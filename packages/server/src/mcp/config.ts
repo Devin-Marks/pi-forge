@@ -35,6 +35,14 @@ import { config } from "../config.js";
  */
 
 export type McpTransport = "auto" | "streamable-http" | "sse";
+export interface McpHeaderEnvValue {
+  env: string;
+}
+export type McpHeaderValue = string | McpHeaderEnvValue;
+
+export function isMcpHeaderEnvValue(value: McpHeaderValue): value is McpHeaderEnvValue {
+  return typeof value === "object" && value !== null && typeof value.env === "string";
+}
 
 export interface McpServerConfig {
   /** Default true. Disabled servers don't connect or contribute tools. */
@@ -53,11 +61,15 @@ export interface McpServerConfig {
   transport?: McpTransport;
   /**
    * Per-request headers (e.g. `{ "Authorization": "Bearer ..." }`).
-   * Forwarded on every MCP RPC. Treated as secret on the read path —
+   * Values may be literal strings (backward-compatible) or
+   * `{ "env": "VAR_NAME" }` references that resolve from the
+   * pi-forge process environment when an MCP HTTP request is made.
+   * Literal values are treated as secret on the read path —
    * `readMcpJsonRedacted` replaces every value with the sentinel.
+   * Env-backed values preserve only the env var name on the read path.
    * Ignored for stdio servers.
    */
-  headers?: Record<string, string>;
+  headers?: Record<string, McpHeaderValue>;
   /**
    * Remote-only escape hatch for local/self-signed HTTPS MCP endpoints.
    * When true, TLS certificate validation is disabled for this server's
@@ -100,6 +112,17 @@ export interface McpTruncationConfig {
   maxChars?: number;
 }
 
+export interface McpSpoolingConfig {
+  /** Default true. When true, oversized non-error MCP results are written to workspace files. */
+  enabled?: boolean;
+  /** Total text-character threshold before spooling. Default 30000. */
+  thresholdChars?: number;
+  /** Workspace-relative directory for result files. Default .mcp-results. */
+  directory?: string;
+  /** Spool file format. Only json is currently supported. */
+  format?: "json";
+}
+
 export interface McpJson {
   /**
    * Master kill-switch surfaced as a toggle in Settings → MCP. When
@@ -111,6 +134,8 @@ export interface McpJson {
   disabled?: boolean;
   /** MCP result truncation settings. Defaults to enabled with a 30k character cap. */
   truncation?: McpTruncationConfig;
+  /** MCP result spooling settings. Defaults to enabled. */
+  spooling?: McpSpoolingConfig;
   servers: Record<string, McpServerConfig>;
 }
 
@@ -127,6 +152,8 @@ export function isStdioConfig(cfg: McpServerConfig): boolean {
 
 const SECRET_PLACEHOLDER = "***REDACTED***";
 export const DEFAULT_MCP_TRUNCATION_MAX_CHARS = 30_000;
+export const DEFAULT_MCP_SPOOLING_THRESHOLD_CHARS = 30_000;
+export const DEFAULT_MCP_SPOOLING_DIRECTORY = ".mcp-results";
 
 export function normalizeMcpTruncationConfig(
   input: McpTruncationConfig | undefined,
@@ -138,6 +165,20 @@ export function normalizeMcpTruncationConfig(
       ? Math.floor(rawMax)
       : DEFAULT_MCP_TRUNCATION_MAX_CHARS;
   return { enabled, maxChars };
+}
+
+export function normalizeMcpSpoolingConfig(
+  input: McpSpoolingConfig | undefined,
+): Required<McpSpoolingConfig> {
+  const enabled = input?.enabled !== false;
+  const rawThreshold = input?.thresholdChars;
+  const thresholdChars =
+    typeof rawThreshold === "number" && Number.isFinite(rawThreshold) && rawThreshold >= 1
+      ? Math.floor(rawThreshold)
+      : DEFAULT_MCP_SPOOLING_THRESHOLD_CHARS;
+  const rawDirectory = typeof input?.directory === "string" ? input.directory.trim() : "";
+  const directory = rawDirectory.length > 0 ? rawDirectory : DEFAULT_MCP_SPOOLING_DIRECTORY;
+  return { enabled, thresholdChars, directory, format: "json" };
 }
 
 async function ensureDir(): Promise<void> {
@@ -181,12 +222,23 @@ export async function readMcpJson(): Promise<McpJson> {
       typeof rawTruncation === "object" && rawTruncation !== null
         ? normalizeMcpTruncationConfig(rawTruncation)
         : undefined;
+    const rawSpooling = (parsed as { spooling?: unknown }).spooling;
+    const spooling =
+      typeof rawSpooling === "object" && rawSpooling !== null
+        ? normalizeMcpSpoolingConfig(rawSpooling)
+        : undefined;
     if (typeof servers !== "object" || servers === null) {
-      return { disabled, ...(truncation !== undefined ? { truncation } : {}), servers: {} };
+      return {
+        disabled,
+        ...(truncation !== undefined ? { truncation } : {}),
+        ...(spooling !== undefined ? { spooling } : {}),
+        servers: {},
+      };
     }
     return {
       disabled,
       ...(truncation !== undefined ? { truncation } : {}),
+      ...(spooling !== undefined ? { spooling } : {}),
       servers: servers as Record<string, McpServerConfig>,
     };
   } catch (err) {
@@ -226,8 +278,8 @@ export async function readMcpJsonRedacted(): Promise<McpJson> {
     const cleaned = copyServerCleaned(server);
     if (server.headers !== undefined) {
       cleaned.headers = {};
-      for (const k of Object.keys(server.headers)) {
-        cleaned.headers[k] = SECRET_PLACEHOLDER;
+      for (const [k, v] of Object.entries(server.headers)) {
+        cleaned.headers[k] = isMcpHeaderEnvValue(v) ? { env: v.env } : SECRET_PLACEHOLDER;
       }
     }
     if (server.env !== undefined) {
@@ -241,6 +293,7 @@ export async function readMcpJsonRedacted(): Promise<McpJson> {
   return {
     disabled: raw.disabled === true,
     ...(raw.truncation !== undefined ? { truncation: raw.truncation } : {}),
+    ...(raw.spooling !== undefined ? { spooling: raw.spooling } : {}),
     servers: out,
   };
 }
@@ -266,6 +319,58 @@ function mergeSecretMap(
   return out;
 }
 
+function mergeHeaderMap(
+  next: Record<string, McpHeaderValue>,
+  prior: Record<string, McpHeaderValue> | undefined,
+): Record<string, McpHeaderValue> {
+  const out: Record<string, McpHeaderValue> = {};
+  for (const [k, v] of Object.entries(next)) {
+    if (v === SECRET_PLACEHOLDER) {
+      if (prior?.[k] !== undefined) out[k] = prior[k];
+    } else if (isMcpHeaderEnvValue(v)) {
+      out[k] = { env: v.env };
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function validateEnvName(name: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
+}
+
+/**
+ * Resolve remote MCP headers for an outbound HTTP request. This is the
+ * deliberate exception to the usual operational-env centralization rule:
+ * header env names are user-authored dynamic MCP config, not pi-forge
+ * operational settings with a fixed CLI/env surface.
+ */
+export function resolveMcpHeaders(
+  headers: Record<string, McpHeaderValue> | undefined,
+): Record<string, string> | undefined {
+  if (headers === undefined) return undefined;
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (isMcpHeaderEnvValue(value)) {
+      const envName = value.env.trim();
+      if (!validateEnvName(envName)) {
+        throw new Error(`MCP header '${name}' references an invalid environment variable name`);
+      }
+      const resolved = process.env[envName];
+      if (resolved === undefined) {
+        throw new Error(
+          `MCP header '${name}' requires environment variable ${envName}, but it is not set`,
+        );
+      }
+      out[name] = resolved;
+    } else {
+      out[name] = value;
+    }
+  }
+  return out;
+}
+
 /**
  * Write `mcp.json`, merging the secret-placeholder for `headers`
  * AND `env` values back to the prior persisted value. Without this,
@@ -282,10 +387,19 @@ export async function writeMcpJson(next: McpJson): Promise<void> {
   if (truncation.enabled !== true || truncation.maxChars !== DEFAULT_MCP_TRUNCATION_MAX_CHARS) {
     safe.truncation = truncation;
   }
+  const spooling = normalizeMcpSpoolingConfig(next.spooling);
+  if (
+    spooling.enabled !== true ||
+    spooling.thresholdChars !== DEFAULT_MCP_SPOOLING_THRESHOLD_CHARS ||
+    spooling.directory !== DEFAULT_MCP_SPOOLING_DIRECTORY ||
+    spooling.format !== "json"
+  ) {
+    safe.spooling = spooling;
+  }
   for (const [name, server] of Object.entries(next.servers ?? {})) {
     const merged = copyServerCleaned(server);
     if (server.headers !== undefined) {
-      merged.headers = mergeSecretMap(server.headers, existing.servers[name]?.headers);
+      merged.headers = mergeHeaderMap(server.headers, existing.servers[name]?.headers);
     }
     if (server.env !== undefined) {
       merged.env = mergeSecretMap(server.env, existing.servers[name]?.env);
@@ -312,6 +426,15 @@ export async function setMcpTruncationConfig(truncation: McpTruncationConfig): P
   cur.truncation = normalizeMcpTruncationConfig({
     ...normalizeMcpTruncationConfig(cur.truncation),
     ...truncation,
+  });
+  await writeMcpJson(cur);
+}
+
+export async function setMcpSpoolingConfig(spooling: McpSpoolingConfig): Promise<void> {
+  const cur = await readMcpJson();
+  cur.spooling = normalizeMcpSpoolingConfig({
+    ...normalizeMcpSpoolingConfig(cur.spooling),
+    ...spooling,
   });
   await writeMcpJson(cur);
 }

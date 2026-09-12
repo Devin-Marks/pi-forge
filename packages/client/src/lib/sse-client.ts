@@ -1,5 +1,6 @@
 import { ApiError, UNAUTHORIZED_EVENT } from "./api-client";
 import { clearStoredToken, getStoredToken } from "./auth-client";
+import { appUrl } from "./base-path";
 
 /**
  * Minimal SSE reader that uses fetch + ReadableStream so we can send the
@@ -18,8 +19,8 @@ import { clearStoredToken, getStoredToken } from "./auth-client";
  *     suppresses reconnect.
  *
  * Reconnect policy:
- *   - 401 / 404 / 409 are treated as terminal (auth gone, session deleted,
- *     or externally active read-only subagent) — do not retry; reject immediately.
+ *   - 401 / 404 / 409 / 410 are treated as terminal (auth gone, session
+ *     deleted, externally active read-only subagent, or tombstoned) — do not retry; reject immediately.
  *   - Any other non-2xx, network-level error, or post-200 stream EOF
  *     triggers a backoff (1s → 2s → 4s → 8s → 16s, capped at 30s).
  *     `onReconnect` is invoked between attempts so the UI can show a
@@ -45,7 +46,7 @@ export interface StreamSSEOptions<T> {
   maxReconnects?: number;
 }
 
-const TERMINAL_STATUS = new Set([401, 404, 409]);
+const TERMINAL_STATUS = new Set([401, 404, 409, 410]);
 const MAX_BACKOFF_MS = 30_000;
 
 function backoffDelay(attempt: number): number {
@@ -91,7 +92,7 @@ async function runOneAttempt<T extends { type: string }>(
 
   let res: Response;
   try {
-    res = await fetch(path, init);
+    res = await fetch(appUrl(path), init);
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") return "aborted";
     throw new ApiError(0, "network_error", (err as Error).message);

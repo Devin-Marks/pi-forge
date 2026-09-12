@@ -323,7 +323,9 @@ function createSpawnWorker(supervisorId: string): ToolDefinition {
       // Spawn into the supervisor's project — never cross-project.
       let worker: Awaited<ReturnType<typeof createSession>>;
       try {
-        worker = await createSession(supLive.projectId, supLive.workspacePath);
+        worker = await createSession(supLive.projectId, supLive.workspacePath, {
+          username: supLive.username,
+        });
       } catch (e) {
         return err(
           "spawn_failed",

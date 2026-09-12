@@ -673,10 +673,10 @@
    image with `filter: invert(1)` turns pure-white pixels into pure
    black, which is exactly the black variant we need for the light
    theme. Avoids shipping a parallel asset file or threading a
-   theme-aware `src` swap through every `<img>` usage. Scoped to
-   the existing icon src attribute so it can't accidentally invert
-   any other image. */
-[data-theme="light"] img[src="/icons/icon.svg"] {
+   theme-aware `src` swap through every `<img>` usage. Match by suffix
+   so deployments under a Vite base path like `/apps/pi-forge/` still
+   recolor the fallback icon. */
+[data-theme="light"] img[src$="/icons/icon.svg"] {
   filter: invert(1);
 }
 

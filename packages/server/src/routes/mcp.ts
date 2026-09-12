@@ -3,8 +3,10 @@ import {
   deleteMcpServer,
   readMcpJsonRedacted,
   setMcpDisabled,
+  setMcpSpoolingConfig,
   setMcpTruncationConfig,
   upsertMcpServer,
+  type McpHeaderValue,
   type McpServerConfig,
   type McpTransport,
 } from "../mcp/config.js";
@@ -19,7 +21,10 @@ import {
   unloadProject,
 } from "../mcp/manager.js";
 import { grantStdioTrust, isStdioTrustedForProject, revokeStdioTrust } from "../mcp/stdio-trust.js";
-import { getMcpResultTruncationSettings } from "../mcp/tool-bridge.js";
+import {
+  getMcpResultSpoolingSettings,
+  getMcpResultTruncationSettings,
+} from "../mcp/tool-bridge.js";
 import { getProject } from "../project-manager.js";
 import { errorSchema } from "./_schemas.js";
 
@@ -28,7 +33,7 @@ interface McpServerBody {
   // remote
   url?: string;
   transport?: McpTransport;
-  headers?: Record<string, string>;
+  headers?: Record<string, McpHeaderValue>;
   ignoreCertificateErrors?: boolean;
   // stdio
   command?: string;
@@ -50,7 +55,17 @@ const serverConfigSchema = {
     transport: { type: "string", enum: ["auto", "streamable-http", "sse"] },
     headers: {
       type: "object",
-      additionalProperties: { type: "string" },
+      additionalProperties: {
+        anyOf: [
+          { type: "string" },
+          {
+            type: "object",
+            required: ["env"],
+            additionalProperties: false,
+            properties: { env: { type: "string", minLength: 1 } },
+          },
+        ],
+      },
     },
     ignoreCertificateErrors: { type: "boolean" },
     command: { type: "string", minLength: 1 },
@@ -60,6 +75,17 @@ const serverConfigSchema = {
       additionalProperties: { type: "string" },
     },
     cwd: { type: "string", minLength: 1 },
+  },
+} as const;
+
+const spoolingSchema = {
+  type: "object",
+  required: ["enabled", "thresholdChars", "directory", "format"],
+  properties: {
+    enabled: { type: "boolean" },
+    thresholdChars: { type: "integer", minimum: 1 },
+    directory: { type: "string" },
+    format: { type: "string", enum: ["json"] },
   },
 } as const;
 
@@ -149,7 +175,7 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
         response: {
           200: {
             type: "object",
-            required: ["enabled", "connected", "total", "truncation"],
+            required: ["enabled", "connected", "total", "truncation", "spooling"],
             properties: {
               enabled: { type: "boolean" },
               connected: { type: "integer", minimum: 0 },
@@ -162,6 +188,7 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
                   maxChars: { type: "integer", minimum: 1 },
                 },
               },
+              spooling: spoolingSchema,
             },
           },
         },
@@ -172,12 +199,27 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
       const enabled = isGloballyEnabled();
       const total = status.length;
       const connected = status.filter((s) => s.state === "connected").length;
-      return { enabled, connected, total, truncation: getMcpResultTruncationSettings() };
+      return {
+        enabled,
+        connected,
+        total,
+        truncation: getMcpResultTruncationSettings(),
+        spooling: getMcpResultSpoolingSettings(),
+      };
     },
   );
 
   fastify.put<{
-    Body: { enabled?: boolean; truncation?: { enabled?: boolean; maxChars?: number } };
+    Body: {
+      enabled?: boolean;
+      truncation?: { enabled?: boolean; maxChars?: number };
+      spooling?: {
+        enabled?: boolean;
+        thresholdChars?: number;
+        directory?: string;
+        format?: "json";
+      };
+    };
   }>(
     "/mcp/settings",
     {
@@ -201,12 +243,22 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
                 maxChars: { type: "integer", minimum: 1, maximum: 1000000 },
               },
             },
+            spooling: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                enabled: { type: "boolean" },
+                thresholdChars: { type: "integer", minimum: 1, maximum: 1000000 },
+                directory: { type: "string", minLength: 1 },
+                format: { type: "string", enum: ["json"] },
+              },
+            },
           },
         },
         response: {
           200: {
             type: "object",
-            required: ["enabled", "connected", "total", "truncation"],
+            required: ["enabled", "connected", "total", "truncation", "spooling"],
             properties: {
               enabled: { type: "boolean" },
               connected: { type: "integer", minimum: 0 },
@@ -219,6 +271,7 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
                   maxChars: { type: "integer", minimum: 1 },
                 },
               },
+              spooling: spoolingSchema,
             },
           },
           400: errorSchema,
@@ -232,6 +285,9 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
       if (req.body.truncation !== undefined) {
         await setMcpTruncationConfig(req.body.truncation);
       }
+      if (req.body.spooling !== undefined) {
+        await setMcpSpoolingConfig(req.body.spooling);
+      }
       await reloadGlobal();
       const status = getStatus();
       return {
@@ -239,6 +295,7 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
         total: status.length,
         connected: status.filter((s) => s.state === "connected").length,
         truncation: getMcpResultTruncationSettings(),
+        spooling: getMcpResultSpoolingSettings(),
       };
     },
   );
@@ -475,7 +532,7 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ error: "project_not_found" });
       }
       await ensureProjectLoaded(project.id, project.path);
-      const tools = customToolsForProject(project.id).map((t) => ({
+      const tools = customToolsForProject(project.id, project.path).map((t) => ({
         name: t.name,
         description: t.description,
       }));

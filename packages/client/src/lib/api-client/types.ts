@@ -26,6 +26,8 @@ export class ApiError extends Error {
 export interface AuthStatusResponse {
   authEnabled: boolean;
   ldapEnabled: boolean;
+  dashboardIdentityEnabled: boolean;
+  dashboardIdentityAuthenticated: boolean;
 }
 
 export interface LoginResponse {
@@ -43,6 +45,10 @@ export interface ChangePasswordResponse {
 // ---------------- MCP ----------------
 
 export type McpTransport = "auto" | "streamable-http" | "sse";
+export interface McpHeaderEnvValue {
+  env: string;
+}
+export type McpHeaderValue = string | McpHeaderEnvValue;
 export type McpConnectionState =
   | "idle"
   | "connecting"
@@ -56,7 +62,7 @@ export interface McpServerConfig {
   // remote-only (mutually exclusive with `command`)
   url?: string;
   transport?: McpTransport;
-  headers?: Record<string, string>;
+  headers?: Record<string, McpHeaderValue>;
   ignoreCertificateErrors?: boolean;
   // stdio-only (mutually exclusive with `url`)
   command?: string;
@@ -106,6 +112,8 @@ export interface McpSettingsResponse {
   total: number;
   /** MCP text-result truncation applied before MCP results enter agent context. */
   truncation: { enabled: boolean; maxChars: number };
+  /** Optional large-result spooling to workspace files before truncation. */
+  spooling: { enabled: boolean; thresholdChars: number; directory: string; format: "json" };
 }
 
 // ---------------- processes ----------------
@@ -291,6 +299,10 @@ export interface SandboxSettingsResponse {
   toolEnv: Record<string, string>;
 }
 
+export interface TelemetrySettingsResponse {
+  captureContent: boolean;
+}
+
 export interface AuthColorScheme {
   pageBackground: string;
   cardBackground: string;
@@ -307,6 +319,8 @@ export interface UiConfigResponse {
   minimal: boolean;
   /** Absolute path to the workspace root, used by minimal-mode project create. */
   workspaceRoot: string;
+  /** Display-only application name shown in browser UI branding. */
+  appName: string;
   /** Server build version (mirrors packages/server's package.json). */
   version: string;
   /**
@@ -328,6 +342,8 @@ export interface UiConfigResponse {
    * render at all. Defaults to false on older servers (forward-compatible).
    */
   orchestrationEnabled: boolean;
+  /** True when OpenTelemetry content capture is enabled at runtime. */
+  telemetryCaptureContent: boolean;
   /** Global server-side color overrides for broad UI surfaces. */
   serverTheme: ServerThemeConfigResponse | undefined;
   /** Optional public banner shown on the login screen. */

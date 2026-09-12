@@ -62,6 +62,8 @@ interface TestRegistry {
   disposeAllSessions: () => void;
 }
 interface TestBridge {
+  SSE_HEARTBEAT_INTERVAL_MS: number;
+  SSE_HEARTBEAT_LINE: string;
   isAllowedEvent: (event: { type: string }) => boolean;
   serializeSSE: (event: object & { type: string }) => string;
   buildSnapshot: (live: TestLive) => {
@@ -131,6 +133,22 @@ async function main(): Promise<void> {
     "serializeSSE format is `data: <json>\\n\\n`",
     wire === 'data: {"type":"agent_start","sessionId":"abc"}\n\n',
     wire,
+  );
+  assert(
+    "heartbeat cadence stays below common 30s proxy idle timeout",
+    bridge.SSE_HEARTBEAT_INTERVAL_MS > 0 && bridge.SSE_HEARTBEAT_INTERVAL_MS < 30_000,
+    String(bridge.SSE_HEARTBEAT_INTERVAL_MS),
+  );
+  assert(
+    "heartbeat is an SSE comment ignored by clients",
+    bridge.SSE_HEARTBEAT_LINE.startsWith(": heartbeat ") &&
+      !bridge.SSE_HEARTBEAT_LINE.includes("data:") &&
+      bridge.SSE_HEARTBEAT_LINE.endsWith("\n\n"),
+  );
+  assert(
+    "heartbeat is padded enough to flush proxy buffers",
+    Buffer.byteLength(bridge.SSE_HEARTBEAT_LINE, "utf8") >= 2048,
+    String(Buffer.byteLength(bridge.SSE_HEARTBEAT_LINE, "utf8")),
   );
 
   const fastify = await buildModule.buildServer();

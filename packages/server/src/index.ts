@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
@@ -11,7 +12,7 @@ import websocket from "@fastify/websocket";
 import multipart from "@fastify/multipart";
 import { config, authEnabled } from "./config.js";
 import { installDiagnostics } from "./diagnostics.js";
-import { extractBearer, verifyApiKey, verifyToken } from "./auth.js";
+import { extractBearer, verifyApiKey, verifyDashboardIdentity, verifyToken } from "./auth.js";
 import { healthRoutes } from "./routes/health.js";
 import { authRoutes } from "./routes/auth.js";
 import { projectRoutes } from "./routes/projects.js";
@@ -48,6 +49,7 @@ import { disposeAllPtys, installPtyExitHandler } from "./pty-manager.js";
 import { logSecretHygieneState } from "./agent-resource-loader.js";
 import { applySandboxStartupChowns } from "./sandbox-startup-permissions.js";
 import { initializeLogoCache, logoCacheDir, LOGO_CACHE_PREFIX } from "./logo-cache.js";
+import { initializeTelemetry, shutdownTelemetry } from "./telemetry.js";
 
 /**
  * Per-route auth metadata. Routes that should skip the auth preHandler set
@@ -58,6 +60,10 @@ import { initializeLogoCache, logoCacheDir, LOGO_CACHE_PREFIX } from "./logo-cac
 declare module "fastify" {
   interface FastifyContextConfig {
     public?: boolean;
+  }
+  interface FastifyRequest {
+    /** Authenticated username used to attribute newly-created sessions. */
+    authUsername?: string;
   }
 }
 
@@ -92,6 +98,61 @@ function imgSrcCsp(): string {
   return `img-src ${[...sources].join(" ")}`;
 }
 
+function forwardedPrefix(headers: FastifyRequest["headers"]): string | undefined {
+  const raw = headers["x-forwarded-prefix"];
+  if (typeof raw !== "string") return undefined;
+  const prefix = raw.replace(/\/$/, "");
+  return prefix.startsWith("/") && prefix.length > 0 ? prefix : undefined;
+}
+
+function prefixRootUrl(prefix: string, value: string): string {
+  if (!value.startsWith("/")) return value;
+  if (value === prefix || value.startsWith(`${prefix}/`)) return value;
+  return `${prefix}${value}`;
+}
+
+function rewriteRuntimeHtmlBase(html: string, prefix: string): string {
+  const meta = `<meta name="pi-forge-base-path" content="${prefix}" />`;
+  const withMeta = html.includes('name="pi-forge-base-path"')
+    ? html
+    : html.replace("</head>", `    ${meta}\n  </head>`);
+  return withMeta
+    .replace(
+      /(\s(?:src|href)=")\/(assets|icons|manifest\.webmanifest|offline\.html)/g,
+      `$1${prefix}/$2`,
+    )
+    .replace(/(["'`])\/api\/docs/g, `$1${prefix}/api/docs`)
+    .replace(/(["'`])\/api\/v1\//g, `$1${prefix}/api/v1/`);
+}
+
+async function clientIndexHtml(headers: FastifyRequest["headers"]): Promise<string> {
+  const html = await readFile(join(config.clientDistPath, "index.html"), "utf8");
+  const prefix = forwardedPrefix(headers);
+  return prefix === undefined ? html : rewriteRuntimeHtmlBase(html, prefix);
+}
+
+function rewriteRuntimeManifest(manifest: string, prefix: string): string {
+  try {
+    const parsed = JSON.parse(manifest) as {
+      start_url?: string;
+      scope?: string;
+      icons?: { src?: string }[];
+      [key: string]: unknown;
+    };
+    if (typeof parsed.start_url === "string")
+      parsed.start_url = prefixRootUrl(prefix, parsed.start_url);
+    if (typeof parsed.scope === "string") parsed.scope = prefixRootUrl(prefix, parsed.scope);
+    if (Array.isArray(parsed.icons)) {
+      for (const icon of parsed.icons) {
+        if (typeof icon.src === "string") icon.src = prefixRootUrl(prefix, icon.src);
+      }
+    }
+    return JSON.stringify(parsed);
+  } catch {
+    return manifest;
+  }
+}
+
 export async function buildServer(): Promise<FastifyInstance> {
   // Install before Fastify so unhandledRejection handlers from this
   // module are first in line — they print full cause chains for
@@ -99,6 +160,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   // ECONNREFUSED, etc.) which would otherwise surface as a terse
   // "Connection Error" with no underlying detail.
   installDiagnostics();
+  initializeTelemetry();
 
   const fastify = Fastify({
     logger: {
@@ -226,10 +288,13 @@ export async function buildServer(): Promise<FastifyInstance> {
   //   - worker-src 'self' blob: — Vite PWA service worker.
   //   - object-src 'none', base-uri 'self', frame-ancestors 'none' —
   //     defense in depth against legacy / clickjacking surfaces.
-  fastify.addHook("onSend", async (_req, reply) => {
+  fastify.addHook("onSend", async (req, reply, payload) => {
     reply.header("X-Content-Type-Options", "nosniff");
     reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
-    reply.header("X-Frame-Options", "DENY");
+    reply.header(
+      "X-Frame-Options",
+      config.auth.dashboardIdentity.secret !== undefined ? "SAMEORIGIN" : "DENY",
+    );
     // HSTS is harmless on plain HTTP (browsers ignore it without TLS),
     // useful behind a TLS proxy. 180 days is a balance: long enough to
     // matter, short enough that an operator can recover from accidentally
@@ -251,9 +316,30 @@ export async function buildServer(): Promise<FastifyInstance> {
         "worker-src 'self' blob:",
         "object-src 'none'",
         "base-uri 'self'",
-        "frame-ancestors 'none'",
+        config.auth.dashboardIdentity.secret !== undefined
+          ? "frame-ancestors 'self'"
+          : "frame-ancestors 'none'",
       ].join("; "),
     );
+
+    const prefix = forwardedPrefix(req.headers);
+    if (prefix !== undefined && (typeof payload === "string" || Buffer.isBuffer(payload))) {
+      const path = req.url.split("?")[0] ?? req.url;
+      const contentType = reply.getHeader("content-type")?.toString() ?? "";
+      if (contentType.includes("text/html")) {
+        return rewriteRuntimeHtmlBase(payload.toString(), prefix);
+      }
+      if (path === "/manifest.webmanifest" || contentType.includes("manifest+json")) {
+        return rewriteRuntimeManifest(payload.toString(), prefix);
+      }
+      if (
+        (path === "/api/docs" || path.startsWith("/api/docs/")) &&
+        contentType.includes("javascript")
+      ) {
+        return rewriteRuntimeHtmlBase(payload.toString(), prefix);
+      }
+    }
+    return payload;
   });
 
   // WebSocket support for the integrated terminal (Phase 11). Must be
@@ -322,15 +408,33 @@ export async function buildServer(): Promise<FastifyInstance> {
         url.searchParams.delete("token");
         window.history.replaceState({}, document.title, url.toString());
       }
+      var docsIndex = window.location.pathname.indexOf("/api/docs");
+      var basePrefix = docsIndex > 0 ? window.location.pathname.slice(0, docsIndex) : "";
+      function rewriteRootApiUrl(raw) {
+        if (!basePrefix || !raw) return raw;
+        var u = new URL(raw, window.location.href);
+        if (u.origin !== window.location.origin) return raw;
+        var apiPath = u.pathname.indexOf("/api/v1/") === 0 || u.pathname.indexOf("/api/docs") === 0;
+        if (!apiPath || u.pathname.indexOf(basePrefix + "/") === 0) return raw;
+        u.pathname = basePrefix + u.pathname;
+        return raw.indexOf(window.location.origin) === 0
+          ? u.toString()
+          : u.pathname + u.search + u.hash;
+      }
       var token =
         sessionStorage.getItem("pi-forge/docs-token") ||
         localStorage.getItem("pi-forge/auth-token");
-      if (token && window.fetch) {
+      if (window.fetch) {
         var origFetch = window.fetch.bind(window);
         window.fetch = function (input, init) {
           init = init || {};
-          var url2 = typeof input === "string" ? input : input.url;
-          if (url2 && url2.indexOf("/api/v1/") !== -1) {
+          var rawUrl = typeof input === "string" ? input : input.url;
+          var rewritten = rewriteRootApiUrl(rawUrl);
+          if (rewritten !== rawUrl) {
+            input = typeof input === "string" ? rewritten : new Request(rewritten, input);
+          }
+          var url2 = rewritten || rawUrl;
+          if (token && url2 && url2.indexOf("/api/v1/") !== -1) {
             init.headers = new Headers(init.headers || {});
             if (!init.headers.has("Authorization")) {
               init.headers.set("Authorization", "Bearer " + token);
@@ -404,7 +508,16 @@ export async function buildServer(): Promise<FastifyInstance> {
     // schema/config (see those route files).
     const routeConfig = req.routeOptions?.config;
     if (routeConfig?.public === true) return;
-    if (!authEnabled()) return;
+    if (!authEnabled()) {
+      req.authUsername = config.auth.localAdminUsername;
+      return;
+    }
+
+    const dashboardIdentity = verifyDashboardIdentity(req.headers);
+    if (dashboardIdentity !== undefined) {
+      req.authUsername = dashboardIdentity.sub;
+      return;
+    }
 
     const presented = extractBearer(req.headers.authorization);
     if (presented === undefined) {
@@ -427,9 +540,13 @@ export async function buildServer(): Promise<FastifyInstance> {
         });
         return;
       }
+      req.authUsername = tokenPayload.username;
       return;
     }
-    if (verifyApiKey(presented)) return;
+    if (verifyApiKey(presented)) {
+      req.authUsername = config.auth.localAdminUsername;
+      return;
+    }
     reply.code(401).send({ error: "invalid_token" });
   });
 
@@ -490,12 +607,28 @@ export async function buildServer(): Promise<FastifyInstance> {
       }
     });
 
-    await fastify.register(fastifyStatic, {
-      root: config.clientDistPath,
-      index: "index.html",
+    fastify.get("/", async (req, reply) =>
+      reply
+        .code(200)
+        .type("text/html")
+        .send(await clientIndexHtml(req.headers)),
+    );
+
+    fastify.get("/manifest.webmanifest", async (req, reply) => {
+      const manifest = await readFile(join(config.clientDistPath, "manifest.webmanifest"), "utf8");
+      const prefix = forwardedPrefix(req.headers);
+      return reply
+        .code(200)
+        .type("application/manifest+json")
+        .send(prefix === undefined ? manifest : rewriteRuntimeManifest(manifest, prefix));
     });
 
-    fastify.setNotFoundHandler((req, reply) => {
+    await fastify.register(fastifyStatic, {
+      root: config.clientDistPath,
+      index: false,
+    });
+
+    fastify.setNotFoundHandler(async (req, reply) => {
       const path = req.url.split("?")[0] ?? req.url;
       // The API surface explicitly 404s — never fall through to the SPA.
       if (path.startsWith("/api/")) {
@@ -510,7 +643,10 @@ export async function buildServer(): Promise<FastifyInstance> {
       if (req.method !== "GET" || looksLikeAsset) {
         return reply.code(404).send({ error: "not_found" });
       }
-      return reply.code(200).type("text/html").sendFile("index.html");
+      return reply
+        .code(200)
+        .type("text/html")
+        .send(await clientIndexHtml(req.headers));
     });
 
     fastify.log.info({ root: config.clientDistPath }, "serving client from disk");
@@ -526,6 +662,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   // will also become load-bearing in Phase 5 to flush SSE clients.
   fastify.addHook("onClose", async () => {
     await disposeAllSessions();
+    await shutdownTelemetry();
     disposeAllPtys();
     await disposeAllMcp();
   });

@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { appUrl } from "../lib/base-path";
 import {
   api,
   ApiError,
   type AuthSummary,
+  type McpHeaderValue,
   type McpServerConfig,
   type McpServerStatus,
   type McpTransport,
@@ -218,8 +220,8 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
                 const stored = getStoredToken();
                 const url =
                   stored !== undefined
-                    ? `/api/docs?token=${encodeURIComponent(stored.token)}`
-                    : "/api/docs";
+                    ? appUrl(`/api/docs?token=${encodeURIComponent(stored.token)}`)
+                    : appUrl("/api/docs");
                 window.open(url, "_blank", "noopener,noreferrer");
               }}
               className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:border-neutral-500"
@@ -256,7 +258,7 @@ export function SettingsPanel({ onClose, initialTab }: Props) {
           {tab === "webhooks" && <WebhooksTab onError={setError} />}
           {tab === "appearance" && <AppearanceTab />}
           {tab === "backup" && <BackupTab onError={setError} />}
-          {tab === "general" && <GeneralTab />}
+          {tab === "general" && <GeneralTab onError={setError} />}
         </div>
       </div>
     </div>
@@ -841,6 +843,7 @@ function SelectSetting({
 // ---------------- Skills tab ----------------
 
 function SkillsTab({ onError }: { onError: (msg: string | undefined) => void }) {
+  const appName = useUiConfigStore((s) => s.appName);
   const project = useActiveProject();
   const projects = useProjectStore((s) => s.projects);
   const bumpSkillsRefresh = useUiStore((s) => s.bumpSkillsRefresh);
@@ -951,7 +954,7 @@ function SkillsTab({ onError }: { onError: (msg: string | undefined) => void }) 
         Skills discovered in <code className="font-mono">~/.pi/agent/skills/</code> and{" "}
         <code className="font-mono">{project.path}/.pi/skills/</code>. The global toggle writes to
         pi&apos;s <code className="font-mono">settings.skills</code>; per-project overrides write to
-        the pi-forge-private file at{" "}
+        the {appName}-private file at{" "}
         <code className="font-mono">{`\${FORGE_DATA_DIR}/skills-overrides.json`}</code>.
       </p>
       <div className="rounded border border-amber-700/40 bg-amber-900/10 px-3 py-2 text-[11px] text-amber-200 light:border-amber-300 light:bg-amber-50 light:text-amber-800">
@@ -1504,6 +1507,7 @@ function sandboxRowsToEnv(rows: readonly SandboxEnvRow[]): Record<string, string
 }
 
 function SandboxTab({ onError }: { onError: (msg: string | undefined) => void }) {
+  const appName = useUiConfigStore((s) => s.appName);
   const [settings, setSettings] = useState<SandboxSettingsResponse | undefined>(undefined);
   const [rows, setRows] = useState<SandboxEnvRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1670,7 +1674,7 @@ function SandboxTab({ onError }: { onError: (msg: string | undefined) => void })
         </div>
       </div>
       <p className="text-xs text-neutral-500">
-        Values are masked by default and only revealed per row. They are still stored in pi-forge
+        Values are masked by default and only revealed per row. They are still stored in {appName}
         data and passed to tool processes, so avoid secrets unless that storage is protected.
       </p>
 
@@ -2204,6 +2208,7 @@ function emptyActionDraft(kind: "command" | "prompt"): DraftAction {
 }
 
 function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => void }) {
+  const appName = useUiConfigStore((s) => s.appName);
   const minimal = useUiConfigStore((s) => s.minimal);
   const loaded = useQuickActionsStore((s) => s.loaded);
   const actions = useQuickActionsStore((s) => s.actions);
@@ -2455,7 +2460,7 @@ function QuickActionsTab({ onError }: { onError: (msg: string | undefined) => vo
                 <p className="mt-1 text-[11px] text-neutral-500">
                   Runs in the active project&apos;s folder via <code>/bin/sh -c</code>. Multi-line
                   is fine (<code>&amp;&amp;</code>, <code>;</code>, etc.). Environment is scrubbed
-                  of pi-forge and provider secrets (same as the integrated terminal).
+                  of {appName} and provider secrets (same as the integrated terminal).
                 </p>
               </div>
               <div>
@@ -3319,6 +3324,15 @@ function BackupTab({ onError }: { onError: (msg: string | undefined) => void }) 
 
 // ---------------- MCP tab ----------------
 
+interface SecretRow {
+  key: string;
+  value: string;
+}
+
+interface HeaderRow extends SecretRow {
+  source: "literal" | "env";
+}
+
 interface McpDraft {
   name: string;
   /** Discriminator. The form picks the field set based on this. */
@@ -3328,7 +3342,7 @@ interface McpDraft {
   url: string;
   transport: McpTransport;
   /** Headers as a flat ordered list so the user can manage rows. */
-  headers: { key: string; value: string }[];
+  headers: HeaderRow[];
   /** Remote-only: allow self-signed / invalid HTTPS certs for this server. */
   ignoreCertificateErrors: boolean;
   // Stdio fields
@@ -3340,13 +3354,22 @@ interface McpDraft {
   argsText: string;
   /** Env as a flat ordered list; same shape + redaction handling as
    *  headers, so the form reuses the same row UI. */
-  env: { key: string; value: string }[];
+  env: SecretRow[];
   /** Optional cwd; blank ↦ default (project path for project
    *  servers, pi-forge process cwd for global). */
   cwd: string;
 }
 
 const SECRET_PLACEHOLDER = "***REDACTED***";
+
+function isHeaderEnvValue(value: McpHeaderValue): value is { env: string } {
+  return typeof value === "object" && value !== null && typeof value.env === "string";
+}
+
+function headerValueToRow(key: string, value: McpHeaderValue): HeaderRow {
+  if (isHeaderEnvValue(value)) return { key, value: value.env, source: "env" };
+  return { key, value, source: "literal" };
+}
 
 function emptyDraft(): McpDraft {
   return {
@@ -3393,6 +3416,7 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
   const refreshProject = useMcpStore((s) => s.refreshProject);
   const setMcpEnabled = useMcpStore((s) => s.setMcpEnabled);
   const setMcpTruncation = useMcpStore((s) => s.setMcpTruncation);
+  const setMcpSpooling = useMcpStore((s) => s.setMcpSpooling);
   const upsertServer = useMcpStore((s) => s.upsertServer);
   const deleteServer = useMcpStore((s) => s.deleteServer);
   const probeServerStore = useMcpStore((s) => s.probeServer);
@@ -3405,6 +3429,12 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
   const [busy, setBusy] = useState(false);
   const [probing, setProbing] = useState<string | undefined>(undefined);
   const [truncationMaxDraft, setTruncationMaxDraft] = useState<string | undefined>(undefined);
+  const [spoolingThresholdDraft, setSpoolingThresholdDraft] = useState<string | undefined>(
+    undefined,
+  );
+  const [spoolingDirectoryDraft, setSpoolingDirectoryDraft] = useState<string | undefined>(
+    undefined,
+  );
 
   // Per-tool listing fetched alongside the server config so each
   // server row can cascade its tools (each tool gets its own
@@ -3480,6 +3510,25 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
     }
   };
 
+  const saveSpooling = async (next: {
+    enabled: boolean;
+    thresholdChars: number;
+    directory: string;
+    format: "json";
+  }): Promise<void> => {
+    setBusy(true);
+    try {
+      await setMcpSpooling(next);
+      setSpoolingThresholdDraft(undefined);
+      setSpoolingDirectoryDraft(undefined);
+      onError(undefined);
+    } catch (err) {
+      onError(`Failed to update MCP spooling: ${errorCode(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const toggleServer = async (name: string, next: boolean): Promise<void> => {
     const prev = servers[name];
     if (prev === undefined) return;
@@ -3505,7 +3554,7 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
       enabled: cfg.enabled !== false,
       url: cfg.url ?? "",
       transport: cfg.transport ?? "auto",
-      headers: Object.entries(cfg.headers ?? {}).map(([k, v]) => ({ key: k, value: v })),
+      headers: Object.entries(cfg.headers ?? {}).map(([k, v]) => headerValueToRow(k, v)),
       ignoreCertificateErrors: cfg.ignoreCertificateErrors === true,
       command: cfg.command ?? "",
       argsText: (cfg.args ?? []).join("\n"),
@@ -3538,10 +3587,14 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
       body.url = draft.url;
       body.transport = draft.transport;
       if (draft.ignoreCertificateErrors) body.ignoreCertificateErrors = true;
-      const headers: Record<string, string> = {};
+      const headers: Record<string, McpHeaderValue> = {};
       for (const h of draft.headers) {
         if (h.key.trim().length === 0) continue;
-        headers[h.key] = h.value;
+        if (h.source === "env" && h.value.trim().length === 0) {
+          onError(`Env var name is required for header '${h.key}'.`);
+          return;
+        }
+        headers[h.key] = h.source === "env" ? { env: h.value.trim() } : h.value;
       }
       if (Object.keys(headers).length > 0) body.headers = headers;
     } else {
@@ -3674,6 +3727,78 @@ function McpTab({ onError }: { onError: (msg: string | undefined) => void }) {
           >
             {enabled ? "Enabled" : "Disabled"}
           </button>
+        </div>
+        <div className="flex flex-wrap items-end justify-between gap-3 border-t border-neutral-800 pt-3">
+          <div className="min-w-[240px] flex-1">
+            <div className="text-sm font-medium text-neutral-100">Result spooling</div>
+            <div className="text-[11px] text-neutral-500">
+              Writes oversized successful MCP results to workspace files before truncation. Default:
+              <code className="ml-1 font-mono">&lt;workspace&gt;/.mcp-results/</code>.
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <label className="text-[11px] text-neutral-500" htmlFor="mcp-spooling-threshold">
+              Threshold chars
+            </label>
+            <input
+              id="mcp-spooling-threshold"
+              type="number"
+              min={1}
+              max={1000000}
+              value={spoolingThresholdDraft ?? String(settings.spooling.thresholdChars)}
+              onChange={(e) => setSpoolingThresholdDraft(e.target.value)}
+              onBlur={() => {
+                const parsed = Number.parseInt(
+                  spoolingThresholdDraft ?? String(settings.spooling.thresholdChars),
+                  10,
+                );
+                if (
+                  Number.isFinite(parsed) &&
+                  parsed >= 1 &&
+                  parsed !== settings.spooling.thresholdChars
+                ) {
+                  void saveSpooling({ ...settings.spooling, thresholdChars: parsed });
+                } else {
+                  setSpoolingThresholdDraft(undefined);
+                }
+              }}
+              disabled={busy || !settings.spooling.enabled}
+              className="w-28 rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 disabled:opacity-50"
+            />
+            <label className="text-[11px] text-neutral-500" htmlFor="mcp-spooling-directory">
+              Directory
+            </label>
+            <input
+              id="mcp-spooling-directory"
+              type="text"
+              value={spoolingDirectoryDraft ?? settings.spooling.directory}
+              onChange={(e) => setSpoolingDirectoryDraft(e.target.value)}
+              onBlur={() => {
+                const next = (spoolingDirectoryDraft ?? settings.spooling.directory).trim();
+                if (next.length > 0 && next !== settings.spooling.directory) {
+                  void saveSpooling({ ...settings.spooling, directory: next });
+                } else {
+                  setSpoolingDirectoryDraft(undefined);
+                }
+              }}
+              disabled={busy || !settings.spooling.enabled}
+              className="w-40 rounded border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-100 disabled:opacity-50"
+            />
+            <label className="flex items-center gap-2 rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-300">
+              <input
+                type="checkbox"
+                checked={settings.spooling.enabled}
+                disabled={busy}
+                onChange={(e) =>
+                  void saveSpooling({
+                    ...settings.spooling,
+                    enabled: e.target.checked,
+                  })
+                }
+              />
+              <span>{settings.spooling.enabled ? "Spooling" : "Inline only"}</span>
+            </label>
+          </div>
         </div>
         <div className="flex flex-wrap items-end justify-between gap-3 border-t border-neutral-800 pt-3">
           <div className="min-w-[240px] flex-1">
@@ -4089,6 +4214,7 @@ function StdioTrustBanner(props: {
   onGrant: () => void | Promise<void>;
   onRevoke: () => void | Promise<void>;
 }) {
+  const appName = useUiConfigStore((s) => s.appName);
   if (props.trusted) {
     return (
       <div className="flex items-center justify-between rounded border border-neutral-800 bg-neutral-900/40 px-3 py-1.5 text-[11px] text-neutral-500">
@@ -4119,9 +4245,9 @@ function StdioTrustBanner(props: {
       </div>
       <p className="text-[11px] leading-relaxed">
         <strong>{props.projectName}</strong>'s <code className="font-mono">.mcp.json</code> declares
-        MCP server{props.gatedCount === 1 ? "" : "s"} that pi-forge would launch as local subprocess
-        {props.gatedCount === 1 ? "" : "es"}. Stdio MCP runs arbitrary commands on this machine with
-        whatever env you've passed through — only trust projects whose{" "}
+        MCP server{props.gatedCount === 1 ? "" : "s"} that {appName} would launch as local
+        subprocess{props.gatedCount === 1 ? "" : "es"}. Stdio MCP runs arbitrary commands on this
+        machine with whatever env you've passed through — only trust projects whose{" "}
         <code className="font-mono">.mcp.json</code> you've reviewed and approve of. Remote (URL)
         entries in this project are unaffected by this gate.
       </p>
@@ -4275,14 +4401,7 @@ function McpDraftForm(props: {
       </div>
 
       {draft.kind === "remote" ? (
-        <SecretRowsEditor
-          label="Headers"
-          emptyHint="No headers. Add `Authorization: Bearer …` here for auth."
-          keyPlaceholder="Authorization"
-          valuePlaceholder="Bearer …"
-          rows={draft.headers}
-          onChange={(next) => setField("headers", next)}
-        />
+        <HeaderRowsEditor rows={draft.headers} onChange={(next) => setField("headers", next)} />
       ) : (
         <SecretRowsEditor
           label="Env"
@@ -4313,20 +4432,102 @@ function McpDraftForm(props: {
   );
 }
 
+function HeaderRowsEditor(props: { rows: HeaderRow[]; onChange: (next: HeaderRow[]) => void }) {
+  const appName = useUiConfigStore((s) => s.appName);
+  const { rows } = props;
+  return (
+    <div className="mt-3">
+      <div className="mb-1 flex items-center justify-between">
+        <h5 className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
+          Headers
+        </h5>
+        <button
+          onClick={() => props.onChange([...rows, { key: "", value: "", source: "literal" }])}
+          className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500"
+        >
+          + Header
+        </button>
+      </div>
+      {rows.length === 0 && (
+        <p className="text-[11px] italic text-neutral-600">
+          No headers. Add literal auth headers or reference an env var such as MY_MCP_TOKEN.
+        </p>
+      )}
+      {rows.map((r, i) => (
+        <div key={i} className="mb-1 grid grid-cols-[1fr_auto_2fr_auto] gap-1">
+          <input
+            value={r.key}
+            onChange={(e) => {
+              const next = [...rows];
+              next[i] = { ...r, key: e.target.value };
+              props.onChange(next);
+            }}
+            placeholder="Authorization"
+            className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-[11px] font-mono text-neutral-100 outline-none focus:border-neutral-500"
+          />
+          <select
+            value={r.source}
+            onChange={(e) => {
+              const next = [...rows];
+              next[i] = { ...r, source: e.target.value as HeaderRow["source"] };
+              props.onChange(next);
+            }}
+            className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 outline-none focus:border-neutral-500"
+          >
+            <option value="literal">literal</option>
+            <option value="env">env</option>
+          </select>
+          <input
+            value={r.value === SECRET_PLACEHOLDER ? "" : r.value}
+            onChange={(e) => {
+              const next = [...rows];
+              next[i] = { ...r, value: e.target.value };
+              props.onChange(next);
+            }}
+            placeholder={
+              r.source === "env"
+                ? "MY_MCP_TOKEN"
+                : r.value === SECRET_PLACEHOLDER
+                  ? "leave blank to keep stored value"
+                  : "Bearer …"
+            }
+            type={r.source === "env" ? "text" : "password"}
+            className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-[11px] font-mono text-neutral-100 outline-none focus:border-neutral-500"
+          />
+          <button
+            onClick={() => props.onChange(rows.filter((_, j) => j !== i))}
+            className="rounded border border-neutral-700 px-2 text-[11px] text-neutral-400 hover:text-red-300 light:hover:text-red-700"
+            title="Remove header"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <p className="mt-1 text-[10px] text-neutral-500">
+        Env-backed headers store only the variable name; {appName} resolves the value when sending
+        MCP requests.
+      </p>
+      {rows.some((r) => r.value === SECRET_PLACEHOLDER) && (
+        <p className="mt-1 text-[10px] italic text-neutral-500">
+          Literal values with the redaction sentinel keep their stored value when you save.
+        </p>
+      )}
+    </div>
+  );
+}
+
 /**
- * Shared key/value editor used by both the Headers (remote) and Env
- * (stdio) sections. Same visual + the same redaction-sentinel
- * round-trip pattern — the value field renders blank when the
- * stored value is the sentinel so the user types a replacement
- * instead of "editing" the placeholder.
+ * Shared key/value editor used by the Env (stdio) section. The value
+ * field renders blank when the stored value is the sentinel so the
+ * user types a replacement instead of "editing" the placeholder.
  */
 function SecretRowsEditor(props: {
   label: string;
   emptyHint: string;
   keyPlaceholder: string;
   valuePlaceholder: string;
-  rows: { key: string; value: string }[];
-  onChange: (next: { key: string; value: string }[]) => void;
+  rows: SecretRow[];
+  onChange: (next: SecretRow[]) => void;
 }) {
   const { rows } = props;
   return (
@@ -4402,8 +4603,9 @@ const MIN_PASSWORD_LENGTH = 8;
  * in those cases there is no local password to change or password
  * changes should be managed by LDAP.
  */
-function GeneralTab() {
+function GeneralTab({ onError }: { onError: (msg: string | undefined) => void }) {
   const version = useUiConfigStore((s) => s.version);
+  const appName = useUiConfigStore((s) => s.appName);
   const loaded = useUiConfigStore((s) => s.loaded);
   const passwordAuthEnabled = useUiConfigStore((s) => s.passwordAuthEnabled);
   const uiConfigLdapEnabled = useUiConfigStore((s) => s.ldapEnabled);
@@ -4413,7 +4615,7 @@ function GeneralTab() {
   return (
     <div className="space-y-6 text-sm text-neutral-300">
       <header className="space-y-1">
-        <h2 className="text-base font-semibold text-neutral-100">pi-forge</h2>
+        <h2 className="text-base font-semibold text-neutral-100">{appName}</h2>
         <p className="text-xs text-neutral-500">
           Browser interface for the{" "}
           <a
@@ -4479,8 +4681,96 @@ function GeneralTab() {
         </ul>
       </section>
 
+      <TelemetryCaptureSection onError={onError} />
+
       {showChangePassword && <ChangePasswordSection />}
     </div>
+  );
+}
+
+function TelemetryCaptureSection({ onError }: { onError: (msg: string | undefined) => void }) {
+  const captureContent = useUiConfigStore((s) => s.telemetryCaptureContent);
+  const setTelemetryCaptureContent = useUiConfigStore((s) => s.setTelemetryCaptureContent);
+  const [saving, setSaving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .getTelemetrySettings()
+      .then((settings) => {
+        if (!cancelled) setTelemetryCaptureContent(settings.captureContent);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const code = err instanceof ApiError ? err.code : (err as Error).message;
+        onError(`Telemetry settings load failed: ${code}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onError, setTelemetryCaptureContent]);
+
+  const setCaptureContent = async (enabled: boolean): Promise<void> => {
+    setSaving(true);
+    setSavedFlash(false);
+    onError(undefined);
+    try {
+      const next = await api.updateTelemetrySettings(enabled);
+      setTelemetryCaptureContent(next.captureContent);
+      setSavedFlash(true);
+      window.setTimeout(() => setSavedFlash(false), 2500);
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : (err as Error).message;
+      onError(`Telemetry settings update failed: ${code}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="space-y-3 border-t border-neutral-800 pt-5">
+      <div className="space-y-1">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+          Telemetry content capture
+        </h3>
+        <p className="max-w-3xl text-xs text-neutral-500">
+          Controls OTEL_CAPTURE_CONTENT at runtime. When enabled, full user and assistant message
+          content plus tool inputs/results may be exported to OpenTelemetry.
+        </p>
+      </div>
+      <label className="flex max-w-3xl items-start gap-3 rounded-md border border-red-900/50 bg-red-950/20 p-3">
+        <input
+          type="checkbox"
+          checked={captureContent}
+          disabled={saving}
+          onChange={(e) => void setCaptureContent(e.target.checked)}
+          className="mt-0.5 h-4 w-4 accent-red-600 disabled:opacity-50"
+        />
+        <span className="space-y-1">
+          <span className="block text-sm font-medium text-neutral-100">
+            Include message and tool content in telemetry
+          </span>
+          <span className="block text-xs text-red-300/90">
+            Enable only with an approved data-retention policy. Captured content can include source
+            code, credentials, personal data, attachment text, and MCP/tool responses.
+          </span>
+        </span>
+      </label>
+      <div className="flex items-center gap-2 text-xs">
+        <span
+          className={`rounded-full px-2 py-0.5 font-semibold uppercase tracking-wide ${
+            captureContent
+              ? "bg-red-600 text-white"
+              : "bg-neutral-800 text-neutral-400 light:bg-neutral-200 light:text-neutral-700"
+          }`}
+        >
+          {captureContent ? "On" : "Off"}
+        </span>
+        {saving && <span className="text-neutral-500">saving…</span>}
+        {savedFlash && <span className="text-emerald-400">Saved.</span>}
+      </div>
+    </section>
   );
 }
 

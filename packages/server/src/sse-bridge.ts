@@ -42,7 +42,7 @@ const BACKPRESSURE_LIMIT_BYTES = 8 * 1024 * 1024;
  * and the browser shows "reconnecting." 20s gives us comfortable
  * margin under the typical 30s default.
  */
-const HEARTBEAT_INTERVAL_MS = 20_000;
+export const SSE_HEARTBEAT_INTERVAL_MS = 20_000;
 
 /**
  * Heartbeat payload, padded to 2KB.
@@ -69,8 +69,8 @@ const HEARTBEAT_INTERVAL_MS = 20_000;
  * frames in `tcpdump` / `curl -N` can identify what they're looking
  * at; the underscore padding is just deliberate filler.
  */
-const HEARTBEAT_PADDING_BYTES = 2048;
-const HEARTBEAT_LINE = `: heartbeat ${"_".repeat(HEARTBEAT_PADDING_BYTES - 14)}\n\n`;
+const SSE_HEARTBEAT_PADDING_BYTES = 2048;
+export const SSE_HEARTBEAT_LINE = `: heartbeat ${"_".repeat(SSE_HEARTBEAT_PADDING_BYTES - 14)}\n\n`;
 
 /**
  * One-shot padding flush we send right after the `compaction_start`
@@ -613,16 +613,16 @@ export function createSSEClient(reply: FastifyReply, live: LiveSession): SSEClie
 
     // Idle-timer reset + buffer-flush for L7 proxies (OpenShift
     // HAProxy router, nginx, ALB, etc.). Comment line, no `data:`
-    // field — EventSource skips it. HEARTBEAT_LINE is padded to 2KB
-    // to defeat HAProxy's small-write buffering so heartbeats
+    // field — EventSource skips it. SSE_HEARTBEAT_LINE is padded
+    // to 2KB to defeat HAProxy's small-write buffering so heartbeats
     // actually reach the client during long idle gaps; see the
-    // HEARTBEAT_LINE doc-comment for the full rationale. Uses
+    // SSE_HEARTBEAT_LINE doc-comment for the full rationale. Uses
     // writeRaw so the same backpressure guard applies; if the
     // socket is wedged the heartbeat will trip the limit and call
     // close(), which tears the timer down.
     heartbeatTimer = setInterval(() => {
-      writeRaw(HEARTBEAT_LINE);
-    }, HEARTBEAT_INTERVAL_MS);
+      writeRaw(SSE_HEARTBEAT_LINE);
+    }, SSE_HEARTBEAT_INTERVAL_MS);
     // Don't keep the Node event loop alive just for heartbeats — when
     // the socket closes the close handler clears the timer anyway.
     heartbeatTimer.unref();

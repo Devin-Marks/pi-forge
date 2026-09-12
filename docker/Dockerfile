@@ -77,7 +77,9 @@ COPY packages/client/package.json packages/client/
 # `npm ci --workspaces` honours the root lockfile across all packages.
 RUN npm ci --workspaces --include-workspace-root
 
-# Now bring in the source and build.
+# Now bring in the source and build. Dashboard path-prefix deployments use
+# X-Forwarded-Prefix at runtime, so the image can be built once with Vite's
+# default root base and reused behind different app-proxy paths.
 COPY . .
 
 RUN npm run build

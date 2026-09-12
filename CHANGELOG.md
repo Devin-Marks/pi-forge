@@ -15,6 +15,62 @@ section. See the "Versions" section of the README for the support window policy.
 
 ## [Unreleased]
 
+## [1.5.3] — 2026-08-26
+
+### Added
+
+- **Configurable web UI branding.** Operators can customize the browser title, install/offline app name, and sidebar/header brand label through server configuration exposed safely to the client.
+- **Runtime OTEL content capture controls.** Administrators can inspect and toggle OpenTelemetry content-capture settings at runtime from the settings UI and config API, with health/config endpoints reporting the effective state.
+
+### Changed
+
+- **Dependency updates for v1.5.3.** Updated the pinned pi SDK trio to 0.84.3 and adjusted session/tool integrations for the refreshed SDK behavior.
+
+## [1.5.2] — 2026-08-24
+
+### Added
+
+- **OTLP export diagnostics and private-endpoint TLS controls.** Operators can enable sanitized exporter status/error logs with `OTEL_DEBUG` and, for trusted self-signed endpoints, scope certificate-verification bypass to the OTLP exporter with `OTEL_EXPORTER_OTLP_TLS_REJECT_UNAUTHORIZED=false`.
+
+### Fixed
+
+- **Dashboard/app-portal sessions use the authenticated identity in telemetry.** Session attribution now propagates the verified proxy `sub` claim instead of falling back to the local admin username.
+
+## [1.5.1] — 2026-08-20
+
+### Fixed
+
+- **Dashboard app-proxy runtime paths.** Pi-forge now resolves dashboard mount paths from `X-Forwarded-Prefix` at request time, so a normal `/` build works behind `/apps/pi-forge/` without serving JS/CSS as HTML. Dashboard SSO configuration now uses `DASHBOARD_APP_ID` as the primary app id setting.
+
+## [1.5.0] — 2026-08-19
+
+## [1.4.9] — 2026-08-19
+
+### Fixed
+
+- **Configured MCP headers preserve SDK JSON transport headers.** MCP requests now merge user-configured headers without dropping SDK-provided transport headers such as `content-type: application/json`.
+
+## [1.4.8] — 2026-08-19
+
+### Added
+
+- **Skill and extension slash commands.** Prompt composition now supports slash command discovery and insertion for skills and extensions, including UI notifications and integration coverage.
+- **Session activity indicators.** The session list and streams now surface activity state so users can distinguish active, idle, and recently updated sessions.
+- **File tree excluded-folder toggles.** The file browser can show or hide excluded folders on demand while preserving workspace path safety.
+- **Env-backed MCP headers.** MCP server headers can reference environment-backed values so deployments can configure sensitive header values without storing raw secrets in forge data.
+- **Rootless Podman quickstart.** Container documentation now includes a rootless Podman compose quickstart and related deployment guidance.
+
+### Changed
+
+- **Dependabot update volume is capped.** Dependency update configuration now limits open version-update pull requests to reduce release noise.
+
+### Fixed
+
+- **Long-running SSE streams stay connected.** Stream handling now keeps extended agent output alive instead of timing out during long-running turns.
+- **MCP tool failures are isolated and reported safely.** MCP bridge handling now hardens tool failure paths so individual MCP failures do not destabilize the session stream.
+- **Sandboxed agents can read pi docs.** Tool sandbox policy now allows required read-only access to pi documentation paths used by project instructions.
+- **Theme contrast and inspector backgrounds are consistent.** Palette selection contrast and inspector surfaces now respect the active theme/background more reliably.
+
 ## [1.4.7] — 2026-07-22
 
 ### Added

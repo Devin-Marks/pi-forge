@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api, ApiError, type ServerThemeConfigResponse } from "../lib/api-client";
 import type { AuthColorScheme } from "../lib/api-client/types";
+import { appResourceUrl } from "../lib/base-path";
 import { applyServerTheme } from "../lib/server-theme";
 
 /**
@@ -22,6 +23,8 @@ interface UiConfigState {
   minimal: boolean;
   /** Absolute workspace root reported by the server. */
   workspaceRoot: string;
+  /** Display-only application name shown in browser UI branding. */
+  appName: string;
   /** Server build version (mirrors packages/server's package.json). */
   version: string;
   /**
@@ -43,6 +46,8 @@ interface UiConfigState {
    * expose the field keep the old hidden posture.
    */
   orchestrationEnabled: boolean;
+  /** True when OpenTelemetry content capture is enabled at runtime. */
+  telemetryCaptureContent: boolean;
   /** Global server-side color overrides for broad UI surfaces. */
   serverTheme: ServerThemeConfigResponse | undefined;
   /** Optional public banner shown below the login prompt. */
@@ -63,16 +68,19 @@ interface UiConfigState {
   error: string | undefined;
   load: () => Promise<void>;
   setServerTheme: (theme: ServerThemeConfigResponse) => void;
+  setTelemetryCaptureContent: (enabled: boolean) => void;
 }
 
 export const useUiConfigStore = create<UiConfigState>((set) => ({
   loaded: false,
   minimal: false,
   workspaceRoot: "",
+  appName: "pi-forge",
   version: "",
   passwordAuthEnabled: true,
   ldapEnabled: false,
   orchestrationEnabled: false,
+  telemetryCaptureContent: false,
   serverTheme: undefined,
   authBannerText: undefined,
   authBannerHtml: false,
@@ -86,26 +94,42 @@ export const useUiConfigStore = create<UiConfigState>((set) => ({
     applyServerTheme(theme);
     set({ serverTheme: theme });
   },
+  setTelemetryCaptureContent: (enabled) => {
+    set({ telemetryCaptureContent: enabled });
+  },
   load: async () => {
     try {
       const cfg = await api.uiConfig();
       applyServerTheme(cfg.serverTheme);
+      if (typeof document !== "undefined") {
+        document.title = cfg.appName;
+        document
+          .querySelector('meta[name="apple-mobile-web-app-title"]')
+          ?.setAttribute("content", cfg.appName);
+      }
+      try {
+        localStorage.setItem("pi-forge/app-name", cfg.appName);
+      } catch {
+        // Private mode / locked-down storage: title and in-memory branding still update.
+      }
       set({
         loaded: true,
         minimal: cfg.minimal,
         workspaceRoot: cfg.workspaceRoot,
+        appName: cfg.appName,
         version: cfg.version,
         passwordAuthEnabled: cfg.passwordAuthEnabled,
         ldapEnabled: cfg.ldapEnabled,
         orchestrationEnabled: cfg.orchestrationEnabled,
+        telemetryCaptureContent: cfg.telemetryCaptureContent,
         serverTheme: cfg.serverTheme,
         authBannerText: cfg.authBannerText,
         authBannerHtml: cfg.authBannerHtml,
         logoUrlMode: cfg.logoUrlMode,
         authColorScheme: cfg.authColorScheme,
-        authLogoUrl: cfg.authLogoUrl,
-        appLogoDarkUrl: cfg.appLogoDarkUrl,
-        appLogoLightUrl: cfg.appLogoLightUrl,
+        authLogoUrl: appResourceUrl(cfg.authLogoUrl),
+        appLogoDarkUrl: appResourceUrl(cfg.appLogoDarkUrl),
+        appLogoLightUrl: appResourceUrl(cfg.appLogoLightUrl),
         error: undefined,
       });
     } catch (err) {

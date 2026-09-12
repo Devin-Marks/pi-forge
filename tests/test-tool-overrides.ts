@@ -116,10 +116,11 @@ async function main(): Promise<void> {
         builtin: { name: string; enabled: boolean }[];
         mcp: unknown[];
       };
-      // 7 SDK builtins + ask_user_question + todo + process (all three
-      // implemented in pi-forge but surfaced under "Built-in tools"
-      // so users can disable them from Settings → Tools). See
-      // packages/server/src/session-registry.ts BUILTIN_TOOL_NAMES.
+      // 7 Linux-compatible SDK builtins + ask_user_question + todo + process
+      // (all three implemented in pi-forge but surfaced under "Built-in tools"
+      // so users can disable them from Settings → Tools). The SDK also has an
+      // optional Windows-only powershell tool, intentionally not surfaced here.
+      // See packages/server/src/session-registry.ts BUILTIN_TOOL_NAMES.
       assert(
         "  ten builtins listed",
         body.builtin.length === 10,

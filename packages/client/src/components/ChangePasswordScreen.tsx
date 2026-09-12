@@ -1,5 +1,6 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { authColorStyle } from "../lib/auth-colors";
+import { appUrl } from "../lib/base-path";
 import { useAuthStore } from "../store/auth-store";
 import { useUiConfigStore } from "../store/ui-config-store";
 
@@ -26,6 +27,7 @@ export function ChangePasswordScreen() {
   const pending = useAuthStore((s) => s.changePasswordPending);
   const remoteError = useAuthStore((s) => s.changePasswordError);
   const logout = useAuthStore((s) => s.logout);
+  const appName = useUiConfigStore((s) => s.appName);
   const authLogoUrl = useUiConfigStore((s) => s.authLogoUrl);
   const authColorScheme = useUiConfigStore((s) => s.authColorScheme);
   const colors = useMemo(() => authColorStyle(authColorScheme), [authColorScheme]);
@@ -62,7 +64,7 @@ export function ChangePasswordScreen() {
         <header className="space-y-1">
           <div className="flex items-center gap-2">
             <img
-              src={authLogoUrl ?? "/icons/icon.svg"}
+              src={authLogoUrl ?? appUrl("/icons/icon.svg")}
               alt=""
               className="max-h-6 max-w-24 object-contain"
               aria-hidden="true"
@@ -71,7 +73,7 @@ export function ChangePasswordScreen() {
           </div>
           <p className="text-sm text-[var(--auth-muted-text)]">
             You signed in with the deployment-supplied initial password. Pick a new one before
-            continuing — it will be stored as a hash on the pi-forge data volume.
+            continuing — it will be stored as a hash on the {appName} data volume.
           </p>
         </header>
         <label className="block space-y-1.5">

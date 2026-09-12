@@ -44,6 +44,12 @@ services:
       # Auth — read from .env. Both empty = auth disabled.
       UI_PASSWORD: ${UI_PASSWORD:-}
       API_KEY: ${API_KEY:-}
+      # Dashboard path-proxy SSO. Leave DASHBOARD_IDENTITY_SECRET empty when
+      # not embedding behind the dashboard proxy.
+      DASHBOARD_IDENTITY_SECRET: ${DASHBOARD_IDENTITY_SECRET:-}
+      DASHBOARD_IDENTITY_ISSUER: ${DASHBOARD_IDENTITY_ISSUER:-internal-dashboard}
+      DASHBOARD_APP_ID: ${DASHBOARD_APP_ID:-pi-forge}
+      DASHBOARD_IDENTITY_ALLOWED_GROUPS: ${DASHBOARD_IDENTITY_ALLOWED_GROUPS:-}
       # Logging + reverse-proxy hint.
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TRUST_PROXY: ${TRUST_PROXY:-false}

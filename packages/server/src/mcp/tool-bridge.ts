@@ -1,12 +1,30 @@
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { Type } from "typebox";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import { writeFile } from "../file-manager.js";
 
 export interface McpResultTruncationSettings {
   enabled: boolean;
   maxChars: number;
 }
+
+export interface McpResultSpoolingSettings {
+  enabled: boolean;
+  thresholdChars: number;
+  directory: string;
+  format: "json";
+}
+
+export interface McpSpoolingContext {
+  workspacePath: string;
+}
+
+export const MCP_TOOL_CALL_TIMEOUT_MS = 120_000;
+const MCP_DIAGNOSTIC_MAX_CHARS = 1_000;
+const MCP_DETAIL_MAX_CHARS = 10_000;
 
 /**
  * Translate a single MCP tool advertised by a connected MCP server
@@ -39,6 +57,8 @@ export function bridgeMcpTool(opts: {
   /** Reconnects the owning MCP server after the remote rejects the
    *  cached session id. Returns true when a fresh client is available. */
   recoverStaleSession?: () => Promise<boolean>;
+  /** Workspace context for optional large-result spooling. Omitted for status-only bridge copies. */
+  spoolingContext?: McpSpoolingContext;
 }): ToolDefinition {
   const prefixedName = `${opts.serverName}__${opts.toolName}`;
   const description =
@@ -59,27 +79,59 @@ export function bridgeMcpTool(opts: {
       }
       try {
         const res = await callMcpTool(client, opts.toolName, params, signal);
-        return mcpResultToAgentResult(res);
+        return await safelyConvertMcpResult(
+          prefixedName,
+          opts.serverName,
+          opts.toolName,
+          res,
+          opts.spoolingContext,
+        );
       } catch (err) {
         if (
           !isAbortError(err) &&
           isStaleMcpSessionError(err) &&
           opts.recoverStaleSession !== undefined
         ) {
-          const recovered = await opts.recoverStaleSession().catch(() => false);
+          const recovered = await opts.recoverStaleSession().catch((recoverErr: unknown) => {
+            logMcpToolFailure({
+              serverName: opts.serverName,
+              toolName: opts.toolName,
+              phase: "reconnect",
+              error: recoverErr,
+            });
+            return false;
+          });
           const retryClient = opts.getClient();
           if (recovered && retryClient !== undefined) {
             try {
               const retryRes = await callMcpTool(retryClient, opts.toolName, params, signal);
-              return mcpResultToAgentResult(retryRes);
+              return await safelyConvertMcpResult(
+                prefixedName,
+                opts.serverName,
+                opts.toolName,
+                retryRes,
+                opts.spoolingContext,
+              );
             } catch (retryErr) {
+              logMcpToolFailure({
+                serverName: opts.serverName,
+                toolName: opts.toolName,
+                phase: "retry",
+                error: retryErr,
+              });
               return errorResult(
-                `MCP tool '${prefixedName}' threw after reconnect: ${errorMessage(retryErr)}`,
+                `MCP tool '${prefixedName}' failed after reconnect: ${errorMessage(retryErr)}`,
               );
             }
           }
         }
-        return errorResult(`MCP tool '${prefixedName}' threw: ${errorMessage(err)}`);
+        logMcpToolFailure({
+          serverName: opts.serverName,
+          toolName: opts.toolName,
+          phase: isAbortError(err) ? "abort" : "call",
+          error: err,
+        });
+        return errorResult(`MCP tool '${prefixedName}' failed: ${errorMessage(err)}`);
       }
     },
   } satisfies ToolDefinition;
@@ -91,29 +143,168 @@ async function callMcpTool(
   params: unknown,
   signal: AbortSignal | undefined,
 ): Promise<unknown> {
-  return await client.callTool(
-    {
-      name: toolName,
-      arguments: (params as Record<string, unknown>) ?? {},
+  const call = makeAbortableCallSignal(signal, MCP_TOOL_CALL_TIMEOUT_MS);
+  try {
+    const result = client.callTool(
+      {
+        name: toolName,
+        arguments: isRecord(params) ? params : {},
+      },
+      undefined,
+      { signal: call.signal },
+    );
+    return await Promise.race([result, call.abortPromise]);
+  } finally {
+    call.cleanup();
+  }
+}
+
+async function safelyConvertMcpResult(
+  prefixedName: string,
+  serverName: string,
+  toolName: string,
+  res: unknown,
+  spoolingContext: McpSpoolingContext | undefined,
+): Promise<AgentToolResult<unknown>> {
+  try {
+    const spooled = await maybeSpoolMcpResult({
+      prefixedName,
+      serverName,
+      toolName,
+      res,
+      spoolingContext,
+    });
+    if (spooled !== undefined) return spooled;
+    return mcpResultToAgentResult(res);
+  } catch (err) {
+    logMcpToolFailure({ serverName, toolName, phase: "result_conversion", error: err });
+    return errorResult(
+      `MCP tool '${prefixedName}' returned a malformed result that pi-forge could not safely render: ${errorMessage(err)}`,
+    );
+  }
+}
+
+function makeAbortableCallSignal(
+  parent: AbortSignal | undefined,
+  timeoutMs: number,
+): { signal: AbortSignal; abortPromise: Promise<never>; cleanup: () => void } {
+  const controller = new AbortController();
+  let rejectAbort: (err: Error) => void = () => undefined;
+  const abortPromise = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  const fail = (err: Error): void => {
+    controller.abort(err);
+    rejectAbort(err);
+  };
+  const timeout = setTimeout(() => {
+    fail(new Error(`MCP tool call timed out after ${timeoutMs} ms`));
+  }, timeoutMs);
+  const abort = (): void => {
+    const reason = parent?.reason;
+    fail(reason instanceof Error ? reason : new Error("MCP tool call aborted"));
+  };
+  if (parent?.aborted === true) abort();
+  else parent?.addEventListener("abort", abort, { once: true });
+  return {
+    signal: controller.signal,
+    abortPromise,
+    cleanup: () => {
+      clearTimeout(timeout);
+      parent?.removeEventListener("abort", abort);
     },
-    undefined,
-    signal !== undefined ? { signal } : undefined,
-  );
+  };
 }
 
 function errorResult(message: string): AgentToolResult<unknown> {
   return {
-    content: [{ type: "text", text: message }],
+    content: [{ type: "text", text: sanitizeDiagnostic(message, MCP_DIAGNOSTIC_MAX_CHARS) }],
     details: undefined,
   };
 }
 
 function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  if (err instanceof Error) {
+    const parts = [err.name, err.message].filter((p) => p.length > 0);
+    return sanitizeDiagnostic(parts.join(": "), MCP_DIAGNOSTIC_MAX_CHARS);
+  }
+  return sanitizeDiagnostic(safeStringify(err, MCP_DIAGNOSTIC_MAX_CHARS), MCP_DIAGNOSTIC_MAX_CHARS);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isAbortError(err: unknown): boolean {
   return err instanceof Error && (err.name === "AbortError" || err.message.includes("aborted"));
+}
+
+function logMcpToolFailure(opts: {
+  serverName: string;
+  toolName: string;
+  phase: "call" | "abort" | "reconnect" | "retry" | "result_conversion" | "spooling";
+  error: unknown;
+}): void {
+  const error = opts.error as { name?: unknown; code?: unknown; cause?: unknown };
+  const code =
+    typeof error?.code === "string" || typeof error?.code === "number" ? error.code : undefined;
+  const name = typeof error?.name === "string" ? error.name : undefined;
+  const cause = error?.cause instanceof Error ? errorMessage(error.cause) : undefined;
+  console.warn(
+    "[mcp] tool failure",
+    JSON.stringify({
+      server: opts.serverName,
+      tool: opts.toolName,
+      phase: opts.phase,
+      ...(name !== undefined ? { errorName: name } : {}),
+      ...(code !== undefined ? { code } : {}),
+      message: errorMessage(opts.error),
+      ...(cause !== undefined ? { cause } : {}),
+    }),
+  );
+}
+
+function safeStringify(value: unknown, maxChars: number): string {
+  return sanitizeDiagnostic(safeStringifyFull(value), maxChars);
+}
+
+function safeStringifyFull(value: unknown): string {
+  const seen = new WeakSet<object>();
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(value, (_key, nested) => {
+      if (typeof nested === "bigint") return nested.toString();
+      if (typeof nested === "object" && nested !== null) {
+        if (seen.has(nested)) return "[Circular]";
+        seen.add(nested);
+      }
+      return nested;
+    });
+  } catch (err) {
+    text = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  }
+  return text === undefined ? String(value) : text;
+}
+
+function safeDetails(value: unknown): unknown {
+  if (value === undefined) return null;
+  return safeStringify(value, MCP_DETAIL_MAX_CHARS);
+}
+
+function sanitizeDiagnostic(value: string, maxChars: number): string {
+  const redacted = value
+    .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s"',;]+/gi, "$1[REDACTED]")
+    .replace(
+      /((?:api[_-]?key|token|secret|password|passwd|pwd)\s*[:=]\s*)[^\s"',;]+/gi,
+      "$1[REDACTED]",
+    )
+    .replace(
+      /("(?:api[_-]?key|token|secret|password|passwd|pwd)"\s*:\s*")[^"]*(")/gi,
+      "$1[REDACTED]$2",
+    )
+    .replace(/([A-Za-z0-9_-]{8,}\.)[A-Za-z0-9_-]{8,}(\.[A-Za-z0-9_-]{8,})/g, "$1[REDACTED]$2");
+  if (redacted.length <= maxChars) return redacted;
+  return `${redacted.slice(0, maxChars)}… [truncated ${redacted.length - maxChars} chars]`;
 }
 
 function isStaleMcpSessionError(err: unknown): boolean {
@@ -141,6 +332,151 @@ interface McpCallResult {
   content?: unknown;
   isError?: unknown;
   structuredContent?: unknown;
+}
+
+const MCP_SPOOL_SAFE_NAME_RE = /[^A-Za-z0-9_.-]+/g;
+
+let runtimeSpoolingSettings: McpResultSpoolingSettings = {
+  enabled: true,
+  thresholdChars: 30_000,
+  directory: ".mcp-results",
+  format: "json",
+};
+
+export function setMcpResultSpoolingSettings(settings: McpResultSpoolingSettings): void {
+  runtimeSpoolingSettings = {
+    enabled: settings.enabled,
+    thresholdChars: Math.max(1, Math.floor(settings.thresholdChars)),
+    directory: settings.directory.trim().length > 0 ? settings.directory.trim() : ".mcp-results",
+    format: "json",
+  };
+}
+
+export function getMcpResultSpoolingSettings(): McpResultSpoolingSettings {
+  return { ...runtimeSpoolingSettings };
+}
+
+export function measureMcpResultTextChars(res: unknown): number {
+  const r = (res ?? {}) as McpCallResult;
+  const blocks = Array.isArray(r.content) ? (r.content as McpContentBlock[]) : [];
+  let total = 0;
+  for (const block of blocks) {
+    if (block.type === "text" && typeof block.text === "string") total += block.text.length;
+    else if (block.type !== "image") total += safeStringifyFull(block).length;
+  }
+  if (total === 0 && r.structuredContent !== undefined) {
+    total += safeStringifyFull(r.structuredContent).length;
+  }
+  return total;
+}
+
+async function maybeSpoolMcpResult(opts: {
+  prefixedName: string;
+  serverName: string;
+  toolName: string;
+  res: unknown;
+  spoolingContext: McpSpoolingContext | undefined;
+}): Promise<AgentToolResult<unknown> | undefined> {
+  const settings = runtimeSpoolingSettings;
+  const r = (opts.res ?? {}) as McpCallResult;
+  if (!settings.enabled || opts.spoolingContext === undefined || r.isError === true)
+    return undefined;
+  const textChars = measureMcpResultTextChars(opts.res);
+  if (textChars <= settings.thresholdChars) return undefined;
+
+  const serialized = `${safeStringifyFull(opts.res)}\n`;
+  const relativePath = buildSpoolRelativePath(settings.directory, opts.serverName, opts.toolName);
+  try {
+    await writeFile(
+      join(opts.spoolingContext.workspacePath, relativePath),
+      opts.spoolingContext.workspacePath,
+      serialized,
+    );
+  } catch (err) {
+    logMcpToolFailure({
+      serverName: opts.serverName,
+      toolName: opts.toolName,
+      phase: "spooling",
+      error: err,
+    });
+    const fallback = mcpResultToAgentResult(opts.res);
+    return prependTextWarning(
+      fallback,
+      `MCP_RESULT_SPOOL_FAILED: pi-forge could not write the oversized MCP result to a workspace file (${errorMessage(err)}). Falling back to inline/truncated result.\n\n`,
+    );
+  }
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: buildSpooledSummary({
+          prefixedName: opts.prefixedName,
+          relativePath,
+          textChars,
+          bytes: Buffer.byteLength(serialized, "utf8"),
+          containsImages: mcpResultContainsImages(opts.res),
+        }),
+      },
+    ],
+    details: JSON.stringify({ spooled: true, path: relativePath, textChars }),
+  };
+}
+
+function buildSpoolRelativePath(directory: string, serverName: string, toolName: string): string {
+  const normalizedDir = directory.replaceAll("\\", "/").replace(/^\/+/, "").replace(/\/+$/, "");
+  const dir = normalizedDir.length > 0 ? normalizedDir : ".mcp-results";
+  const server = safeFilenamePart(serverName);
+  const tool = safeFilenamePart(toolName);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `${dir}/${server}__${tool}__${timestamp}__${randomUUID()}.json`;
+}
+
+function safeFilenamePart(value: string): string {
+  const cleaned = value.replace(MCP_SPOOL_SAFE_NAME_RE, "_").replace(/^\.+$/, "_").slice(0, 80);
+  return cleaned.length > 0 ? cleaned : "mcp";
+}
+
+function mcpResultContainsImages(res: unknown): boolean {
+  const blocks = Array.isArray((res as McpCallResult | undefined)?.content)
+    ? ((res as McpCallResult).content as McpContentBlock[])
+    : [];
+  return blocks.some((block) => block.type === "image");
+}
+
+function buildSpooledSummary(opts: {
+  prefixedName: string;
+  relativePath: string;
+  textChars: number;
+  bytes: number;
+  containsImages: boolean;
+}): string {
+  const imageNote = opts.containsImages
+    ? "\nImage content was present. The raw JSON file preserves image block metadata/data; inspect carefully instead of dumping it wholesale into model context."
+    : "";
+  return (
+    `MCP_RESULT_SPOOLED: Tool '${opts.prefixedName}' returned an oversized result and pi-forge wrote the complete raw MCP result to a workspace file.\n` +
+    `Path: ${opts.relativePath}\n` +
+    `Approximate text size: ${opts.textChars.toLocaleString()} characters\n` +
+    `File size: ${opts.bytes.toLocaleString()} bytes\n` +
+    `${imageNote}\n` +
+    `No result preview is included inline to conserve model context. ` +
+    `Use file-reading tools to inspect '${opts.relativePath}' incrementally; do not re-run the same broad MCP call just to recover omitted content.`
+  );
+}
+
+function prependTextWarning(
+  result: AgentToolResult<unknown>,
+  warning: string,
+): AgentToolResult<unknown> {
+  const content = [...result.content];
+  const firstText = content.findIndex((block) => block.type === "text");
+  if (firstText >= 0 && content[firstText]?.type === "text") {
+    content[firstText] = { type: "text", text: warning + content[firstText].text };
+  } else {
+    content.unshift({ type: "text", text: warning });
+  }
+  return { ...result, content };
 }
 
 /**
@@ -177,7 +513,7 @@ export function mcpResultToAgentResult(res: unknown): AgentToolResult<unknown> {
       // drop would look like a successful no-op.
       content.push({
         type: "text",
-        text: `[${String(block.type ?? "unknown")}] ${JSON.stringify(block)}`,
+        text: `[${String(block.type ?? "unknown")}] ${safeStringify(block, MCP_DETAIL_MAX_CHARS)}`,
       });
     }
   }
@@ -186,7 +522,10 @@ export function mcpResultToAgentResult(res: unknown): AgentToolResult<unknown> {
     // include structuredContent if present so the agent has something
     // to work with.
     if (r.structuredContent !== undefined) {
-      content.push({ type: "text", text: JSON.stringify(r.structuredContent) });
+      content.push({
+        type: "text",
+        text: safeStringify(r.structuredContent, MCP_DETAIL_MAX_CHARS),
+      });
     } else {
       content.push({ type: "text", text: isError ? "[error] (no detail)" : "(empty result)" });
     }
@@ -194,7 +533,7 @@ export function mcpResultToAgentResult(res: unknown): AgentToolResult<unknown> {
   if (isError && content[0]?.type === "text") {
     content[0] = { type: "text", text: `[error] ${content[0].text}` };
   }
-  return { content: capTextContent(content), details: r.structuredContent ?? null };
+  return { content: capTextContent(content), details: safeDetails(r.structuredContent) };
 }
 
 /**

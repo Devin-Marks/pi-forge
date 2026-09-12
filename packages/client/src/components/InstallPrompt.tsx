@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Share, X } from "lucide-react";
 import { useIsMobile } from "../lib/use-is-mobile";
+import { useUiConfigStore } from "../store/ui-config-store";
 
 /**
  * "Install pi-forge as an app" banner — shown on mobile, dismissable,
@@ -52,6 +53,7 @@ function isIOS(): boolean {
 
 export function InstallPrompt(): React.JSX.Element | null {
   const isMobile = useIsMobile();
+  const appName = useUiConfigStore((s) => s.appName);
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | undefined>(undefined);
   const [dismissed, setDismissed] = useState<boolean>(() => {
     if (typeof localStorage === "undefined") return false;
@@ -111,7 +113,7 @@ export function InstallPrompt(): React.JSX.Element | null {
       <div className="mx-auto flex max-w-3xl items-center gap-2">
         <div className="min-w-0 flex-1">
           {deferred !== undefined ? (
-            <span>Install pi-forge as an app for a fullscreen experience.</span>
+            <span>Install {appName} as an app for a fullscreen experience.</span>
           ) : (
             <span className="inline-flex flex-wrap items-center gap-1">
               Install: tap <Share size={14} className="inline shrink-0 text-neutral-400" /> Share,

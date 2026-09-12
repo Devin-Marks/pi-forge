@@ -1,5 +1,6 @@
 import { createSHA256 } from "hash-wasm";
 import { clearStoredToken, getStoredToken } from "../auth-client";
+import { appUrl } from "../base-path";
 import {
   ApiError,
   UNAUTHORIZED_EVENT,
@@ -28,6 +29,7 @@ import {
   type HealthResponse,
   SERVER_THEME_COLOR_KEYS,
   type SandboxSettingsResponse,
+  type TelemetrySettingsResponse,
   type ServerThemeConfigResponse,
   type ServerThemeColors,
   type UiConfigResponse,
@@ -112,6 +114,12 @@ function vAuthStatus(value: unknown, status: number): AuthStatusResponse {
   return {
     authEnabled: value.authEnabled,
     ldapEnabled: typeof value.ldapEnabled === "boolean" ? value.ldapEnabled : false,
+    dashboardIdentityEnabled:
+      typeof value.dashboardIdentityEnabled === "boolean" ? value.dashboardIdentityEnabled : false,
+    dashboardIdentityAuthenticated:
+      typeof value.dashboardIdentityAuthenticated === "boolean"
+        ? value.dashboardIdentityAuthenticated
+        : false,
   };
 }
 
@@ -200,6 +208,8 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
   // - passwordAuthEnabled → true so the password section still shows
   //   (the worst case is a confusing 400 on submit; better than
   //   silently hiding the form on a server that does support it).
+  const appName =
+    typeof value.appName === "string" && value.appName.length > 0 ? value.appName : "pi-forge";
   const version = typeof value.version === "string" ? value.version : "unknown";
   const passwordAuthEnabled =
     typeof value.passwordAuthEnabled === "boolean" ? value.passwordAuthEnabled : true;
@@ -211,6 +221,8 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
   // builds kept orchestration behind an explicit opt-in flag.
   const orchestrationEnabled =
     typeof value.orchestrationEnabled === "boolean" ? value.orchestrationEnabled : false;
+  const telemetryCaptureContent =
+    typeof value.telemetryCaptureContent === "boolean" ? value.telemetryCaptureContent : false;
   const authBannerText =
     typeof value.authBannerText === "string" ? value.authBannerText : undefined;
   const authBannerHtml = typeof value.authBannerHtml === "boolean" ? value.authBannerHtml : false;
@@ -224,10 +236,12 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
   return {
     minimal: value.minimal,
     workspaceRoot: value.workspaceRoot,
+    appName,
     version,
     passwordAuthEnabled,
     ldapEnabled,
     orchestrationEnabled,
+    telemetryCaptureContent,
     serverTheme:
       value.serverTheme === undefined ? undefined : vServerThemeConfig(value.serverTheme, status),
     authBannerText,
@@ -238,6 +252,13 @@ function vUiConfig(value: unknown, status: number): UiConfigResponse {
     appLogoDarkUrl,
     appLogoLightUrl,
   };
+}
+
+function vTelemetrySettings(value: unknown, status: number): TelemetrySettingsResponse {
+  if (!isObject(value) || typeof value.captureContent !== "boolean") {
+    fail(status, "expected TelemetrySettingsResponse");
+  }
+  return { captureContent: value.captureContent };
 }
 
 function vSandboxSettings(value: unknown, status: number): SandboxSettingsResponse {
@@ -655,9 +676,14 @@ function vMcpSettings(value: unknown, status: number): McpSettingsResponse {
     typeof value.total !== "number" ||
     !isObject(value.truncation) ||
     typeof value.truncation.enabled !== "boolean" ||
-    typeof value.truncation.maxChars !== "number"
+    typeof value.truncation.maxChars !== "number" ||
+    !isObject(value.spooling) ||
+    typeof value.spooling.enabled !== "boolean" ||
+    typeof value.spooling.thresholdChars !== "number" ||
+    typeof value.spooling.directory !== "string" ||
+    value.spooling.format !== "json"
   ) {
-    fail(status, "expected { enabled, connected, total, truncation }");
+    fail(status, "expected { enabled, connected, total, truncation, spooling }");
   }
   return {
     enabled: value.enabled,
@@ -666,6 +692,12 @@ function vMcpSettings(value: unknown, status: number): McpSettingsResponse {
     truncation: {
       enabled: value.truncation.enabled,
       maxChars: value.truncation.maxChars,
+    },
+    spooling: {
+      enabled: value.spooling.enabled,
+      thresholdChars: value.spooling.thresholdChars,
+      directory: value.spooling.directory,
+      format: "json",
     },
   };
 }
@@ -1605,7 +1637,7 @@ async function request<T>(
 
   let res: Response;
   try {
-    res = await fetch(path, init);
+    res = await fetch(appUrl(path), init);
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") throw err;
     throw new ApiError(0, "network_error", (err as Error).message);
@@ -1771,7 +1803,7 @@ export const api = {
       body: JSON.stringify(body),
     };
     if (signal !== undefined) init.signal = signal;
-    const res = await fetch("/api/v1/projects/clone", init);
+    const res = await fetch(appUrl("/api/v1/projects/clone"), init);
     if (res.status === 401) {
       clearStoredToken();
       window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
@@ -2011,6 +2043,12 @@ export const api = {
   updateSettings: (patch: Record<string, unknown>) =>
     request("/api/v1/config/settings", vSettings, { method: "PUT", body: patch }),
   getSandboxSettings: () => request("/api/v1/config/sandbox", vSandboxSettings),
+  getTelemetrySettings: () => request("/api/v1/config/telemetry", vTelemetrySettings),
+  updateTelemetrySettings: (captureContent: boolean) =>
+    request("/api/v1/config/telemetry", vTelemetrySettings, {
+      method: "PUT",
+      body: { captureContent },
+    }),
   updateSandboxSettings: (toolEnv: Record<string, string>) =>
     request("/api/v1/config/sandbox", vSandboxSettings, {
       method: "PUT",
@@ -2048,6 +2086,11 @@ export const api = {
     request("/api/v1/mcp/settings", vMcpSettings, {
       method: "PUT",
       body: { truncation },
+    }),
+  setMcpSpooling: (spooling: McpSettingsResponse["spooling"]) =>
+    request("/api/v1/mcp/settings", vMcpSettings, {
+      method: "PUT",
+      body: { spooling },
     }),
   /** GLOBAL servers (config + status). Pass projectId to also include
    *  status entries for the project's `.mcp.json` servers. */
@@ -2147,7 +2190,9 @@ export const api = {
   /** Returns the absolute URL of the streaming log endpoint —
    *  callers use it with EventSource or fetch+ReadableStream. */
   processLogFileUrl: (sessionId: string, processId: string, stream: "stdout" | "stderr") =>
-    `/api/v1/sessions/${encodeURIComponent(sessionId)}/processes/${encodeURIComponent(processId)}/logs/file?stream=${stream}`,
+    appUrl(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/processes/${encodeURIComponent(processId)}/logs/file?stream=${stream}`,
+    ),
   killProcess: (sessionId: string, processId: string) =>
     request(
       `/api/v1/sessions/${encodeURIComponent(sessionId)}/processes/${encodeURIComponent(processId)}/kill`,
@@ -2470,7 +2515,7 @@ export const api = {
     const headers: Record<string, string> = {};
     const stored = getStoredToken();
     if (stored !== undefined) headers.Authorization = `Bearer ${stored.token}`;
-    const res = await fetch("/api/v1/config/export", { headers });
+    const res = await fetch(appUrl("/api/v1/config/export"), { headers });
     if (res.status === 401) {
       clearStoredToken();
       window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
@@ -2540,7 +2585,7 @@ export const api = {
     const headers: Record<string, string> = {};
     const stored = getStoredToken();
     if (stored !== undefined) headers.Authorization = `Bearer ${stored.token}`;
-    const res = await fetch("/api/v1/config/skills/export", { headers });
+    const res = await fetch(appUrl("/api/v1/config/skills/export"), { headers });
     if (res.status === 401) {
       clearStoredToken();
       window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
@@ -2579,7 +2624,7 @@ export const api = {
     const stored = getStoredToken();
     if (stored !== undefined) headers.Authorization = `Bearer ${stored.token}`;
     const res = await fetch(
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/export?format=${format}`,
+      appUrl(`/api/v1/sessions/${encodeURIComponent(sessionId)}/export?format=${format}`),
       { headers },
     );
     if (res.status === 401) {
@@ -2700,7 +2745,7 @@ export const api = {
     const headers: Record<string, string> = {};
     const stored = getStoredToken();
     if (stored !== undefined) headers.Authorization = `Bearer ${stored.token}`;
-    const res = await fetch(`/api/v1/files/download?${qs.toString()}`, { headers });
+    const res = await fetch(appUrl(`/api/v1/files/download?${qs.toString()}`), { headers });
     if (res.status === 401) {
       clearStoredToken();
       window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));

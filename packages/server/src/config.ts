@@ -41,6 +41,31 @@ function readStringList(key: string): string[] {
     .filter((s) => s.length > 0);
 }
 
+function readDashboardAllowedGroups(key: string, fallbackKey?: string): string[] {
+  const v = readEnv(key) ?? (fallbackKey === undefined ? undefined : readEnv(fallbackKey));
+  if (v === undefined) return [];
+  const trimmed = v.trim();
+  if (trimmed.length === 0) return [];
+  if (trimmed.startsWith("[")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      throw new Error(`config: ${key} JSON value must be an array of strings`);
+    }
+    if (!Array.isArray(parsed) || !parsed.every((entry) => typeof entry === "string")) {
+      throw new Error(`config: ${key} JSON value must be an array of strings`);
+    }
+    return parsed.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  }
+  // LDAP DNs commonly contain commas, so this advanced allowlist uses
+  // newline/semicolon delimiters instead of readStringList's comma split.
+  return trimmed
+    .split(/[;\n\r]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
 function readUsername(key: string, fallback: string): string {
   const value = readEnv(key) ?? fallback;
   const trimmed = value.trim();
@@ -84,6 +109,15 @@ function readUiText(key: string): string | undefined {
   // Let operators put multiline text in single-line env/CLI surfaces
   // while preserving literal CR/LF when an env provider supports them.
   return v.replace(/\\r/g, "\r").replace(/\\n/g, "\n");
+}
+
+function readDisplayName(key: string, fallback: string): string {
+  const value = readEnv(key) ?? fallback;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    throw new Error(`config: ${key} must be a non-empty display name`);
+  }
+  return trimmed;
 }
 
 function readHttpUrl(key: string): string | undefined {
@@ -274,6 +308,10 @@ const UI_PASSWORD = UI_PASSWORD_FILE
   ? readSecretFile(UI_PASSWORD_FILE, "UI_PASSWORD_FILE")
   : readEnv("UI_PASSWORD");
 const API_KEY = readEnv("API_KEY");
+const DASHBOARD_IDENTITY_SECRET_FILE = readEnv("DASHBOARD_IDENTITY_SECRET_FILE");
+const DASHBOARD_IDENTITY_SECRET = DASHBOARD_IDENTITY_SECRET_FILE
+  ? readSecretFile(DASHBOARD_IDENTITY_SECRET_FILE, "DASHBOARD_IDENTITY_SECRET_FILE")
+  : readEnv("DASHBOARD_IDENTITY_SECRET");
 const LOCAL_ADMIN_USERNAME = readUsername("FORGE_LOCAL_ADMIN_USERNAME", "admin");
 const CORS_ORIGIN = readEnv("CORS_ORIGIN");
 const PASSWORD_HASH_FILE = join(FORGE_DATA_DIR, "password-hash");
@@ -357,6 +395,15 @@ export const config = Object.freeze({
   // documented `docker compose up` flow keeps working out of the box.
   host: readEnv("HOST") ?? "127.0.0.1",
   logLevel: readEnv("LOG_LEVEL") ?? "info",
+  telemetry: Object.freeze({
+    otlpEndpoint: readHttpUrl("OTEL_EXPORTER_OTLP_ENDPOINT"),
+    otlpHeaders: readEnv("OTEL_EXPORTER_OTLP_HEADERS"),
+    otlpTlsRejectUnauthorized: readBool("OTEL_EXPORTER_OTLP_TLS_REJECT_UNAUTHORIZED", true),
+    serviceName: readEnv("OTEL_SERVICE_NAME") ?? "pi-forge",
+    serviceVersion: readEnv("OTEL_SERVICE_VERSION") ?? "unknown",
+    captureContent: readBool("OTEL_CAPTURE_CONTENT", false),
+    debug: readBool("OTEL_DEBUG", false),
+  }),
   isTest: (readEnv("NODE_ENV") ?? "") === "test",
   isProduction: (readEnv("NODE_ENV") ?? "") === "production",
   trustProxy: readBool("TRUST_PROXY", false),
@@ -364,6 +411,7 @@ export const config = Object.freeze({
   piConfigDir: PI_CONFIG_DIR,
   forgeDataDir: FORGE_DATA_DIR,
   sessionDir: SESSION_DIR,
+  sessionIdentityFile: join(FORGE_DATA_DIR, "session-users.json"),
   clientDistPath: CLIENT_DIST_PATH,
   serveClient: readBool("SERVE_CLIENT", true),
   /**
@@ -376,6 +424,12 @@ export const config = Object.freeze({
    * where provider config is managed at the deploy level.
    */
   minimalUi: readBool("MINIMAL_UI", false),
+  /**
+   * Public display-only application name. Exposed via `GET /api/v1/ui-config`
+   * so browser-visible branding can change without renaming packages, routes,
+   * env vars, storage keys, telemetry service names, or other identifiers.
+   */
+  appName: readDisplayName("APP_NAME", "pi-forge"),
   /**
    * Public login-screen customization. These values are exposed via
    * `GET /api/v1/ui-config` before auth, so they must never contain
@@ -502,6 +556,17 @@ export const config = Object.freeze({
     uiPasswordFile: UI_PASSWORD_FILE,
     jwtSecret: JWT_SECRET,
     apiKey: API_KEY,
+    dashboardIdentity: Object.freeze({
+      secret: DASHBOARD_IDENTITY_SECRET,
+      secretFile: DASHBOARD_IDENTITY_SECRET_FILE,
+      issuer: readEnv("DASHBOARD_IDENTITY_ISSUER") ?? "internal-dashboard",
+      audience: readEnv("DASHBOARD_APP_ID") ?? readEnv("DASHBOARD_IDENTITY_AUDIENCE") ?? "pi-forge",
+      maxFutureIatSkewSeconds: readInt("DASHBOARD_IDENTITY_MAX_FUTURE_IAT_SKEW_SECONDS", 60),
+      maxAgeSeconds: readInt("DASHBOARD_IDENTITY_MAX_AGE_SECONDS", 5 * 60),
+      allowedGroups: Object.freeze(
+        readDashboardAllowedGroups("DASHBOARD_IDENTITY_ALLOWED_GROUPS", "LDAP_REQUIRED_GROUP_DN"),
+      ),
+    }),
     localAdminUsername: LOCAL_ADMIN_USERNAME,
     ldap: Object.freeze({
       enabled: LDAP_ENABLED,
@@ -648,6 +713,7 @@ export function authEnabled(): boolean {
   return (
     config.auth.uiPassword !== undefined ||
     config.auth.apiKey !== undefined ||
+    config.auth.dashboardIdentity.secret !== undefined ||
     config.auth.ldap.enabled ||
     existsSync(config.auth.passwordHashFile)
   );

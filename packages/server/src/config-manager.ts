@@ -15,7 +15,10 @@ import {
 import {
   getSupportedThinkingLevels,
   type Api,
+  type AuthOperationOptions,
   type Credential,
+  type CredentialInfo,
+  type CredentialStore,
   type Model,
   type ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
@@ -346,13 +349,83 @@ async function readAuthJson(): Promise<AuthJson> {
   return data as AuthJson;
 }
 
+async function readAuthJsonIfReadable(): Promise<AuthJson> {
+  try {
+    return await readAuthJson();
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EACCES" || code === "EPERM") {
+      console.warn(`[config] ${AUTH_FILE()} is not readable; treating auth.json as empty`);
+      return {};
+    }
+    throw err;
+  }
+}
+
 async function writeAuthJson(data: AuthJson): Promise<void> {
   await atomicWriteJson(AUTH_FILE(), data);
 }
 
 async function liveModelRuntime(): Promise<ModelRuntime> {
   await migrateLegacyModelsJsonIfNeeded();
-  return ModelRuntime.create({ authPath: AUTH_FILE(), modelsPath: MODELS_FILE() });
+  return ModelRuntime.create({
+    credentials: new SnapshotCredentialStore(await readAuthJsonIfReadable()),
+    modelsPath: MODELS_FILE(),
+  });
+}
+
+class SnapshotCredentialStore implements CredentialStore {
+  private readonly credentials: Map<string, Credential>;
+
+  constructor(data: AuthJson) {
+    this.credentials = new Map(Object.entries(data));
+  }
+
+  async read(providerId: string, _options?: AuthOperationOptions): Promise<Credential | undefined> {
+    return this.credentials.get(providerId);
+  }
+
+  async list(_options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
+    return Array.from(this.credentials.entries()).map(([providerId, credential]) => ({
+      providerId,
+      type: credential.type,
+    }));
+  }
+
+  async modify(
+    providerId: string,
+    fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+    _options?: AuthOperationOptions,
+  ): Promise<Credential | undefined> {
+    const next = await fn(this.credentials.get(providerId));
+    if (next !== undefined) this.credentials.set(providerId, next);
+    return next;
+  }
+
+  async delete(providerId: string, _options?: AuthOperationOptions): Promise<void> {
+    this.credentials.delete(providerId);
+  }
+}
+
+/**
+ * Create a session-scoped ModelRuntime from config files the server reads up
+ * front, without leaving the SDK on its default file-backed auth store.
+ *
+ * This matters in sandbox mode: `${PI_CONFIG_DIR}/auth.json`, `models.json`,
+ * and `settings.json` can intentionally stay unreadable to the lower-privileged
+ * tool identity, while the server process reads config and brokers model
+ * requests. Recent SDK/runtime paths may resolve request auth lazily during a
+ * model turn; a file-backed auth store can therefore surface EACCES from the hot
+ * model path even when credentials live in `models.json`. Sessions only need the
+ * auth.json credentials as they existed at creation/resume time, and config
+ * routes remain the owner of persistent auth.json writes.
+ */
+export async function createSessionModelRuntime(): Promise<ModelRuntime> {
+  await migrateLegacyModelsJsonIfNeeded();
+  return ModelRuntime.create({
+    credentials: new SnapshotCredentialStore(await readAuthJsonIfReadable()),
+    modelsPath: MODELS_FILE(),
+  });
 }
 
 /**
@@ -369,7 +442,7 @@ export async function liveModelRegistry(): Promise<ModelRegistry> {
 
 export async function readAuthSummary(): Promise<AuthSummary> {
   const providers: Record<string, AuthEntry> = {};
-  for (const [provider, credential] of Object.entries(await readAuthJson())) {
+  for (const [provider, credential] of Object.entries(await readAuthJsonIfReadable())) {
     providers[provider] = {
       configured: true,
       source: "stored",
@@ -406,7 +479,7 @@ export async function syncStoredApiKeyToRuntime(
   runtime: ModelRuntimeInstance,
   provider: string,
 ): Promise<void> {
-  const credential = (await readAuthJson())[provider];
+  const credential = (await readAuthJsonIfReadable())[provider];
   if (credential?.type === "api_key" && typeof credential.key === "string") {
     await runtime.setRuntimeApiKey(provider, credential.key);
   } else {

@@ -4,11 +4,12 @@ Read this when changing environment variables, CLI flags, pi SDK config files, p
 
 ## Environment Variables & CLI Flags
 
-**All `process.env` reads are centralized in `packages/server/src/config.ts`.**
-Never read `process.env` directly in any other server file — always import the
+**All operational `process.env` reads are centralized in `packages/server/src/config.ts`.**
+Never read fixed pi-forge setting env vars directly in any other server file — always import the
 frozen `config` object from there. The handful of `process.env` reads that DO
 live outside config.ts are debug-only (`DEBUG_FETCH`, `DEBUG_AGENT_EVENTS`,
-`SHELL`) — keep them out of operational config.
+`SHELL`) or user-named dynamic config references such as MCP env-backed HTTP
+headers — keep them out of operational config.
 
 **Every operationally-relevant env var has an equivalent `--flag`** on the
 `pi-forge` command. The table in `packages/server/src/cli.ts` is the single
@@ -69,12 +70,14 @@ route handlers).
 | `tool-overrides.json` | Per-project tool enable/disable (built-ins + MCP) | `tool-overrides.ts` |
 | `prompts-overrides.json` | Per-project pi-prompt enable/disable patterns | `prompt-overrides.ts` |
 | `theme.json` | Global server-side UI color overrides | `theme-config.ts` |
+| `telemetry-settings.json` | Runtime OpenTelemetry content-capture override | `telemetry-settings.ts` |
 | `webhooks.json` | Webhook configs (HMAC secrets stored here — mode 0600) | `webhooks/store.ts` |
 | `webhook-deliveries.json` | Rolling delivery history (cap 100 / webhook) | `webhooks/store.ts` |
 | `session-orchestration.json` | Supervisor opt-in + supervisor↔worker links (mode 0600) | `orchestration/store.ts` |
 | `orchestrator-inbox.json` | Per-supervisor pending event queue (cap 200 / supervisor) | `orchestration/store.ts` |
 | `jwt-secret` | Auto-generated HS256 signing key (mode 0600) | `config.ts` (`loadOrGenerateJwtSecret`) |
 | `password-hash` | scrypt hash of the user's persisted password (mode 0600) | `auth.ts` (`persistPassword`) |
+| `session-users.json` | Session UUID → authenticated username mapping for telemetry attribution (mode 0600) | `session-identity.ts` |
 
 `PI_CONFIG_DIR` defaults to `~/.pi/agent`; `FORGE_DATA_DIR` defaults
 to `~/.pi-forge`. The Docker compose setup mounts the host's

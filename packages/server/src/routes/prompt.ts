@@ -369,7 +369,7 @@ async function validateModelForPrompt(live: LiveSession, reply: FastifyReply): P
     });
     return false;
   }
-  await live.session.modelRuntime.reloadConfig();
+  await live.session.modelRuntime.refresh();
   await syncStoredApiKeyToRuntime(live.session.modelRuntime, model.provider);
   if (!live.session.modelRuntime.hasConfiguredAuth(model.provider)) {
     await reply.code(400).send({

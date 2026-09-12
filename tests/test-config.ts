@@ -309,7 +309,37 @@ async function main(): Promise<void> {
       assert("null patch leaves defaultModel intact", m3.defaultModel === "claude-haiku-4-5");
     }
 
-    // 7. /config/skills — needs a real project (route validates projectId).
+    // 7. /config/telemetry — runtime OTEL content capture toggle.
+    {
+      const initial = await jget(base, "/api/v1/config/telemetry");
+      assert("GET /config/telemetry initial → 200", initial.status === 200);
+      assert(
+        "  captureContent defaults false",
+        (initial.body as { captureContent: boolean }).captureContent === false,
+      );
+
+      const enabled = await jsend(base, "PUT", "/api/v1/config/telemetry", {
+        captureContent: true,
+      });
+      assert("PUT /config/telemetry true → 200", enabled.status === 200);
+      assert(
+        "  body.captureContent === true",
+        (enabled.body as { captureContent: boolean }).captureContent === true,
+      );
+
+      const reloaded = await jget(base, "/api/v1/config/telemetry");
+      assert(
+        "GET /config/telemetry reflects persisted toggle",
+        (reloaded.body as { captureContent: boolean }).captureContent === true,
+      );
+
+      const bad = await jsend(base, "PUT", "/api/v1/config/telemetry", {
+        captureContent: "yes",
+      });
+      assert("PUT /config/telemetry rejects non-boolean", bad.status === 400);
+    }
+
+    // 8. /config/skills — needs a real project (route validates projectId).
     //    Create a project, then a project-local SKILL.md, then list +
     //    toggle.
     let projectId: string;

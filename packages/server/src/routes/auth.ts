@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { config, authEnabled } from "../config.js";
 import {
+  dashboardIdentityConfigured,
   extractBearer,
   generateToken,
   getLoginLockoutState,
@@ -9,6 +10,7 @@ import {
   persistPassword,
   recordLoginFailure,
   resetLoginFailures,
+  verifyDashboardIdentity,
   verifyPasswordWithSource,
   verifyToken,
 } from "../auth.js";
@@ -40,16 +42,28 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         response: {
           200: {
             type: "object",
-            required: ["authEnabled", "ldapEnabled"],
+            required: [
+              "authEnabled",
+              "ldapEnabled",
+              "dashboardIdentityEnabled",
+              "dashboardIdentityAuthenticated",
+            ],
             properties: {
               authEnabled: { type: "boolean" },
               ldapEnabled: { type: "boolean" },
+              dashboardIdentityEnabled: { type: "boolean" },
+              dashboardIdentityAuthenticated: { type: "boolean" },
             },
           },
         },
       },
     },
-    async () => ({ authEnabled: authEnabled(), ldapEnabled: config.auth.ldap.enabled }),
+    async (req) => ({
+      authEnabled: authEnabled(),
+      ldapEnabled: config.auth.ldap.enabled,
+      dashboardIdentityEnabled: dashboardIdentityConfigured(),
+      dashboardIdentityAuthenticated: verifyDashboardIdentity(req.headers) !== undefined,
+    }),
   );
 
   fastify.post<{ Body: LoginBody }>(
@@ -136,7 +150,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
           });
         }
         resetLoginFailures(attemptKey);
-        const issued = generateToken({ mustChangePassword: false });
+        const issued = generateToken({ mustChangePassword: false, username });
         return { ...issued, mustChangePassword: false };
       }
 
@@ -164,7 +178,10 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       }
       resetLoginFailures(attemptKey);
       const mustChangePassword = result.source === "env" && config.auth.requirePasswordChange;
-      const issued = generateToken({ mustChangePassword });
+      const issued = generateToken({
+        mustChangePassword,
+        username: config.auth.localAdminUsername,
+      });
       return { ...issued, mustChangePassword };
     },
   );
@@ -228,7 +245,8 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       // Manual auth check — the route is `public: true` so the global
       // hook doesn't run, but we still require a valid JWT here.
       const presented = extractBearer(req.headers.authorization);
-      if (presented === undefined || verifyToken(presented) === undefined) {
+      const payload = presented === undefined ? undefined : verifyToken(presented);
+      if (payload === undefined) {
         return reply.code(401).send({ error: "auth_required" });
       }
       if (!passwordConfigured()) {
@@ -252,7 +270,10 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       await persistPassword(newPassword);
-      const issued = generateToken({ mustChangePassword: false });
+      const issued = generateToken({
+        mustChangePassword: false,
+        username: payload.username,
+      });
       return { ...issued, mustChangePassword: false };
     },
   );

@@ -16,9 +16,9 @@ import { createSandboxedToolDefinitions } from "./agent-tool-overrides.js";
 import { config } from "./config.js";
 import { makeDedupe, makeLock } from "./concurrency.js";
 import {
+  createSessionModelRuntime,
   effectivePromptsForProject,
   effectiveSkillsForProject,
-  migrateLegacyModelsJsonIfNeeded,
 } from "./config-manager.js";
 import { readProjects } from "./project-manager.js";
 import { filterEnabledTools, readToolOverrides } from "./tool-overrides.js";
@@ -29,6 +29,7 @@ import {
   ensureGlobalLoaded as mcpEnsureGlobalLoaded,
   ensureProjectLoaded as mcpEnsureProjectLoaded,
   isGloballyEnabled as mcpIsGloballyEnabled,
+  refreshForNewSession as mcpRefreshForNewSession,
 } from "./mcp/manager.js";
 import { createAskUserQuestionTool } from "./ask-user-question/tool.js";
 import { createTodoTool } from "./todo/tool.js";
@@ -49,6 +50,12 @@ import { generateSessionTitleFromPrompt, isGenericSessionName } from "./session-
 import { getExternalSubagentStatusForSession } from "./subagents-external.js";
 import { readSandboxSettings } from "./sandbox-settings.js";
 import { publishSessionActivity, type SessionActivity } from "./session-activity.js";
+import {
+  createSessionTelemetry,
+  recordSessionLifecycle,
+  type SessionTelemetry,
+} from "./telemetry.js";
+import { rememberSessionUsername, usernameForSession } from "./session-identity.js";
 
 /**
  * Minimal SSE client contract used by the registry to fan out events.
@@ -70,6 +77,11 @@ export interface LiveSession {
   sessionId: string;
   projectId: string;
   workspacePath: string;
+  /** Authenticated owner used for Langfuse user/session attribution. */
+  username: string;
+  /** Exact bridged MCP names available to this session. */
+  mcpToolNames: Set<string>;
+  telemetry?: SessionTelemetry;
   clients: Set<SSEClient>;
   createdAt: Date;
   lastActivityAt: Date;
@@ -204,12 +216,12 @@ function publishActivity(
 /**
  * Built-in pi tools we activate on every session. Pi's SDK ships
  * seven `read | bash | edit | write | grep | find | ls` (see
- * `node_modules/@earendil-works/pi-coding-agent/dist/core/tools/index.d.ts`),
- * but only the first four are activated when `tools` is left
- * undefined. We enable all seven so the agent gets first-class
- * filesystem-read affordances (grep / find / ls) instead of
- * shelling out via bash for every directory listing or content
- * search — same UX the pi TUI ships with.
+ * `node_modules/@earendil-works/pi-coding-agent/dist/core/tools/index.d.ts`).
+ * SDK 0.84 also ships an optional Windows-only `powershell` tool, but
+ * pi-forge runs on Linux and intentionally does not expose it. We enable
+ * the Linux-compatible set so the agent gets first-class filesystem-read
+ * affordances (grep / find / ls) instead of shelling out via bash for every
+ * directory listing or content search — same UX the pi TUI ships with.
  *
  * Passing `tools: [...]` to `createAgentSession` ALSO filters
  * customTools (MCP) by name (see agent-session.js
@@ -486,6 +498,16 @@ function makeSubscribeHandler(live: LiveSession): () => void {
   const verbose = process.env.DEBUG_AGENT_EVENTS === "1";
   return live.session.subscribe((event: AgentSessionEvent) => {
     live.lastActivityAt = new Date();
+    try {
+      live.telemetry?.handle(event);
+    } catch (err) {
+      logAgentEvent("warn", {
+        msg: "telemetry event handling failed",
+        sessionId: live.sessionId,
+        eventType: event.type,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     if (event.type === "agent_start") {
       publishActivity(live, true);
       // Capture BEFORE the SDK appends turn messages, so the index points
@@ -801,6 +823,7 @@ function applyAgentToolSandbox(
 export async function createSession(
   projectId: string,
   workspacePath: string,
+  opts: { username?: string } = {},
 ): Promise<LiveSession> {
   const dir = await ensureSessionDir(projectId);
   const sessionManager = SessionManager.create(workspacePath, dir);
@@ -811,7 +834,9 @@ export async function createSession(
   // agentDir IS passed: without it, the SDK falls back to ~/.pi/agent and
   // ignores PI_CONFIG_DIR entirely, breaking auth.json/models.json wiring
   // for Phase 6's prompt route.
-  const mcpTools = await resolveMcpCustomTools(projectId, workspacePath);
+  const mcpTools = await resolveMcpCustomTools(projectId, workspacePath, {
+    refreshDiscovery: true,
+  });
   // SessionManager.getSessionId() is synchronous and stable from
   // create() onward — read it BEFORE createAgentSession so the
   // forge-native ask_user_question tool can bind to the right
@@ -836,18 +861,21 @@ export async function createSession(
     settingsManager,
     projectId,
   );
-  await migrateLegacyModelsJsonIfNeeded();
+  const modelRuntime = await createSessionModelRuntime();
   const { session } = await createAgentSession({
     cwd: workspacePath,
     sessionManager,
     settingsManager,
     resourceLoader,
+    modelRuntime,
     agentDir: config.piConfigDir,
     customTools: effectiveCustomTools,
     tools: await buildToolsAllowlist(effectiveCustomTools, projectId, workspacePath),
   });
 
   const now = new Date();
+  const username = opts.username ?? config.auth.localAdminUsername;
+  await rememberSessionUsername(session.sessionId, username);
   // Build the LiveSession in two passes so unsubscribe is the real handle by
   // the time the object is observable elsewhere — kills the M3 race window
   // (where a synchronous concurrent dispose could see the no-op unsubscribe).
@@ -856,12 +884,21 @@ export async function createSession(
     sessionId: session.sessionId,
     projectId,
     workspacePath,
+    username,
+    mcpToolNames: new Set(mcpTools.map((tool) => tool.name)),
     clients: new Set(),
     createdAt: now,
     lastActivityAt: now,
     lastAgentStartIndex: undefined,
     unsubscribe: () => undefined,
   };
+  live.telemetry = createSessionTelemetry({
+    sessionId: live.sessionId,
+    projectId: live.projectId,
+    username: live.username,
+    mcpToolNames: live.mcpToolNames,
+    model: () => live.session.model,
+  });
   live.unsubscribe = makeSubscribeHandler(live);
   registry.set(live.sessionId, live);
   await bindWebExtensionContext(live);
@@ -892,6 +929,11 @@ export async function createSession(
     // sidebar fall back to "session <id>" if needed.
   }
 
+  recordSessionLifecycle("created", {
+    sessionId: live.sessionId,
+    projectId: live.projectId,
+    username: live.username,
+  });
   bridgeSessionCreated({
     sessionId: live.sessionId,
     projectId: live.projectId,
@@ -1073,6 +1115,7 @@ function detachExternallyActiveLiveSession(sessionId: string): void {
     }
   }
   live.clients.clear();
+  live.telemetry?.dispose();
   registry.delete(sessionId);
 }
 
@@ -1091,6 +1134,7 @@ export async function resumeSession(
   sessionId: string,
   projectId: string,
   workspacePath: string,
+  opts: { username?: string } = {},
 ): Promise<LiveSession> {
   await rejectOrDisposeExternallyActiveSession(sessionId, projectId, workspacePath);
   const existing = registry.get(sessionId);
@@ -1184,32 +1228,52 @@ export async function resumeSession(
       settingsManager,
       projectId,
     );
-    await migrateLegacyModelsJsonIfNeeded();
+    const modelRuntime = await createSessionModelRuntime();
     const { session } = await createAgentSession({
       cwd: workspacePath,
       sessionManager,
       settingsManager,
       resourceLoader,
+      modelRuntime,
       agentDir: config.piConfigDir,
       customTools: effectiveCustomTools,
       tools: await buildToolsAllowlist(effectiveCustomTools, projectId, workspacePath),
     });
 
     const now = new Date();
+    const username =
+      opts.username ??
+      (await usernameForSession(session.sessionId)) ??
+      config.auth.localAdminUsername;
+    await rememberSessionUsername(session.sessionId, username);
     const live: LiveSession = {
       session,
       sessionId: session.sessionId,
       projectId,
       workspacePath,
+      username,
+      mcpToolNames: new Set(mcpTools.map((tool) => tool.name)),
       clients: new Set(),
       createdAt: match.createdAt,
       lastActivityAt: now,
       lastAgentStartIndex: undefined,
       unsubscribe: () => undefined,
     };
+    live.telemetry = createSessionTelemetry({
+      sessionId: live.sessionId,
+      projectId: live.projectId,
+      username: live.username,
+      mcpToolNames: live.mcpToolNames,
+      model: () => live.session.model,
+    });
     live.unsubscribe = makeSubscribeHandler(live);
     registry.set(live.sessionId, live);
     await bindWebExtensionContext(live);
+    recordSessionLifecycle("resumed", {
+      sessionId: live.sessionId,
+      projectId: live.projectId,
+      username: live.username,
+    });
     return live;
   });
 }
@@ -1355,6 +1419,12 @@ export async function disposeSession(sessionId: string): Promise<boolean> {
       }
     }
     live.clients.clear();
+    live.telemetry?.dispose();
+    recordSessionLifecycle("disposed", {
+      sessionId: live.sessionId,
+      projectId: live.projectId,
+      username: live.username,
+    });
     try {
       live.session.dispose();
     } catch {
@@ -1768,13 +1838,21 @@ export async function findSessionLocation(
  * then delegates to resumeSession. Convenience wrapper for routes that don't
  * receive projectId in the URL (the stream route specifically).
  */
-export async function resumeSessionById(sessionId: string): Promise<LiveSession> {
+export async function resumeSessionById(
+  sessionId: string,
+  username?: string,
+): Promise<LiveSession> {
   const loc = await findSessionLocation(sessionId);
   if (loc === undefined) throw new SessionNotFoundError(sessionId);
   await rejectOrDisposeExternallyActiveSession(sessionId, loc.projectId, loc.workspacePath);
   const existing = registry.get(sessionId);
   if (existing) return existing;
-  return resumeSession(sessionId, loc.projectId, loc.workspacePath);
+  return resumeSession(
+    sessionId,
+    loc.projectId,
+    loc.workspacePath,
+    username === undefined ? {} : { username },
+  );
 }
 
 /**
@@ -1866,32 +1944,48 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
     settingsManager,
     source.projectId,
   );
-  await migrateLegacyModelsJsonIfNeeded();
+  const modelRuntime = await createSessionModelRuntime();
   const { session } = await createAgentSession({
     cwd: source.workspacePath,
     sessionManager,
     settingsManager,
     resourceLoader,
+    modelRuntime,
     agentDir: config.piConfigDir,
     customTools: effectiveCustomTools,
     tools: await buildToolsAllowlist(effectiveCustomTools, source.projectId, source.workspacePath),
   });
 
   const now = new Date();
+  await rememberSessionUsername(session.sessionId, source.username);
   const live: LiveSession = {
     session,
     sessionId: session.sessionId,
     projectId: source.projectId,
     workspacePath: source.workspacePath,
+    username: source.username,
+    mcpToolNames: new Set(mcpTools.map((tool) => tool.name)),
     clients: new Set(),
     createdAt: now,
     lastActivityAt: now,
     lastAgentStartIndex: undefined,
     unsubscribe: () => undefined,
   };
+  live.telemetry = createSessionTelemetry({
+    sessionId: live.sessionId,
+    projectId: live.projectId,
+    username: live.username,
+    mcpToolNames: live.mcpToolNames,
+    model: () => live.session.model,
+  });
   live.unsubscribe = makeSubscribeHandler(live);
   registry.set(live.sessionId, live);
   await bindWebExtensionContext(live);
+  recordSessionLifecycle("forked", {
+    sessionId: live.sessionId,
+    projectId: live.projectId,
+    username: live.username,
+  });
 
   // Disambiguate the fork's display name from its source. The SDK
   // copies session_info entries forward when forking, so the new
@@ -1972,12 +2066,13 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
         restoredSettingsManager,
         source.projectId,
       );
-      await migrateLegacyModelsJsonIfNeeded();
+      const restoredModelRuntime = await createSessionModelRuntime();
       const { session: restoredSession } = await createAgentSession({
         cwd: source.workspacePath,
         sessionManager: restoredManager,
         settingsManager: restoredSettingsManager,
         resourceLoader: restoredResourceLoader,
+        modelRuntime: restoredModelRuntime,
         agentDir: config.piConfigDir,
         customTools: restoredEffectiveCustomTools,
         tools: await buildToolsAllowlist(
@@ -1991,6 +2086,8 @@ async function forkSessionLocked(sessionId: string, entryId: string): Promise<Li
       // reference would otherwise lose its connection. Same
       // sessionId, fresh AgentSession underneath.
       source.session = restoredSession;
+      source.mcpToolNames.clear();
+      for (const tool of restoredMcpTools) source.mcpToolNames.add(tool.name);
       source.lastActivityAt = new Date();
       source.lastAgentStartIndex = undefined;
       source.unsubscribe = makeSubscribeHandler(source);
@@ -2103,12 +2200,13 @@ export async function rebuildAgentSessionForTools(
     settingsManager,
     live.projectId,
   );
-  await migrateLegacyModelsJsonIfNeeded();
+  const modelRuntime = await createSessionModelRuntime();
   const { session: newSession } = await createAgentSession({
     cwd: live.workspacePath,
     sessionManager,
     settingsManager,
     resourceLoader,
+    modelRuntime,
     agentDir: config.piConfigDir,
     customTools: effectiveCustomTools,
     tools: await buildToolsAllowlist(effectiveCustomTools, live.projectId, live.workspacePath),
@@ -2124,6 +2222,8 @@ export async function rebuildAgentSessionForTools(
   // — the browser side notices nothing beyond the new tools showing
   // up on the next agent turn.
   live.session = newSession;
+  live.mcpToolNames.clear();
+  for (const tool of mcpTools) live.mcpToolNames.add(tool.name);
   live.lastActivityAt = new Date();
   live.lastAgentStartIndex = undefined;
   live.unsubscribe = makeSubscribeHandler(live);
@@ -2244,13 +2344,26 @@ async function buildSessionSettingsManager(
  * awaits the manager's global load/restart gate so a fast browser
  * reconnect after container recreation does not create an AgentSession
  * before persisted stdio MCP servers have respawned.
+ *
+ * Brand-new sessions pass `refreshDiscovery` so the manager re-reads MCP
+ * configuration and calls listTools() on unchanged connected servers before
+ * the SDK snapshots `customTools`. Resume/fork/tool-refresh paths keep the
+ * existing cached lifecycle to avoid changing tools underneath historical
+ * session semantics.
  */
 async function resolveMcpCustomTools(
   projectId: string,
   workspacePath: string,
+  opts: { refreshDiscovery?: boolean } = {},
 ): Promise<ReturnType<typeof mcpCustomToolsForProject>> {
-  await mcpEnsureGlobalLoaded().catch(() => undefined);
+  if (opts.refreshDiscovery === true) {
+    await mcpRefreshForNewSession(projectId, workspacePath).catch(() => undefined);
+  } else {
+    await mcpEnsureGlobalLoaded().catch(() => undefined);
+    if (mcpIsGloballyEnabled()) {
+      await mcpEnsureProjectLoaded(projectId, workspacePath).catch(() => undefined);
+    }
+  }
   if (!mcpIsGloballyEnabled()) return [];
-  await mcpEnsureProjectLoaded(projectId, workspacePath).catch(() => undefined);
-  return mcpCustomToolsForProject(projectId);
+  return mcpCustomToolsForProject(projectId, workspacePath);
 }

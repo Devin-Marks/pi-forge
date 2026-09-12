@@ -579,7 +579,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       const existing = getSession(req.params.wid);
       if (existing !== undefined) return { resumed: false };
       try {
-        await resumeSessionById(req.params.wid);
+        await resumeSessionById(req.params.wid, req.authUsername);
       } catch (err) {
         req.log.warn({ err, workerId: req.params.wid }, "resume worker failed");
         return reply.code(404).send({ error: "resume_failed" });

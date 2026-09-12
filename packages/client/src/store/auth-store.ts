@@ -40,11 +40,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   changePasswordPending: false,
   bootstrap: async () => {
     try {
-      const { authEnabled, ldapEnabled } = await api.authStatus();
-      if (!authEnabled) {
+      const { authEnabled, ldapEnabled, dashboardIdentityAuthenticated } = await api.authStatus();
+      if (!authEnabled || dashboardIdentityAuthenticated) {
         set({
           ready: true,
-          authRequired: false,
+          authRequired: authEnabled && !dashboardIdentityAuthenticated,
           ldapEnabled,
           isAuthenticated: true,
           mustChangePassword: false,

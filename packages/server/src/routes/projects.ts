@@ -31,14 +31,8 @@ import {
   MAX_ADDENDUM_BYTES,
   setProjectSystemPromptAddendum,
 } from "../system-prompt-overrides.js";
+import { SSE_HEARTBEAT_INTERVAL_MS, SSE_HEARTBEAT_LINE } from "../sse-bridge.js";
 import { errorSchema } from "./_schemas.js";
-
-/**
- * Heartbeat cadence for the clone SSE stream. Same value as
- * `sse-bridge.ts:HEARTBEAT_INTERVAL_MS` — keeps comfortable margin
- * under the OpenShift HAProxy `timeout server` default of 30s.
- */
-const CLONE_HEARTBEAT_INTERVAL_MS = 20_000;
 
 /**
  * One-shot padding flush after the `started` event so OpenShift's
@@ -586,7 +580,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
         }
         return;
       }
-      heartbeat = setInterval(() => writeRaw(": heartbeat\n\n"), CLONE_HEARTBEAT_INTERVAL_MS);
+      heartbeat = setInterval(() => writeRaw(SSE_HEARTBEAT_LINE), SSE_HEARTBEAT_INTERVAL_MS);
       heartbeat.unref();
 
       // Abort the clone if the client disconnects mid-stream.

@@ -33,6 +33,7 @@ import { SearchPanel } from "./components/SearchPanel";
 import { ContextInspectorPanel } from "./components/ContextInspectorPanel";
 import { ResizableDivider } from "./components/ResizableDivider";
 import { useGitStatus } from "./hooks/useGitStatus";
+import { appUrl } from "./lib/base-path";
 import { themeDef, useThemeStore } from "./lib/theme";
 
 type RightPaneTab = "files" | "search" | "changes" | "git" | "context" | "processes";
@@ -109,6 +110,8 @@ export function App() {
   const loadProjects = useProjectStore((s) => s.load);
   const active = useActiveProject();
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
+
+  const telemetryCaptureContent = useUiConfigStore((s) => s.telemetryCaptureContent);
 
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const openActivityStream = useSessionStore((s) => s.openActivityStream);
@@ -421,6 +424,7 @@ export function App() {
   // disappear).
   const loadUiConfig = useUiConfigStore((s) => s.load);
   const minimal = useUiConfigStore((s) => s.minimal);
+  const appName = useUiConfigStore((s) => s.appName);
   const authLogoUrl = useUiConfigStore((s) => s.authLogoUrl);
   const appLogoDarkUrl = useUiConfigStore((s) => s.appLogoDarkUrl);
   const appLogoLightUrl = useUiConfigStore((s) => s.appLogoLightUrl);
@@ -507,12 +511,12 @@ export function App() {
               the parent gap-3 used between brand and project picker). */}
           <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
             <img
-              src={appLogoUrl ?? "/icons/icon.svg"}
+              src={appLogoUrl ?? appUrl("/icons/icon.svg")}
               alt=""
               className="max-h-8 max-w-28 shrink-0 object-contain"
               aria-hidden="true"
             />
-            <span className="shrink-0 text-sm font-semibold tracking-tight">pi-forge</span>
+            <span className="shrink-0 text-sm font-semibold tracking-tight">{appName}</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -582,6 +586,14 @@ export function App() {
           <div className="hidden md:block">
             <GlobalSearchBar />
           </div>
+          {telemetryCaptureContent && (
+            <span
+              className="rounded-full bg-red-600 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white shadow-sm shadow-red-950/40"
+              title="OTEL_CAPTURE_CONTENT is on: message and tool content may be exported in telemetry."
+            >
+              OTEL content capture on
+            </span>
+          )}
           {/* MCP status badge stays visible in minimal — operators
               still want to see whether MCP servers are connected,
               they just can't reconfigure them from a locked-down

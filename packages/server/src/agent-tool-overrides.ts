@@ -18,7 +18,11 @@ import {
   type WriteOperations,
 } from "@earendil-works/pi-coding-agent";
 import { createForgeBashOperations } from "./agent-bash-operations.js";
-import { assertAgentToolPathAllowed, resolveAgentToolPath } from "./agent-tool-policy.js";
+import {
+  assertAgentToolReadPathAllowed,
+  resolveAgentToolPath,
+  resolveAgentToolReadPath,
+} from "./agent-tool-policy.js";
 import {
   applySandboxParentChainHandoff,
   applySandboxPathHandoff,
@@ -29,26 +33,30 @@ function guard(workspacePath: string, absolutePath: string): string {
   return resolveAgentToolPath(workspacePath, absolutePath);
 }
 
+function readGuard(workspacePath: string, absolutePath: string): string {
+  return resolveAgentToolReadPath(workspacePath, absolutePath);
+}
+
 export function createSandboxedToolDefinitions(
   workspacePath: string,
   toolEnv: Record<string, string> = {},
 ): ToolDefinition[] {
   const readOps: ReadOperations = {
-    readFile: async (absolutePath) => readFile(guard(workspacePath, absolutePath)),
-    access: async (absolutePath) => access(guard(workspacePath, absolutePath)),
+    readFile: async (absolutePath) => readFile(readGuard(workspacePath, absolutePath)),
+    access: async (absolutePath) => access(readGuard(workspacePath, absolutePath)),
     detectImageMimeType: async () => undefined,
   };
 
   const grepOps: GrepOperations = {
     isDirectory: async (absolutePath) =>
-      (await stat(guard(workspacePath, absolutePath))).isDirectory(),
-    readFile: async (absolutePath) => readFile(guard(workspacePath, absolutePath), "utf8"),
+      (await stat(readGuard(workspacePath, absolutePath))).isDirectory(),
+    readFile: async (absolutePath) => readFile(readGuard(workspacePath, absolutePath), "utf8"),
   };
 
   const findOps: FindOperations = {
     exists: async (absolutePath) => {
       try {
-        await access(guard(workspacePath, absolutePath));
+        await access(readGuard(workspacePath, absolutePath));
         return true;
       } catch (err) {
         const e = err as NodeJS.ErrnoException;
@@ -57,7 +65,7 @@ export function createSandboxedToolDefinitions(
       }
     },
     glob: async (pattern, cwd, options) => {
-      const safeCwd = guard(workspacePath, cwd);
+      const safeCwd = readGuard(workspacePath, cwd);
       const results = await glob(pattern, {
         cwd: safeCwd,
         absolute: true,
@@ -67,7 +75,7 @@ export function createSandboxedToolDefinitions(
       });
       const allowed: string[] = [];
       for (const result of results) {
-        assertAgentToolPathAllowed(workspacePath, result);
+        assertAgentToolReadPathAllowed(workspacePath, result);
         allowed.push(result);
         if (allowed.length >= options.limit) break;
       }
@@ -78,7 +86,7 @@ export function createSandboxedToolDefinitions(
   const lsOps: LsOperations = {
     exists: async (absolutePath) => {
       try {
-        await access(guard(workspacePath, absolutePath));
+        await access(readGuard(workspacePath, absolutePath));
         return true;
       } catch (err) {
         const e = err as NodeJS.ErrnoException;
@@ -86,8 +94,8 @@ export function createSandboxedToolDefinitions(
         throw err;
       }
     },
-    stat: async (absolutePath) => stat(guard(workspacePath, absolutePath)),
-    readdir: async (absolutePath) => readdir(guard(workspacePath, absolutePath)),
+    stat: async (absolutePath) => stat(readGuard(workspacePath, absolutePath)),
+    readdir: async (absolutePath) => readdir(readGuard(workspacePath, absolutePath)),
   };
 
   const editOps: EditOperations = {

@@ -1,5 +1,5 @@
 import { extname, join } from "node:path";
-import { resolveAgentToolPath } from "./agent-tool-policy.js";
+import { resolveAgentToolReadPath } from "./agent-tool-policy.js";
 import { config } from "./config.js";
 import { checkFileReference, readFile } from "./file-manager.js";
 
@@ -150,7 +150,7 @@ export async function expandFileReferences(text: string, workspacePath: string):
     matches.map(async (mm): Promise<Classification> => {
       try {
         const abs = config.agentToolSandbox.enabled
-          ? resolveAgentToolPath(workspacePath, mm.path)
+          ? resolveAgentToolReadPath(workspacePath, mm.path)
           : join(workspacePath, mm.path);
         const check = config.agentToolSandbox.enabled
           ? await checkFileReference(abs, abs)

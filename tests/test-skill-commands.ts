@@ -109,13 +109,13 @@ async function main(): Promise<void> {
 
     let promptText: string | undefined;
     let promptCalls = 0;
-    let reloadCalls = 0;
+    let refreshCalls = 0;
     const runtimeKeys: string[] = [];
     const fakeSession = {
       model: { provider: "test", id: "test-model" },
       modelRuntime: {
-        reloadConfig: async () => {
-          reloadCalls += 1;
+        refresh: async () => {
+          refreshCalls += 1;
         },
         setRuntimeApiKey: async (provider: string, apiKey: string) => {
           runtimeKeys.push(`${provider}:${apiKey}`);
@@ -150,8 +150,8 @@ async function main(): Promise<void> {
     );
     assert(
       "skill prompt runs normal runtime-auth preflight",
-      reloadCalls === 1 && runtimeKeys.includes("test:skill-test-key"),
-      JSON.stringify({ reloadCalls, runtimeKeys }),
+      refreshCalls === 1 && runtimeKeys.includes("test:skill-test-key"),
+      JSON.stringify({ refreshCalls, runtimeKeys }),
     );
     assert(
       "skill arguments forward through SDK-native slash command",

@@ -21,8 +21,8 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
-import { randomBytes } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createHmac, randomBytes } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -118,6 +118,8 @@ async function startServer(
       LOG_LEVEL: "warn",
       NODE_ENV: "test",
       FORGE_DATA_DIR: dataDir,
+      PI_CONFIG_DIR: join(dataDir, "pi-config"),
+      SESSION_DIR: join(dataDir, "sessions"),
       WORKSPACE_PATH: workspacePath,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -627,6 +629,158 @@ async function scenarioLoginAttemptLockout(): Promise<void> {
   }
 }
 
+function dashboardHeaders(
+  secret: string,
+  overrides: Partial<{
+    iss: string;
+    aud: string;
+    sub: string;
+    groups: string[];
+    app: string;
+    iat: number;
+    exp: number;
+  }> = {},
+): Record<string, string> {
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    iss: "internal-dashboard",
+    aud: "pi-forge",
+    sub: "alice",
+    groups: ["cn=devs,ou=groups,dc=example,dc=com"],
+    app: "pi-forge",
+    iat: now,
+    exp: now + 60,
+    ...overrides,
+  };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = createHmac("sha256", secret).update(encoded).digest("hex");
+  return {
+    "X-Dashboard-Identity": encoded,
+    "X-Dashboard-Signature": signature,
+  };
+}
+
+async function scenarioDashboardIdentity(): Promise<void> {
+  console.log("\n[scenario H] dashboard identity SSO");
+  const secret = randomBytes(32).toString("hex");
+  const srv = await startServer({
+    DASHBOARD_IDENTITY_SECRET: secret,
+    LDAP_REQUIRED_GROUP_DN: "cn=devs,ou=groups,dc=example,dc=com",
+    UI_PASSWORD: undefined,
+    API_KEY: undefined,
+  });
+  try {
+    const status = await fetch(`${srv.base}/api/v1/auth/status`, {
+      headers: dashboardHeaders(secret),
+    });
+    assert("auth/status with dashboard headers → 200", status.status === 200);
+    const statusBody = (await status.json()) as {
+      authEnabled: boolean;
+      dashboardIdentityEnabled: boolean;
+      dashboardIdentityAuthenticated: boolean;
+    };
+    assert("auth/status reports auth enabled", statusBody.authEnabled === true);
+    assert(
+      "auth/status reports dashboard identity enabled",
+      statusBody.dashboardIdentityEnabled === true,
+    );
+    assert(
+      "auth/status reports dashboard identity authenticated via LDAP_REQUIRED_GROUP_DN fallback",
+      statusBody.dashboardIdentityAuthenticated === true,
+    );
+
+    const noHeaders = await fetch(`${srv.base}/api/v1/__protected_probe`);
+    assert("protected probe without dashboard headers → 401", noHeaders.status === 401);
+
+    const withHeaders = await fetch(`${srv.base}/api/v1/__protected_probe`, {
+      headers: dashboardHeaders(secret),
+    });
+    assert(
+      "protected probe with valid dashboard headers → 404 (passes auth)",
+      withHeaders.status === 404,
+    );
+
+    const projectPath = join(srv.dataDir, "workspace", "dashboard-project");
+    await mkdir(projectPath, { recursive: true });
+    const createProjectResponse = await jsonPost(
+      `${srv.base}/api/v1/projects`,
+      { name: "Dashboard project", path: projectPath },
+      dashboardHeaders(secret),
+    );
+    assert("dashboard identity can create a project", createProjectResponse.status === 201);
+    const project = (await createProjectResponse.json()) as { id: string };
+    const createSessionResponse = await jsonPost(
+      `${srv.base}/api/v1/sessions`,
+      { projectId: project.id },
+      dashboardHeaders(secret, { sub: "portal-user" }),
+    );
+    assert("dashboard identity can create a session", createSessionResponse.status === 201);
+    const session = (await createSessionResponse.json()) as { sessionId: string };
+    const sessionUsers = JSON.parse(
+      await readFile(join(srv.dataDir, "session-users.json"), "utf8"),
+    ) as Record<string, string>;
+    assert(
+      "dashboard identity sub is persisted as the session username",
+      sessionUsers[session.sessionId] === "portal-user",
+      `got ${String(sessionUsers[session.sessionId])}`,
+    );
+
+    const wrongSignature = await fetch(`${srv.base}/api/v1/__protected_probe`, {
+      headers: dashboardHeaders(`${secret}-wrong`),
+    });
+    assert("protected probe with wrong signature → 401", wrongSignature.status === 401);
+
+    const wrongAudience = await fetch(`${srv.base}/api/v1/__protected_probe`, {
+      headers: dashboardHeaders(secret, { aud: "other-app" }),
+    });
+    assert("protected probe with wrong audience → 401", wrongAudience.status === 401);
+
+    const wrongApp = await fetch(`${srv.base}/api/v1/__protected_probe`, {
+      headers: dashboardHeaders(secret, { app: "other-app" }),
+    });
+    assert("protected probe with wrong app → 401", wrongApp.status === 401);
+
+    const expired = await fetch(`${srv.base}/api/v1/__protected_probe`, {
+      headers: dashboardHeaders(secret, { iat: Math.floor(Date.now() / 1000) - 120, exp: 1 }),
+    });
+    assert("protected probe with expired identity → 401", expired.status === 401);
+
+    const futureIat = await fetch(`${srv.base}/api/v1/__protected_probe`, {
+      headers: dashboardHeaders(secret, {
+        iat: Math.floor(Date.now() / 1000) + 120,
+        exp: Math.floor(Date.now() / 1000) + 180,
+      }),
+    });
+    assert("protected probe with future iat → 401", futureIat.status === 401);
+
+    const staleIat = await fetch(`${srv.base}/api/v1/__protected_probe`, {
+      headers: dashboardHeaders(secret, {
+        iat: Math.floor(Date.now() / 1000) - 10 * 60,
+        exp: Math.floor(Date.now() / 1000) + 60,
+      }),
+    });
+    assert("protected probe with stale iat → 401", staleIat.status === 401);
+
+    const excessiveLifetime = await fetch(`${srv.base}/api/v1/__protected_probe`, {
+      headers: dashboardHeaders(secret, {
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 10 * 60,
+      }),
+    });
+    assert(
+      "protected probe with excessive identity lifetime → 401",
+      excessiveLifetime.status === 401,
+    );
+
+    const wrongGroup = await fetch(`${srv.base}/api/v1/__protected_probe`, {
+      headers: dashboardHeaders(secret, { groups: ["cn=other,ou=groups,dc=example,dc=com"] }),
+    });
+    assert("protected probe with unallowed group → 401", wrongGroup.status === 401);
+  } finally {
+    await srv.stop();
+  }
+}
+
 async function main(): Promise<void> {
   await scenarioPasswordAndJwt();
   await scenarioLoginInactivityTimeout();
@@ -637,6 +791,7 @@ async function main(): Promise<void> {
   await scenarioLdapEnabledWithoutLocalPassword();
   await scenarioLdapAdminUsesLocalPassword();
   await scenarioCustomLocalAdminUsername();
+  await scenarioDashboardIdentity();
 
   if (failures > 0) {
     console.log(`\n[test-auth] FAIL — ${failures} assertion(s) failed`);

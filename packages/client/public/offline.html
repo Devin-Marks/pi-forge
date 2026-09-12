@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Offline — pi-forge</title>
     <meta name="theme-color" content="#0a0a0a" />
-    <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><g fill="%23ffffff"><polygon points="28,25 8,50 28,75 36,75 16,50 36,25"/><polygon points="72,25 92,50 72,75 64,75 84,50 64,25"/><rect x="34" y="35" width="32" height="8"/><rect x="39" y="42" width="7" height="28"/><rect x="54" y="42" width="7" height="28"/></g></svg>'
+    />
     <style>
       :root {
         color-scheme: dark;
@@ -47,9 +51,10 @@
         gap: 0.5rem;
         margin-bottom: 0.75rem;
       }
-      .brand img {
+      .brand svg {
         width: 1.75rem;
         height: 1.75rem;
+        color: #ffffff;
       }
       .brand h1 {
         margin: 0;
@@ -114,14 +119,22 @@
     <main>
       <div class="card" role="alertdialog" aria-labelledby="title">
         <div class="brand">
-          <img src="/icons/icon.svg" alt="" aria-hidden="true" />
-          <h1>pi-forge</h1>
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <g fill="currentColor">
+              <polygon points="28,25 8,50 28,75 36,75 16,50 36,25" />
+              <polygon points="72,25 92,50 72,75 64,75 84,50 64,25" />
+              <rect x="34" y="35" width="32" height="8" />
+              <rect x="39" y="42" width="7" height="28" />
+              <rect x="54" y="42" width="7" height="28" />
+            </g>
+          </svg>
+          <h1 data-app-name>pi-forge</h1>
         </div>
         <h2 id="title">You're offline.</h2>
         <p>
-          The pi-forge server is unreachable. The agent runs against your code on the server, so
-          there's no useful offline mode &mdash; sessions, file edits, and terminals all need a live
-          connection.
+          The <span data-app-name>pi-forge</span> server is unreachable. The agent runs against your
+          code on the server, so there's no useful offline mode &mdash; sessions, file edits, and
+          terminals all need a live connection.
         </p>
         <ul>
           <li>If the server is on your laptop, check it's still running.</li>
@@ -138,5 +151,16 @@
         </p>
       </div>
     </main>
+    <script>
+      try {
+        const appName = localStorage.getItem("pi-forge/app-name") || "pi-forge";
+        document.title = `Offline — ${appName}`;
+        for (const el of document.querySelectorAll("[data-app-name]")) {
+          el.textContent = appName;
+        }
+      } catch {
+        // Keep the default built-in branding when localStorage is unavailable.
+      }
+    </script>
   </body>
 </html>

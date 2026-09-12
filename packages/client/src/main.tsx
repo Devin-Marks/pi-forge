@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { registerSW } from "virtual:pwa-register";
 import { App } from "./App";
 import "./index.css";
+import { appBasePath, serviceWorkerRuntimeCompatible } from "./lib/base-path";
 import { bootTheme } from "./lib/theme";
 
 // Apply the persisted theme BEFORE React mounts so the first paint
@@ -13,8 +14,31 @@ import { bootTheme } from "./lib/theme";
 bootTheme();
 
 // Auto-register the service worker (vite-plugin-pwa). `autoUpdate` mode
-// silently swaps in new shells on the next reload — no banner needed.
-registerSW({ immediate: true });
+// silently swaps in new shells on the next reload — no banner needed. Skip
+// registration when the server injected a runtime base path that differs from
+// the build-time Vite base; vite-plugin-pwa bakes the service worker URL/scope
+// at build time, so a root build running under /apps/pi-forge/ would otherwise
+// try to register /sw.js at the dashboard origin root.
+if (serviceWorkerRuntimeCompatible) {
+  registerSW({ immediate: true });
+} else if ("serviceWorker" in navigator) {
+  void navigator.serviceWorker.getRegistrations().then(async (registrations) => {
+    const appScope = new URL(`${appBasePath || "/"}`, window.location.origin).href;
+    const staleRegistrations = registrations.filter((registration) =>
+      registration.scope.startsWith(appScope),
+    );
+    if (staleRegistrations.length === 0) return;
+    await Promise.all(staleRegistrations.map((registration) => registration.unregister()));
+    // If a stale service worker controlled this load, a single soft reload
+    // moves the page onto network-served runtime-prefixed assets. Session
+    // storage avoids an accidental reload loop if a browser delays teardown.
+    const reloadKey = "pi-forge-stale-sw-reloaded";
+    if (navigator.serviceWorker.controller !== null && sessionStorage.getItem(reloadKey) !== "1") {
+      sessionStorage.setItem(reloadKey, "1");
+      window.location.reload();
+    }
+  });
+}
 
 /**
  * Dev-time error boundary that renders the error visibly on the page when
@@ -51,7 +75,11 @@ class RootErrorBoundary extends Component<{ children: ReactNode }, { error: Erro
             overflow: "auto",
           }}
         >
-          <h1 style={{ color: "#fff", marginBottom: "1rem" }}>pi-forge: render crash</h1>
+          <h1 style={{ color: "#fff", marginBottom: "1rem" }}>
+            {(typeof document !== "undefined" && document.title.length > 0
+              ? document.title
+              : "pi-forge") + ": render crash"}
+          </h1>
           <p style={{ color: "#d4d4d4", marginBottom: "1rem" }}>{this.state.error.message}</p>
           <pre style={{ fontSize: "11px", color: "#a3a3a3" }}>
             {this.state.error.stack ?? "(no stack)"}

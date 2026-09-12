@@ -4,7 +4,15 @@
  * Unit-style coverage for startup config validation, path policy,
  * sandboxed SDK tool overrides, and @file expansion scoping.
  */
-import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -34,6 +42,10 @@ const outside = resolve(tmp, "outside");
 const chownWorkspaceTarget = resolve(workspace, "chown-me");
 const chownAttemptTarget = resolve(workspace, "chown-attempt");
 const chownSkillsTarget = resolve(piConfig, "skills", "startup-owned");
+const piSdkDocsReadme = "/app/node_modules/@earendil-works/pi-coding-agent/README.md";
+const piSdkDocsDir = "/app/node_modules/@earendil-works/pi-coding-agent/docs";
+const piSdkExamplesDir = "/app/node_modules/@earendil-works/pi-coding-agent/examples";
+const piSdkPackageJson = "/app/node_modules/@earendil-works/pi-coding-agent/package.json";
 mkdirSync(workspace, { recursive: true });
 mkdirSync(project, { recursive: true });
 mkdirSync(shared, { recursive: true });
@@ -201,9 +213,12 @@ try {
     }
   }
 
-  const { resolveAgentToolPath } = (await import(
+  const { resolveAgentToolPath, resolveAgentToolReadPath } = (await import(
     resolve(repoRoot, "packages/server/dist/agent-tool-policy.js")
-  )) as { resolveAgentToolPath: (workspacePath: string, requestedPath: string) => string };
+  )) as {
+    resolveAgentToolPath: (workspacePath: string, requestedPath: string) => string;
+    resolveAgentToolReadPath: (workspacePath: string, requestedPath: string) => string;
+  };
   const { createSandboxedToolDefinitions } = (await import(
     resolve(repoRoot, "packages/server/dist/agent-tool-overrides.js")
   )) as { createSandboxedToolDefinitions: (workspacePath: string) => any[] };
@@ -540,6 +555,26 @@ try {
       );
     }
   }
+  function readAllowed(label: string, requested: string): void {
+    try {
+      resolveAgentToolReadPath(project, requested);
+      assert(label, true);
+    } catch (err) {
+      assert(label, false, (err as Error).message);
+    }
+  }
+  function readDenied(label: string, requested: string): void {
+    try {
+      resolveAgentToolReadPath(project, requested);
+      assert(label, false, "allowed unexpectedly");
+    } catch (err) {
+      assert(
+        label,
+        (err as Error).message.startsWith("agent_tool_path_denied"),
+        (err as Error).message,
+      );
+    }
+  }
 
   console.log("\npath policy");
   allowed("relative project path allowed", "hello.txt");
@@ -554,6 +589,12 @@ try {
   denied("symlink escape rejected", "escape-link");
   denied("/proc/self/environ rejected", "/proc/self/environ");
   denied("FORGE_DATA_DIR rejected", resolve(forgeData, "jwt-secret"));
+  readAllowed("pi SDK README read path allowed", piSdkDocsReadme);
+  readAllowed("pi SDK docs dir read path allowed", piSdkDocsDir);
+  readAllowed("pi SDK examples dir read path allowed", piSdkExamplesDir);
+  readDenied("pi SDK package metadata read path rejected", piSdkPackageJson);
+  denied("pi SDK README write path rejected", piSdkDocsReadme);
+  denied("pi SDK docs write path rejected", resolve(piSdkDocsDir, "extensions.md"));
 
   console.log("\ntool overrides");
   const tools = new Map(createSandboxedToolDefinitions(project).map((tool) => [tool.name, tool]));
@@ -609,6 +650,51 @@ try {
   await assertRejects("protected pi config file rejected", () =>
     read.execute("t11", { path: resolve(piConfig, "auth.json") }, undefined, undefined, {}),
   );
+  if (existsSync(piSdkDocsReadme) && existsSync(piSdkDocsDir) && existsSync(piSdkExamplesDir)) {
+    const piDocsRead = await read.execute(
+      "t12",
+      { path: piSdkDocsReadme },
+      undefined,
+      undefined,
+      {},
+    );
+    assert("pi SDK README read works", JSON.stringify(piDocsRead).includes("pi"));
+    const piDocsLs = await ls.execute("t13", { path: piSdkDocsDir }, undefined, undefined, {});
+    assert("pi SDK docs ls works", JSON.stringify(piDocsLs).includes(".md"));
+    const piDocsGrep = await grep.execute(
+      "t13b",
+      { pattern: "pi", path: piSdkDocsReadme },
+      undefined,
+      undefined,
+      {},
+    );
+    assert("pi SDK docs grep works", JSON.stringify(piDocsGrep).includes("pi"));
+    const piExamplesFind = await find.execute(
+      "t14",
+      { pattern: "**/*", path: piSdkExamplesDir },
+      undefined,
+      undefined,
+      {},
+    );
+    assert("pi SDK examples find works", JSON.stringify(piExamplesFind).includes("README.md"));
+  } else {
+    assert("pi SDK docs tool-read coverage skipped because /app docs are unavailable", true);
+  }
+  await assertRejects("pi SDK package metadata read rejected", () =>
+    read.execute("t15", { path: piSdkPackageJson }, undefined, undefined, {}),
+  );
+  await assertRejects("pi SDK README write rejected", () =>
+    write.execute("t16", { path: piSdkDocsReadme, content: "x" }, undefined, undefined, {}),
+  );
+  await assertRejects("pi SDK docs edit rejected", () =>
+    edit.execute(
+      "t17",
+      { path: resolve(piSdkDocsDir, "extensions.md"), edits: [{ oldText: "pi", newText: "pi" }] },
+      undefined,
+      undefined,
+      {},
+    ),
+  );
 
   console.log("\n@file expansion");
   const expandedWorkspace = await expandFileReferences("see @hello.txt", project);
@@ -618,6 +704,12 @@ try {
     project,
   );
   assert("allowed pi config non-secret expands", expandedPi.includes("profile ok"));
+  if (existsSync(piSdkDocsReadme)) {
+    const expandedPiDocs = await expandFileReferences(`see @${piSdkDocsReadme}`, project);
+    assert("pi SDK README expands", expandedPiDocs.includes("```markdown"));
+  } else {
+    assert("pi SDK README expansion skipped because /app docs are unavailable", true);
+  }
   const deniedAuth = await expandFileReferences(`see @${resolve(piConfig, "auth.json")}`, project);
   assert("protected pi config rejected", deniedAuth.includes("not included"));
   const deniedOutside = await expandFileReferences(

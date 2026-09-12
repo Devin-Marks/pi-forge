@@ -7,6 +7,7 @@ import "@xterm/xterm/css/xterm.css";
 import { useTerminalStore, type TerminalTab } from "../store/terminal-store";
 import { useActiveProject, useProjectStore } from "../store/project-store";
 import { getStoredToken } from "../lib/auth-client";
+import { appUrl } from "../lib/base-path";
 import { readCssVar, useThemeStore } from "../lib/theme";
 
 /**
@@ -630,9 +631,9 @@ function attachWebSocket(
   // Pass the stable client tabId so the server can reattach to the
   // existing PTY (with its rolling output buffer replayed) on
   // reconnect / page reload, instead of spawning a fresh shell.
-  const url = `${proto}://${window.location.host}/api/v1/terminal?projectId=${encodeURIComponent(
-    projectId,
-  )}&tabId=${encodeURIComponent(tabId)}${tokenQs}`;
+  const url = `${proto}://${window.location.host}${appUrl(
+    `/api/v1/terminal?projectId=${encodeURIComponent(projectId)}&tabId=${encodeURIComponent(tabId)}${tokenQs}`,
+  )}`;
   const ws = new WebSocket(url);
   ws.binaryType = "arraybuffer";
 

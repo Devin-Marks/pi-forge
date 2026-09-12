@@ -31,8 +31,13 @@ import {
 import {
   ensureProjectLoaded as mcpEnsureProjectLoaded,
   getStatus as mcpGetStatus,
+  reloadGlobal as mcpReloadGlobal,
 } from "../mcp/manager.js";
-import { BUILTIN_TOOL_NAMES } from "../session-registry.js";
+import {
+  BUILTIN_TOOL_NAMES,
+  listSessions,
+  rebuildAgentSessionForTools,
+} from "../session-registry.js";
 import { discoverExtensionResources } from "../extensions-discovery.js";
 import {
   getAllToolOverrides,
@@ -50,6 +55,7 @@ import {
   validateSandboxToolEnv,
   writeSandboxSettings,
 } from "../sandbox-settings.js";
+import { readTelemetrySettings, writeTelemetrySettings } from "../telemetry-settings.js";
 import {
   DEFAULT_THEME_COLORS,
   readThemeConfig,
@@ -60,6 +66,24 @@ import {
   type ServerThemeConfig,
 } from "../theme-config.js";
 import { errorSchema } from "./_schemas.js";
+
+const RUNTIME_IMPORT_FILES = new Set([
+  "mcp.json",
+  "settings.json",
+  "models.json",
+  "skills-overrides.json",
+  "tool-overrides.json",
+]);
+
+const MCP_IMPORT_FILES = new Set(["mcp.json"]);
+
+async function refreshRuntimeAfterConfigImport(imported: string[]): Promise<void> {
+  if (imported.some((name) => MCP_IMPORT_FILES.has(name))) {
+    await mcpReloadGlobal();
+  }
+  if (!imported.some((name) => RUNTIME_IMPORT_FILES.has(name))) return;
+  await Promise.all(listSessions().map((live) => rebuildAgentSessionForTools(live.sessionId)));
+}
 
 const modelsJsonSchema = {
   type: "object",
@@ -99,6 +123,15 @@ const sandboxSettingsSchema = {
     gid: { type: "integer" },
     home: { type: "string" },
     toolEnv: { type: "object", additionalProperties: { type: "string" } },
+  },
+} as const;
+
+const telemetrySettingsSchema = {
+  type: "object",
+  required: ["captureContent"],
+  additionalProperties: false,
+  properties: {
+    captureContent: { type: "boolean" },
   },
 } as const;
 
@@ -453,6 +486,52 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
           home: config.agentToolSandbox.home,
           toolEnv: settings.toolEnv,
         };
+      } catch (err) {
+        return internalError(reply, err);
+      }
+    },
+  );
+
+  // ---------------------- telemetry settings ----------------------
+  fastify.get(
+    "/config/telemetry",
+    {
+      schema: {
+        description:
+          "Read runtime telemetry settings. captureContent controls whether message/tool content is exported to OpenTelemetry.",
+        tags: ["config"],
+        response: { 200: telemetrySettingsSchema, 500: errorSchema },
+      },
+    },
+    async (_req, reply) => {
+      try {
+        return await readTelemetrySettings();
+      } catch (err) {
+        return internalError(reply, err);
+      }
+    },
+  );
+
+  fastify.put<{ Body: { captureContent: boolean } }>(
+    "/config/telemetry",
+    {
+      schema: {
+        description:
+          "Replace runtime telemetry settings. Enabling captureContent exports full message and tool content and may include sensitive data.",
+        tags: ["config"],
+        body: telemetrySettingsSchema,
+        response: { 200: telemetrySettingsSchema, 400: errorSchema, 500: errorSchema },
+      },
+    },
+    async (req, reply) => {
+      if (typeof req.body.captureContent !== "boolean") {
+        return reply.code(400).send({
+          error: "invalid_telemetry_settings",
+          message: "captureContent must be a boolean",
+        });
+      }
+      try {
+        return await writeTelemetrySettings({ captureContent: req.body.captureContent });
       } catch (err) {
         return internalError(reply, err);
       }
@@ -1170,6 +1249,9 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
       }
       try {
         const summary = await importConfigFromBuffer(buf);
+        if (summary.errors.length === 0 && summary.imported.length > 0) {
+          await refreshRuntimeAfterConfigImport(summary.imported);
+        }
         return summary;
       } catch (err) {
         return internalError(reply, err);

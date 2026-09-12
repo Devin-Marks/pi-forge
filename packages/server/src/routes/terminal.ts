@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import type { WebSocket } from "ws";
-import { extractBearer, verifyApiKey, verifyToken } from "../auth.js";
+import { extractBearer, verifyApiKey, verifyDashboardIdentity, verifyToken } from "../auth.js";
 import { authEnabled, config } from "../config.js";
 import { getProject } from "../project-manager.js";
 import { attachSink, findPtyByTabId, killPty, spawnPty } from "../pty-manager.js";
@@ -135,6 +135,7 @@ async function findVenvActivate(cwd: string): Promise<string | undefined> {
 
 function authorize(req: FastifyRequest): boolean {
   if (!authEnabled()) return true;
+  if (verifyDashboardIdentity(req.headers) !== undefined) return true;
   const headerToken = extractBearer(req.headers.authorization);
   const queryToken =
     typeof (req.query as { token?: unknown } | undefined)?.token === "string"

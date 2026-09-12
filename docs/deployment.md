@@ -157,6 +157,82 @@ In Traefik's static config, lift
 `3600s` so SSE streams aren't terminated at the default 60 s.
 WebSocket upgrades are handled transparently.
 
+## Dashboard app-proxy embedding
+
+Pi-forge can run as an iframe app behind the dashboard's path proxy, for example
+at `/apps/pi-forge/`. In that topology the dashboard authenticates the browser,
+strips the `/apps/pi-forge/` prefix before forwarding, and injects signed
+identity headers. Configure the server to verify the dashboard envelope. The
+served app shell uses the proxy's `X-Forwarded-Prefix` header to add the mount
+path at request time, so a normal `/` client build can be reused across dashboard
+paths:
+
+```env
+# Runtime server settings. The secret must match pi-forge's dashboard catalog
+# identitySecret; issuer/app id must match the dashboard proxy payload.
+DASHBOARD_IDENTITY_SECRET=<matching-per-app-secret>
+DASHBOARD_IDENTITY_ISSUER=internal-dashboard
+DASHBOARD_APP_ID=pi-forge
+
+# Optional downstream group enforcement. Use JSON for LDAP DNs because DNs
+# contain commas. If unset, pi-forge falls back to LDAP_REQUIRED_GROUP_DN.
+DASHBOARD_IDENTITY_ALLOWED_GROUPS=["CN=Developers,OU=Groups,DC=company,DC=local"]
+```
+
+Dashboard catalog shape:
+
+```json
+{
+  "id": "pi-forge",
+  "path": "/apps/pi-forge/",
+  "upstream": "http://pi-forge:3000/",
+  "healthCheckPath": "/api/v1/health"
+}
+```
+
+Notes:
+
+- Keep the upstream network private; dashboard identity headers are trusted only
+  when users cannot bypass the dashboard and hit pi-forge directly.
+- The dashboard proxy must strip `/apps/pi-forge` before forwarding and send
+  `X-Forwarded-Prefix: /apps/pi-forge`. If it forwards the full prefixed path
+  upstream, the SPA fallback may answer asset requests with `index.html`, which
+  browsers reject as JavaScript/CSS because of MIME `nosniff`.
+- Cached same-origin logos (`/cache/logos/...`), API/SSE calls, downloads,
+  Swagger docs, PWA assets, and terminal WebSocket URLs are base-path aware when
+  the dashboard proxy sends `X-Forwarded-Prefix`.
+- The terminal uses WebSocket upgrade. The dashboard app proxy must forward
+  WebSockets for `/apps/pi-forge/api/v1/terminal` if you want embedded terminal
+  support.
+
+To test the runtime path behavior locally:
+
+```bash
+npm run build
+
+# Terminal 1: run pi-forge with the normal `/` client build.
+PORT=3100 \
+SERVE_CLIENT=true \
+DASHBOARD_IDENTITY_SECRET=dev-dashboard-identity-secret-32-bytes-min \
+DASHBOARD_IDENTITY_ISSUER=internal-dashboard \
+DASHBOARD_APP_ID=pi-forge \
+node packages/server/dist/index.js
+
+# Terminal 2: run a path-stripping dashboard proxy simulator and assertions.
+PROXY_PORT=5173 \
+TARGET_PORT=3100 \
+APP_PREFIX=/apps/pi-forge \
+DASHBOARD_IDENTITY_SECRET=dev-dashboard-identity-secret-32-bytes-min \
+DASHBOARD_IDENTITY_ISSUER=internal-dashboard \
+DASHBOARD_APP_ID=pi-forge \
+node scripts/dashboard-proxy-smoke-test.mjs
+```
+
+The smoke test fails if `/apps/pi-forge/` does not rewrite asset URLs, if JS/CSS
+assets return `text/html`, if the manifest scope is wrong, or if signed dashboard
+identity is not accepted. Use `node scripts/dashboard-proxy-smoke-test.mjs --serve`
+to leave the simulator running for browser testing.
+
 ## Network-deploy env-var overrides
 
 Full reference: [`configuration.md`](./configuration.md#environment-variables).
