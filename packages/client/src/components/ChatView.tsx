@@ -47,6 +47,7 @@ import { QuickActionRunCard } from "./QuickActionRunCard";
 import { useQuickActionRunsStore, type QuickActionRun } from "../store/quick-actions-store";
 import { placeChatTimelineItems, type ChatTimelinePosition } from "../lib/chat-timeline";
 import { parseSubagentDetails, type SubagentResult } from "../lib/subagent-parser";
+import { getToolBatchStatus } from "../lib/tool-call-batch-status";
 import { OrchestrationPanel } from "./OrchestrationPanel";
 import { useUiConfigStore } from "../store/ui-config-store";
 import {
@@ -1861,14 +1862,15 @@ function toolPreviewFromArgs(name: string, args: unknown): string | undefined {
 function ToolCallBatchCard({ entries }: { entries: ToolBatchEntry[] }) {
   const toolEntries = entries.filter((entry) => entry.kind === "tool");
   const toolCount = toolEntries.length;
-  const inFlight = toolEntries.filter((e) => e.result === undefined).length;
-  const errored = toolEntries.some((e) => e.result?.isError === true);
+  const { inFlightCount, failedChildCount, hasChildFailures, hasAggregateError } =
+    getToolBatchStatus(toolEntries);
   const counts = new Map<string, number>();
   for (const e of toolEntries) {
     const name = String(e.block.name ?? "tool");
     counts.set(name, (counts.get(name) ?? 0) + 1);
   }
   const countSummary = [...counts].map(([name, count]) => `${name} ×${count}`).join(" · ");
+  const failedChildLabel = `${failedChildCount} ${failedChildCount === 1 ? "child" : "children"} failed`;
   const previews = toolEntries
     .map((e) => {
       const name = String(e.block.name ?? "tool");
@@ -1897,12 +1899,20 @@ function ToolCallBatchCard({ entries }: { entries: ToolBatchEntry[] }) {
           )}
         </span>
         <div className="flex shrink-0 items-center gap-1 self-start sm:self-auto">
-          {inFlight > 0 && (
+          {inFlightCount > 0 && (
             <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-neutral-400">
-              {inFlight} running…
+              {inFlightCount} running…
             </span>
           )}
-          {errored && (
+          {hasChildFailures && (
+            <span
+              className="rounded bg-amber-900/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-amber-300 light:bg-amber-100 light:text-amber-800"
+              title="One or more child tool calls failed; expand the batch to see the failed call."
+            >
+              {failedChildLabel}
+            </span>
+          )}
+          {hasAggregateError && (
             <span className="rounded bg-red-900/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-red-300 light:bg-red-100 light:text-red-800">
               error
             </span>
