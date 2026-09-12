@@ -334,7 +334,6 @@ interface McpCallResult {
   structuredContent?: unknown;
 }
 
-const MCP_SPOOL_PREVIEW_CHARS = 240;
 const MCP_SPOOL_SAFE_NAME_RE = /[^A-Za-z0-9_.-]+/g;
 
 let runtimeSpoolingSettings: McpResultSpoolingSettings = {
@@ -416,7 +415,6 @@ async function maybeSpoolMcpResult(opts: {
           relativePath,
           textChars,
           bytes: Buffer.byteLength(serialized, "utf8"),
-          preview: buildMcpPreview(opts.res),
           containsImages: mcpResultContainsImages(opts.res),
         }),
       },
@@ -439,15 +437,6 @@ function safeFilenamePart(value: string): string {
   return cleaned.length > 0 ? cleaned : "mcp";
 }
 
-function buildMcpPreview(res: unknown): string {
-  const agent = mcpResultToAgentResult(res);
-  const text = agent.content
-    .filter((block): block is { type: "text"; text: string } => block.type === "text")
-    .map((block) => block.text)
-    .join("\n\n");
-  return sanitizeDiagnostic(text.length > 0 ? text : "(no text preview)", MCP_SPOOL_PREVIEW_CHARS);
-}
-
 function mcpResultContainsImages(res: unknown): boolean {
   const blocks = Array.isArray((res as McpCallResult | undefined)?.content)
     ? ((res as McpCallResult).content as McpContentBlock[])
@@ -460,7 +449,6 @@ function buildSpooledSummary(opts: {
   relativePath: string;
   textChars: number;
   bytes: number;
-  preview: string;
   containsImages: boolean;
 }): string {
   const imageNote = opts.containsImages
@@ -472,8 +460,8 @@ function buildSpooledSummary(opts: {
     `Approximate text size: ${opts.textChars.toLocaleString()} characters\n` +
     `File size: ${opts.bytes.toLocaleString()} bytes\n` +
     `${imageNote}\n` +
-    `Use file-reading tools to inspect '${opts.relativePath}' incrementally; do not re-run the same broad MCP call just to recover omitted content.\n\n` +
-    `Preview (first ${MCP_SPOOL_PREVIEW_CHARS.toLocaleString()} chars max):\n${opts.preview}`
+    `No result preview is included inline to conserve model context. ` +
+    `Use file-reading tools to inspect '${opts.relativePath}' incrementally; do not re-run the same broad MCP call just to recover omitted content.`
   );
 }
 

@@ -405,6 +405,14 @@ async function main(): Promise<void> {
       );
       assert("spooling above threshold: path included", pathMatch !== null, summary.slice(0, 300));
       assert("spooling above threshold: image data not inline", !summary.includes("base64-image"));
+      assert(
+        "spooling above threshold: no payload preview inline",
+        !summary.includes("L".repeat(24)),
+      );
+      assert(
+        "spooling above threshold: tells model preview is omitted",
+        summary.includes("No result preview is included inline"),
+      );
       if (pathMatch?.[1] !== undefined) {
         const stored = await readFile(join(workspace, pathMatch[1]), "utf8");
         assert("spooling above threshold: writes raw text", stored.includes(fullText));

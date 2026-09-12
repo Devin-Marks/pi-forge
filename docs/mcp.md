@@ -196,9 +196,9 @@ filename containing the MCP server name, tool name, timestamp, and UUID.
 With the default directory, files land at
 `<project workspace>/.mcp-results/<server>__<tool>__<timestamp>__<uuid>.json`.
 The model receives only a concise `MCP_RESULT_SPOOLED` text result with
-the workspace-relative path, approximate character count, byte size, and
-a short preview. The summary instructs the agent to use file-reading
-tools to inspect the saved file incrementally.
+the workspace-relative path, approximate character count, and byte size.
+No payload preview is included inline; the summary instructs the agent to
+use file-reading tools to inspect the saved file incrementally.
 
 Error results (`isError: true`) bypass spooling so failures remain
 visible inline and continue through the existing truncation behavior if
