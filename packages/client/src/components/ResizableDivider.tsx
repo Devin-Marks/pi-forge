@@ -1,4 +1,9 @@
-import { useEffect, useRef, type PointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent,
+} from "react";
 
 /**
  * Drag-handle between two adjacent panes. Supports both orientations:
@@ -38,6 +43,10 @@ interface Props {
   minSize: number;
   maxSize: number;
   orientation?: "vertical" | "horizontal";
+  /** Accessible name announced for this specific divider. */
+  ariaLabel?: string;
+  /** Keyboard resize increment in pixels. */
+  keyboardStep?: number;
 }
 
 export function ResizableDivider({
@@ -47,6 +56,8 @@ export function ResizableDivider({
   minSize,
   maxSize,
   orientation = "vertical",
+  ariaLabel = "Resize pane",
+  keyboardStep = 16,
 }: Props) {
   const dragRef = useRef<{ start: number; startSize: number } | null>(null);
   const horizontal = orientation === "horizontal";
@@ -77,6 +88,27 @@ export function ResizableDivider({
     };
   }, []);
 
+  const clamp = (value: number): number => Math.min(Math.max(value, minSize), maxSize);
+
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    const increaseKey = horizontal ? "ArrowDown" : "ArrowRight";
+    const decreaseKey = horizontal ? "ArrowUp" : "ArrowLeft";
+    if (e.key === "Home") {
+      e.preventDefault();
+      onResize(minSize);
+      return;
+    }
+    if (e.key === "End") {
+      e.preventDefault();
+      onResize(maxSize);
+      return;
+    }
+    if (e.key !== increaseKey && e.key !== decreaseKey) return;
+    e.preventDefault();
+    const physicalDelta = e.key === increaseKey ? keyboardStep : -keyboardStep;
+    onResize(clamp(getStartSize() + physicalDelta * direction));
+  };
+
   const onPointerDown = (e: PointerEvent<HTMLDivElement>): void => {
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -93,7 +125,7 @@ export function ResizableDivider({
     const cur = horizontal ? e.clientY : e.clientX;
     const delta = cur - dragRef.current.start;
     const next = dragRef.current.startSize + delta * direction;
-    onResize(Math.min(Math.max(next, minSize), maxSize));
+    onResize(clamp(next));
   };
 
   const onPointerUp = (e: PointerEvent<HTMLDivElement>): void => {
@@ -119,7 +151,13 @@ export function ResizableDivider({
       onPointerCancel={onPointerUp}
       className={`${baseCls} ${sizeCls}`}
       role="separator"
+      tabIndex={0}
+      aria-label={ariaLabel}
       aria-orientation={horizontal ? "horizontal" : "vertical"}
+      aria-valuemin={minSize}
+      aria-valuemax={maxSize}
+      aria-valuenow={Math.round(clamp(getStartSize()))}
+      onKeyDown={onKeyDown}
     >
       {/* Slightly wider invisible hitbox so the drag handle is easier
           to grab without making the visible bar fat. */}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { Plus, X, ChevronDown, ChevronRight, GripVertical } from "lucide-react";
 import { useProjectStore } from "../store/project-store";
 import { useSessionStore } from "../store/session-store";
@@ -12,9 +12,11 @@ export interface ProjectSidebarProps {
    *  drawer wrapper to layer in fixed-position transform classes
    *  without ProjectSidebar needing to know it's in a drawer. */
   className?: string;
+  /** Desktop sizing supplied by the App-level pane manager. */
+  style?: CSSProperties;
 }
 
-export function ProjectSidebar({ className = "" }: ProjectSidebarProps = {}) {
+export function ProjectSidebar({ className = "", style }: ProjectSidebarProps = {}) {
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const collapsed = useProjectStore((s) => s.collapsed);
@@ -147,6 +149,7 @@ export function ProjectSidebar({ className = "" }: ProjectSidebarProps = {}) {
       // mobile. env() returns 0 on devices without insets, so this
       // is a no-op on desktop and on non-notched phones.
       style={{
+        ...style,
         paddingTop: "env(safe-area-inset-top)",
         paddingBottom: "env(safe-area-inset-bottom)",
       }}

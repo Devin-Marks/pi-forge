@@ -41,14 +41,18 @@ type RightPaneTab = "files" | "search" | "changes" | "git" | "context" | "proces
 /* Persisted pane widths. Stored in localStorage so the user-tuned
    layout survives reloads. Defaults err on the side of "the chat is the
    primary surface" — files is narrow, editor is medium. */
+const PROJECTS_WIDTH_KEY = "pi-forge/projects-width";
 const FILES_WIDTH_KEY = "pi-forge/files-width";
 const EDITOR_WIDTH_KEY = "pi-forge/editor-width";
 const TERMINAL_HEIGHT_KEY = "pi-forge/terminal-height";
 const TODO_PANEL_HEIGHT_KEY = "pi-forge/todo-panel-height";
+const DEFAULT_PROJECTS_WIDTH = 256;
 const DEFAULT_FILES_WIDTH = 280;
 const DEFAULT_EDITOR_WIDTH = 480;
 const DEFAULT_TERMINAL_HEIGHT = 280;
 const DEFAULT_TODO_PANEL_HEIGHT = 200;
+const MIN_PROJECTS_WIDTH = 200;
+const MAX_PROJECTS_WIDTH = 640;
 const MIN_FILES_WIDTH = 200;
 const MIN_EDITOR_WIDTH = 320;
 const MIN_CHAT_WIDTH = 320;
@@ -60,6 +64,38 @@ function readPersistedWidth(key: string, fallback: number): number {
   if (raw === null) return fallback;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function readPersistedProjectsWidth(): number {
+  const raw = localStorage.getItem(PROJECTS_WIDTH_KEY);
+  if (raw === null) return DEFAULT_PROJECTS_WIDTH;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return DEFAULT_PROJECTS_WIDTH;
+  return Math.min(Math.max(parsed, MIN_PROJECTS_WIDTH), MAX_PROJECTS_WIDTH);
+}
+
+export function getProjectsMaxWidth(
+  viewportWidth: number,
+  filesWidth: number,
+  editorWidth: number,
+  filesOpen: boolean,
+  editorVisible: boolean,
+): number {
+  return Math.max(
+    MIN_PROJECTS_WIDTH,
+    Math.min(
+      MAX_PROJECTS_WIDTH,
+      viewportWidth -
+        MIN_CHAT_WIDTH -
+        (filesOpen ? filesWidth + 4 : 0) -
+        (editorVisible ? editorWidth + 4 : 0) -
+        4,
+    ),
+  );
+}
+
+export function clampProjectsWidth(width: number, maxWidth: number): number {
+  return Math.min(Math.max(width, MIN_PROJECTS_WIDTH), maxWidth);
 }
 
 export function App() {
@@ -221,14 +257,21 @@ export function App() {
   // the live value in state so drags re-render the layout, and mirror
   // it through the ref so the divider can read the start width without
   // a stale-closure bug across drags.
+  const [projectsWidth, setProjectsWidth] = useState<number>(readPersistedProjectsWidth);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [filesWidth, setFilesWidth] = useState<number>(() =>
     readPersistedWidth(FILES_WIDTH_KEY, DEFAULT_FILES_WIDTH),
   );
   const [editorWidth, setEditorWidth] = useState<number>(() =>
     readPersistedWidth(EDITOR_WIDTH_KEY, DEFAULT_EDITOR_WIDTH),
   );
+  const projectsWidthRef = useRef(projectsWidth);
   const filesWidthRef = useRef(filesWidth);
   const editorWidthRef = useRef(editorWidth);
+  useEffect(() => {
+    projectsWidthRef.current = projectsWidth;
+    localStorage.setItem(PROJECTS_WIDTH_KEY, String(Math.round(projectsWidth)));
+  }, [projectsWidth]);
   useEffect(() => {
     filesWidthRef.current = filesWidth;
     localStorage.setItem(FILES_WIDTH_KEY, String(filesWidth));
@@ -240,6 +283,23 @@ export function App() {
 
   const openFilesCount = useFileStore((s) => s.openFiles.length);
   const editorVisible = editorOpen && openFilesCount > 0;
+  const projectsMaxWidth = getProjectsMaxWidth(
+    viewportWidth,
+    filesWidth,
+    editorWidth,
+    filesOpen,
+    editorVisible,
+  );
+
+  useEffect(() => {
+    const onResize = (): void => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
+    setProjectsWidth((current) => clampProjectsWidth(current, projectsMaxWidth));
+  }, [projectsMaxWidth]);
 
   // Drives the modified-file count badge on the Git tab. Polls via
   // the hook regardless of which tab is currently visible — we want
@@ -636,7 +696,18 @@ export function App() {
               "md:static md:inset-auto md:z-auto md:shadow-none md:transition-none " +
               (drawerOpen ? "max-md:translate-x-0" : "max-md:-translate-x-full")
             }
+            {...(isMobile ? {} : { style: { width: `${projectsWidth}px` } })}
           />
+          {!isMobile && (
+            <ResizableDivider
+              getStartSize={() => projectsWidthRef.current}
+              onResize={setProjectsWidth}
+              direction={1}
+              minSize={MIN_PROJECTS_WIDTH}
+              maxSize={projectsMaxWidth}
+              ariaLabel="Resize project sidebar"
+            />
+          )}
           <main className="flex flex-1 overflow-hidden">
             {/* Layout when files pane is open:
                   chat (flex) | divider | editor (when ≥1 tab) | divider | files
@@ -758,7 +829,11 @@ export function App() {
                       minSize={MIN_EDITOR_WIDTH}
                       maxSize={Math.max(
                         MIN_EDITOR_WIDTH,
-                        window.innerWidth - (filesOpen ? filesWidth : 0) - MIN_CHAT_WIDTH - 240, // 240 ≈ ProjectSidebar
+                        window.innerWidth -
+                          (filesOpen ? filesWidth + 4 : 0) -
+                          MIN_CHAT_WIDTH -
+                          (projectsWidth + 4) -
+                          4,
                       )}
                     />
                     <div
@@ -903,8 +978,9 @@ export function App() {
                         MIN_FILES_WIDTH,
                         window.innerWidth -
                           MIN_CHAT_WIDTH -
-                          240 -
-                          (editorVisible ? MIN_EDITOR_WIDTH : 0),
+                          (projectsWidth + 4) -
+                          (editorVisible ? MIN_EDITOR_WIDTH + 4 : 0) -
+                          4,
                       )}
                     />
                     <div
