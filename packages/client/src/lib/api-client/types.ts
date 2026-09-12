@@ -112,6 +112,8 @@ export interface McpSettingsResponse {
   total: number;
   /** MCP text-result truncation applied before MCP results enter agent context. */
   truncation: { enabled: boolean; maxChars: number };
+  /** Optional large-result spooling to workspace files before truncation. */
+  spooling: { enabled: boolean; thresholdChars: number; directory: string; format: "json" };
 }
 
 // ---------------- processes ----------------

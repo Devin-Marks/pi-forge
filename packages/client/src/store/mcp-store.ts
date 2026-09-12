@@ -19,7 +19,11 @@ function sameSettings(a: McpSettingsResponse | undefined, b: McpSettingsResponse
     a.connected === b.connected &&
     a.total === b.total &&
     a.truncation.enabled === b.truncation.enabled &&
-    a.truncation.maxChars === b.truncation.maxChars
+    a.truncation.maxChars === b.truncation.maxChars &&
+    a.spooling.enabled === b.spooling.enabled &&
+    a.spooling.thresholdChars === b.spooling.thresholdChars &&
+    a.spooling.directory === b.spooling.directory &&
+    a.spooling.format === b.spooling.format
   );
 }
 
@@ -102,6 +106,7 @@ interface McpState {
   refreshProject: (projectId: string | undefined) => Promise<void>;
   setMcpEnabled: (enabled: boolean) => Promise<void>;
   setMcpTruncation: (truncation: { enabled: boolean; maxChars: number }) => Promise<void>;
+  setMcpSpooling: (spooling: McpSettingsResponse["spooling"]) => Promise<void>;
   upsertServer: (name: string, body: McpServerConfig) => Promise<void>;
   deleteServer: (name: string) => Promise<void>;
   probeServer: (name: string, projectId: string | undefined) => Promise<void>;
@@ -240,6 +245,21 @@ export const useMcpStore = create<McpState>((set, get) => ({
     }
     try {
       const r = await api.setMcpTruncation(truncation);
+      set({ settings: r, error: undefined });
+    } catch (err) {
+      if (prior !== undefined) set({ settings: prior });
+      set({ error: describeError(err) });
+      throw err;
+    }
+  },
+
+  setMcpSpooling: async (spooling) => {
+    const prior = get().settings;
+    if (prior !== undefined) {
+      set({ settings: { ...prior, spooling } });
+    }
+    try {
+      const r = await api.setMcpSpooling(spooling);
       set({ settings: r, error: undefined });
     } catch (err) {
       if (prior !== undefined) set({ settings: prior });

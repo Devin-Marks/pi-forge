@@ -11,6 +11,7 @@ import {
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   isStdioConfig,
+  normalizeMcpSpoolingConfig,
   normalizeMcpTruncationConfig,
   readMcpJson,
   resolveMcpHeaders,
@@ -19,7 +20,11 @@ import {
   type McpTransport,
 } from "./config.js";
 import { isStdioTrustedForProject } from "./stdio-trust.js";
-import { bridgeMcpTool, setMcpResultTruncationSettings } from "./tool-bridge.js";
+import {
+  bridgeMcpTool,
+  setMcpResultSpoolingSettings,
+  setMcpResultTruncationSettings,
+} from "./tool-bridge.js";
 
 /** Looser-than-the-SDK transport handle — we only need close().
  *  The SDK's `Transport` interface declares `sessionId: string` (not
@@ -75,6 +80,12 @@ export type Scope = "global" | { project: string };
 
 const PROJECT_MCP_FILE = ".mcp.json";
 
+interface McpToolCatalogEntry {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
 interface PoolEntry {
   scope: Scope;
   name: string;
@@ -84,7 +95,7 @@ interface PoolEntry {
   state: ConnectionState;
   lastError?: string;
   /** Cached tool catalogue from the last successful `client.listTools()`. */
-  tools: { name: string; description: string; inputSchema: Record<string, unknown> }[];
+  tools: McpToolCatalogEntry[];
   /** Pre-built ToolDefinitions, rebuilt every reconnect so the closure
    *  captures the latest client instance. */
   bridged: ToolDefinition[];
@@ -136,6 +147,7 @@ async function loadGlobalNow(): Promise<void> {
   const cfg = await readMcpJson();
   globallyEnabled = cfg.disabled !== true;
   setMcpResultTruncationSettings(normalizeMcpTruncationConfig(cfg.truncation));
+  setMcpResultSpoolingSettings(normalizeMcpSpoolingConfig(cfg.spooling));
   await syncScope("global", cfg.servers);
   globalLoaded = true;
 }
@@ -174,7 +186,7 @@ export async function reloadGlobal(): Promise<void> {
  * project entry wins (the session sees the project's bridged tool,
  * not the global one).
  */
-export function customToolsForProject(projectId: string): ToolDefinition[] {
+export function customToolsForProject(projectId: string, workspacePath?: string): ToolDefinition[] {
   // Server-name override: when the project has a server with the
   // same NAME as a global server, the project entry replaces the
   // global one entirely (not just on tool-name collision). Reason:
@@ -196,10 +208,11 @@ export function customToolsForProject(projectId: string): ToolDefinition[] {
     if (e.scope === "global") continue;
     if (e.scope.project !== projectId) continue;
     if (e.state !== "connected") continue;
-    for (const t of e.bridged) {
-      if (seenToolNames.has(t.name)) continue;
-      seenToolNames.add(t.name);
-      out.push(t);
+    for (const t of e.tools) {
+      const bridgedName = `${e.name}__${t.name}`;
+      if (seenToolNames.has(bridgedName)) continue;
+      seenToolNames.add(bridgedName);
+      out.push(bridgeSessionMcpTool(e, t, workspacePath));
     }
   }
   for (const e of pool.values()) {
@@ -208,13 +221,30 @@ export function customToolsForProject(projectId: string): ToolDefinition[] {
     // entry entirely.
     if (projectServerNames.has(e.name)) continue;
     if (e.state !== "connected") continue;
-    for (const t of e.bridged) {
-      if (seenToolNames.has(t.name)) continue;
-      seenToolNames.add(t.name);
-      out.push(t);
+    for (const t of e.tools) {
+      const bridgedName = `${e.name}__${t.name}`;
+      if (seenToolNames.has(bridgedName)) continue;
+      seenToolNames.add(bridgedName);
+      out.push(bridgeSessionMcpTool(e, t, workspacePath));
     }
   }
   return out;
+}
+
+function bridgeSessionMcpTool(
+  entry: PoolEntry,
+  tool: McpToolCatalogEntry,
+  workspacePath: string | undefined,
+): ToolDefinition {
+  return bridgeMcpTool({
+    serverName: entry.name,
+    toolName: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    getClient: () => pool.get(entryKey(entry.scope, entry.name))?.client,
+    recoverStaleSession: () => recoverStaleSession(entry.scope, entry.name),
+    ...(workspacePath !== undefined ? { spoolingContext: { workspacePath } } : {}),
+  });
 }
 
 export interface ServerStatus {

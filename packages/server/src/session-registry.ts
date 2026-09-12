@@ -2349,5 +2349,5 @@ async function resolveMcpCustomTools(
   await mcpEnsureGlobalLoaded().catch(() => undefined);
   if (!mcpIsGloballyEnabled()) return [];
   await mcpEnsureProjectLoaded(projectId, workspacePath).catch(() => undefined);
-  return mcpCustomToolsForProject(projectId);
+  return mcpCustomToolsForProject(projectId, workspacePath);
 }

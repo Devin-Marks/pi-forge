@@ -54,6 +54,12 @@ to swap a global server for a project-specific one).
     "enabled": true,
     "maxChars": 30000
   },
+  "spooling": {
+    "enabled": true,
+    "thresholdChars": 30000,
+    "directory": ".mcp-results",
+    "format": "json"
+  },
   "servers": {
     "weather": {
       "url": "https://mcp.example.com/sse",
@@ -107,6 +113,10 @@ shape, so existing files don't need rewriting:
 | `disabled` | boolean (top-level) | — | `false` | Master kill-switch. When `true`, NO MCP tools reach the agent regardless of per-server `enabled`. |
 | `truncation.enabled` | boolean (top-level) | — | `true` | When true, text MCP results are capped before they enter agent context. |
 | `truncation.maxChars` | integer (top-level) | — | `30000` | Total text-character cap across all text blocks in one MCP result. Images pass through unchanged. |
+| `spooling.enabled` | boolean (top-level) | — | `true` | When true, oversized non-error MCP results are written as JSON files in the current project workspace instead of being returned inline. Set false to restore truncation-only behavior. |
+| `spooling.thresholdChars` | integer (top-level) | — | `30000` | Total text-character size that triggers spooling before truncation. |
+| `spooling.directory` | string (top-level) | — | `.mcp-results` | Workspace-relative directory for result files. Traversal or symlink escapes fail safely and fall back to inline/truncated output. |
+| `spooling.format` | `"json"` (top-level) | — | `"json"` | Spool files contain the complete raw MCP `CallToolResult` JSON, including structured content and image blocks. |
 
 ## Stdio env passthrough
 
@@ -174,6 +184,39 @@ keeps two servers' `search` tools from colliding.
   dropping it)
 
 `isError: true` prefixes the first text block with `[error]`.
+
+## Large result spooling
+
+MCP result spooling is enabled by default (`spooling.enabled: true`). When enabled,
+pi-forge measures the total text payload of a successful MCP tool
+result before normal truncation. If it exceeds `thresholdChars`, the
+complete raw MCP result is written to a JSON file under
+`spooling.directory` in the current project workspace, using a safe
+filename containing the MCP server name, tool name, timestamp, and UUID.
+With the default directory, files land at
+`<project workspace>/.mcp-results/<server>__<tool>__<timestamp>__<uuid>.json`.
+The model receives only a concise `MCP_RESULT_SPOOLED` text result with
+the workspace-relative path, approximate character count, byte size, and
+a short preview. The summary instructs the agent to use file-reading
+tools to inspect the saved file incrementally.
+
+Error results (`isError: true`) bypass spooling so failures remain
+visible inline and continue through the existing truncation behavior if
+large. If writing the spool file fails (for example because the directory
+tries to escape the workspace), pi-forge falls back to the current safe
+inline conversion/truncation and prepends an `MCP_RESULT_SPOOL_FAILED`
+warning instead of crashing the agent turn.
+
+Images are not expanded into a larger model-context dump by spooling.
+For JSON spools, the raw result JSON preserves image block metadata and
+base64 data in the file; the inline summary notes that images were
+present so the agent can inspect deliberately.
+
+Spool writes use `file-manager.writeFile()`, the same workspace-bounded
+write path used by the Files UI. In agent-tool sandbox mode, newly
+created result directories/files receive the sandbox ownership and group
+permissions handoff, so sandboxed read tools can inspect them while path
+validation still prevents writes outside the project workspace.
 
 ## Lifecycle
 

@@ -112,6 +112,17 @@ export interface McpTruncationConfig {
   maxChars?: number;
 }
 
+export interface McpSpoolingConfig {
+  /** Default true. When true, oversized non-error MCP results are written to workspace files. */
+  enabled?: boolean;
+  /** Total text-character threshold before spooling. Default 30000. */
+  thresholdChars?: number;
+  /** Workspace-relative directory for result files. Default .mcp-results. */
+  directory?: string;
+  /** Spool file format. Only json is currently supported. */
+  format?: "json";
+}
+
 export interface McpJson {
   /**
    * Master kill-switch surfaced as a toggle in Settings → MCP. When
@@ -123,6 +134,8 @@ export interface McpJson {
   disabled?: boolean;
   /** MCP result truncation settings. Defaults to enabled with a 30k character cap. */
   truncation?: McpTruncationConfig;
+  /** MCP result spooling settings. Defaults to enabled. */
+  spooling?: McpSpoolingConfig;
   servers: Record<string, McpServerConfig>;
 }
 
@@ -139,6 +152,8 @@ export function isStdioConfig(cfg: McpServerConfig): boolean {
 
 const SECRET_PLACEHOLDER = "***REDACTED***";
 export const DEFAULT_MCP_TRUNCATION_MAX_CHARS = 30_000;
+export const DEFAULT_MCP_SPOOLING_THRESHOLD_CHARS = 30_000;
+export const DEFAULT_MCP_SPOOLING_DIRECTORY = ".mcp-results";
 
 export function normalizeMcpTruncationConfig(
   input: McpTruncationConfig | undefined,
@@ -150,6 +165,20 @@ export function normalizeMcpTruncationConfig(
       ? Math.floor(rawMax)
       : DEFAULT_MCP_TRUNCATION_MAX_CHARS;
   return { enabled, maxChars };
+}
+
+export function normalizeMcpSpoolingConfig(
+  input: McpSpoolingConfig | undefined,
+): Required<McpSpoolingConfig> {
+  const enabled = input?.enabled !== false;
+  const rawThreshold = input?.thresholdChars;
+  const thresholdChars =
+    typeof rawThreshold === "number" && Number.isFinite(rawThreshold) && rawThreshold >= 1
+      ? Math.floor(rawThreshold)
+      : DEFAULT_MCP_SPOOLING_THRESHOLD_CHARS;
+  const rawDirectory = typeof input?.directory === "string" ? input.directory.trim() : "";
+  const directory = rawDirectory.length > 0 ? rawDirectory : DEFAULT_MCP_SPOOLING_DIRECTORY;
+  return { enabled, thresholdChars, directory, format: "json" };
 }
 
 async function ensureDir(): Promise<void> {
@@ -193,12 +222,23 @@ export async function readMcpJson(): Promise<McpJson> {
       typeof rawTruncation === "object" && rawTruncation !== null
         ? normalizeMcpTruncationConfig(rawTruncation)
         : undefined;
+    const rawSpooling = (parsed as { spooling?: unknown }).spooling;
+    const spooling =
+      typeof rawSpooling === "object" && rawSpooling !== null
+        ? normalizeMcpSpoolingConfig(rawSpooling)
+        : undefined;
     if (typeof servers !== "object" || servers === null) {
-      return { disabled, ...(truncation !== undefined ? { truncation } : {}), servers: {} };
+      return {
+        disabled,
+        ...(truncation !== undefined ? { truncation } : {}),
+        ...(spooling !== undefined ? { spooling } : {}),
+        servers: {},
+      };
     }
     return {
       disabled,
       ...(truncation !== undefined ? { truncation } : {}),
+      ...(spooling !== undefined ? { spooling } : {}),
       servers: servers as Record<string, McpServerConfig>,
     };
   } catch (err) {
@@ -253,6 +293,7 @@ export async function readMcpJsonRedacted(): Promise<McpJson> {
   return {
     disabled: raw.disabled === true,
     ...(raw.truncation !== undefined ? { truncation: raw.truncation } : {}),
+    ...(raw.spooling !== undefined ? { spooling: raw.spooling } : {}),
     servers: out,
   };
 }
@@ -346,6 +387,15 @@ export async function writeMcpJson(next: McpJson): Promise<void> {
   if (truncation.enabled !== true || truncation.maxChars !== DEFAULT_MCP_TRUNCATION_MAX_CHARS) {
     safe.truncation = truncation;
   }
+  const spooling = normalizeMcpSpoolingConfig(next.spooling);
+  if (
+    spooling.enabled !== true ||
+    spooling.thresholdChars !== DEFAULT_MCP_SPOOLING_THRESHOLD_CHARS ||
+    spooling.directory !== DEFAULT_MCP_SPOOLING_DIRECTORY ||
+    spooling.format !== "json"
+  ) {
+    safe.spooling = spooling;
+  }
   for (const [name, server] of Object.entries(next.servers ?? {})) {
     const merged = copyServerCleaned(server);
     if (server.headers !== undefined) {
@@ -376,6 +426,15 @@ export async function setMcpTruncationConfig(truncation: McpTruncationConfig): P
   cur.truncation = normalizeMcpTruncationConfig({
     ...normalizeMcpTruncationConfig(cur.truncation),
     ...truncation,
+  });
+  await writeMcpJson(cur);
+}
+
+export async function setMcpSpoolingConfig(spooling: McpSpoolingConfig): Promise<void> {
+  const cur = await readMcpJson();
+  cur.spooling = normalizeMcpSpoolingConfig({
+    ...normalizeMcpSpoolingConfig(cur.spooling),
+    ...spooling,
   });
   await writeMcpJson(cur);
 }
