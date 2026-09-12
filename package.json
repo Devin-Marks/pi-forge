@@ -22,9 +22,12 @@
   },
   "overrides": {
     "serialize-javascript": ">=6.0.2",
-    "qs": ">=6.15.2",
+    "qs": ">=6.16.0",
     "tmp": ">=0.2.6",
-    "uuid": ">=11.1.1"
+    "uuid": ">=11.1.1",
+    "@xmldom/xmldom": "0.8.15",
+    "find-my-way": "9.7.0",
+    "tar": "7.5.22"
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "0.84.3",
@@ -32,11 +35,12 @@
     "@earendil-works/pi-coding-agent": "0.84.3",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.0.0",
-    "concurrently": "^10.0.0",
+    "concurrently": "^10.0.5",
     "eslint": "^10.5.0",
     "eslint-config-prettier": "^10.1.2",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
+    "fastify": "^5.12.4",
     "globals": "^17.7.0",
     "marked": "^18.0.5",
     "prettier": "^3.8.4",
