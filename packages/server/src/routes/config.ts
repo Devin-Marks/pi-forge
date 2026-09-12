@@ -31,8 +31,13 @@ import {
 import {
   ensureProjectLoaded as mcpEnsureProjectLoaded,
   getStatus as mcpGetStatus,
+  reloadGlobal as mcpReloadGlobal,
 } from "../mcp/manager.js";
-import { BUILTIN_TOOL_NAMES } from "../session-registry.js";
+import {
+  BUILTIN_TOOL_NAMES,
+  listSessions,
+  rebuildAgentSessionForTools,
+} from "../session-registry.js";
 import { discoverExtensionResources } from "../extensions-discovery.js";
 import {
   getAllToolOverrides,
@@ -61,6 +66,24 @@ import {
   type ServerThemeConfig,
 } from "../theme-config.js";
 import { errorSchema } from "./_schemas.js";
+
+const RUNTIME_IMPORT_FILES = new Set([
+  "mcp.json",
+  "settings.json",
+  "models.json",
+  "skills-overrides.json",
+  "tool-overrides.json",
+]);
+
+const MCP_IMPORT_FILES = new Set(["mcp.json"]);
+
+async function refreshRuntimeAfterConfigImport(imported: string[]): Promise<void> {
+  if (imported.some((name) => MCP_IMPORT_FILES.has(name))) {
+    await mcpReloadGlobal();
+  }
+  if (!imported.some((name) => RUNTIME_IMPORT_FILES.has(name))) return;
+  await Promise.all(listSessions().map((live) => rebuildAgentSessionForTools(live.sessionId)));
+}
 
 const modelsJsonSchema = {
   type: "object",
@@ -1226,6 +1249,9 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
       }
       try {
         const summary = await importConfigFromBuffer(buf);
+        if (summary.errors.length === 0 && summary.imported.length > 0) {
+          await refreshRuntimeAfterConfigImport(summary.imported);
+        }
         return summary;
       } catch (err) {
         return internalError(reply, err);

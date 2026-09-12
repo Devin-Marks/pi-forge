@@ -47,6 +47,8 @@ interface FixtureServer {
   callCount: () => number;
   /** Captured Content-Type headers from JSON-RPC POST /messages requests. */
   postContentTypes: () => string[];
+  /** Dynamically advertises one more tool on the current MCP server instance. */
+  addTool: (name: string) => void;
   /** Simulates an MCP server restart that drops known session ids while keeping the URL stable. */
   dropSessions: () => Promise<void>;
   close: () => Promise<void>;
@@ -73,6 +75,20 @@ async function spawnFixtureServer(opts?: {
   const prefix = opts?.toolPrefix ?? "";
 
   let calls = 0;
+  const dynamicTools = new Set<string>();
+  const registerDynamicTool = (server: McpServer, name: string): void => {
+    server.registerTool(
+      name,
+      {
+        description: `Dynamic tool ${name}.`,
+        inputSchema: {},
+      },
+      () => {
+        calls += 1;
+        return { content: [{ type: "text", text: name }] };
+      },
+    );
+  };
   const createMcp = (): McpServer => {
     const server = new McpServer({ name: "fixture", version: "0.0.1" });
     server.registerTool(
@@ -97,6 +113,7 @@ async function spawnFixtureServer(opts?: {
         return { content: [{ type: "text", text: String(a + b) }] };
       },
     );
+    for (const name of dynamicTools) registerDynamicTool(server, name);
     return server;
   };
   let mcp = createMcp();
@@ -173,6 +190,10 @@ async function spawnFixtureServer(opts?: {
     url,
     callCount: () => calls,
     postContentTypes: () => [...postContentTypes],
+    addTool: (name: string) => {
+      dynamicTools.add(name);
+      registerDynamicTool(mcp, name);
+    },
     dropSessions: async () => {
       const oldSessions = Array.from(sessions.values());
       sessions.clear();
@@ -200,6 +221,7 @@ async function main(): Promise<void> {
   process.env.FORGE_DATA_DIR = dataDir;
   process.env.WORKSPACE_PATH = workspacePath;
   process.env.PI_CONFIG_DIR = join(dataDir, ".pi-cfg");
+  process.env.SESSION_DIR = join(dataDir, "sessions");
   process.env.NODE_ENV = "test";
   delete process.env.UI_PASSWORD;
   delete process.env.JWT_SECRET;
@@ -222,6 +244,9 @@ async function main(): Promise<void> {
   const toolBridge = (await import(
     resolve(repoRoot, "packages/server/dist/mcp/tool-bridge.js")
   )) as typeof import("../packages/server/src/mcp/tool-bridge.js");
+  const registry = (await import(
+    resolve(repoRoot, "packages/server/dist/session-registry.js")
+  )) as typeof import("../packages/server/src/session-registry.js");
 
   // Eager connect inside `syncScope` is fire-and-forget (`void
   // connectEntry(entry)`), so loadGlobal returns before the WS
@@ -298,6 +323,60 @@ async function main(): Promise<void> {
       JSON.stringify(names1) === JSON.stringify(["test__add", "test__echo"]),
       JSON.stringify(names1),
     );
+
+    // ---- Case B2: new AgentSessions force MCP rediscovery ----
+    const refreshProjectId = "proj-refresh";
+    const initialSession = await registry.createSession(refreshProjectId, workspacePath);
+    assert(
+      "session create: initial MCP tools snapshotted",
+      initialSession.mcpToolNames.has("test__echo") && initialSession.mcpToolNames.has("test__add"),
+      JSON.stringify([...initialSession.mcpToolNames].sort()),
+    );
+    await registry.disposeSession(initialSession.sessionId);
+
+    fixture.addTool("dynamic");
+    const dynamicSession = await registry.createSession(refreshProjectId, workspacePath);
+    assert(
+      "session create: refreshes connected server tool catalogue",
+      dynamicSession.mcpToolNames.has("test__dynamic"),
+      JSON.stringify([...dynamicSession.mcpToolNames].sort()),
+    );
+    await registry.disposeSession(dynamicSession.sessionId);
+
+    const refreshedFixture = await spawnFixtureServer({ toolPrefix: "fresh_" });
+    try {
+      await config.writeMcpJson({
+        servers: { test: { url: refreshedFixture.url } },
+      });
+      const refreshedSession = await registry.createSession(refreshProjectId, workspacePath);
+      assert(
+        "session create: reloads MCP config before resolving tools",
+        refreshedSession.mcpToolNames.has("test__fresh_echo") &&
+          !refreshedSession.mcpToolNames.has("test__echo"),
+        JSON.stringify([...refreshedSession.mcpToolNames].sort()),
+      );
+      await registry.disposeSession(refreshedSession.sessionId);
+    } finally {
+      await refreshedFixture.close();
+    }
+
+    await config.writeMcpJson({
+      servers: { broken: { url: "http://127.0.0.1:1/sse" } },
+    });
+    const brokenSession = await registry.createSession(refreshProjectId, workspacePath);
+    const brokenStatus = manager.getStatus().find((s) => s.name === "broken");
+    assert(
+      "session create: MCP discovery errors do not fail session creation",
+      brokenSession.mcpToolNames.size === 0 && brokenStatus?.state === "error",
+      JSON.stringify({ tools: [...brokenSession.mcpToolNames], status: brokenStatus }),
+    );
+    await registry.disposeSession(brokenSession.sessionId);
+
+    await config.writeMcpJson({
+      servers: { test: { url: fixture.url } },
+    });
+    await manager.reloadGlobal();
+    await waitForState("test", {}, "connected");
 
     // ---- Case C: bridged execute reaches the MCP server ----
     const echo = tools1.find((t) => t.name === "test__echo");
@@ -557,6 +636,7 @@ async function main(): Promise<void> {
     // streamable-http is what the fixture exposes).
     console.log("[test-mcp] SSE-fallback explicit pin: deferred (requires two transports)");
   } finally {
+    await registry.disposeAllSessions();
     await manager.disposeAll();
     await fixture.close();
     await rm(dataDir, { recursive: true, force: true });

@@ -41,12 +41,14 @@
  * the allow-listed names — this is the only validation that matters
  * for safety, since the names map deterministically to disk targets.
  *
- * Atomic writes: each imported file lands in `<dst>.import.tmp` first,
- * then `rename`s into place — same shape config-manager / project-
- * manager already use, so a crash mid-import never produces a half-
- * written config file.
+ * Atomic writes: each imported file is copied/written to a temp file
+ * beside the final destination first, then `rename`s into place — same
+ * shape config-manager / project-manager already use, so a crash
+ * mid-import never produces a half-written config file. The temp file
+ * must live on the destination filesystem because extraction stages
+ * under `tmpdir()`, which can be a different mount.
  */
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
@@ -179,7 +181,8 @@ export async function buildExportTar(): Promise<ExportResult> {
  *      entry name that isn't in `ALLOWED_FILES`.
  *   2. Validate each accepted file (JSON.parse). Files that fail
  *      validation never make it to disk.
- *   3. Atomic rename per file from temp into target.
+ *   3. Copy each valid staged file into a destination-local temp file,
+ *      then atomically rename that temp file into target.
  *
  * The "validate before any disk write" ordering matters: a partial
  * import (e.g. `mcp.json` good, `settings.json` corrupt) would leave
@@ -270,16 +273,25 @@ export async function importConfigFromBuffer(buf: Buffer): Promise<ImportSummary
       return { imported: [], skipped, errors };
     }
 
-    // Atomic move. mkdir parent dirs since pi config dir might not
-    // exist on a fresh deploy that's only setting these via import.
+    // Atomic final writes. mkdir parent dirs since pi config dir might
+    // not exist on a fresh deploy that's only setting these via import.
+    // Do NOT rename directly from the extraction stage: `tmpdir()` can
+    // be a different filesystem than PI_CONFIG_DIR / FORGE_DATA_DIR,
+    // which would fail with EXDEV. Copy to a temp file beside the final
+    // destination, then same-directory rename into place.
     const imported: string[] = [];
     for (const name of valid) {
       const src = join(stage, name);
       const dst = TARGETS[name as AllowedFile]();
       await mkdir(dirname(dst), { recursive: true });
       const tmpDst = `${dst}.${Date.now()}.import.tmp`;
-      await rename(src, tmpDst);
-      await rename(tmpDst, dst);
+      try {
+        await copyFile(src, tmpDst);
+        await rename(tmpDst, dst);
+      } catch (err) {
+        await rm(tmpDst, { force: true }).catch(() => undefined);
+        throw err;
+      }
       imported.push(name);
     }
     return { imported, skipped, errors };
