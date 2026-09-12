@@ -19,6 +19,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import JSZip from "jszip";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -46,6 +47,39 @@ const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
   "base64",
 );
+
+async function makeMinimalDocx(text: string): Promise<Buffer> {
+  const escaped = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+  const zip = new JSZip();
+  zip.file(
+    "[Content_Types].xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`,
+  );
+  zip.folder("_rels")?.file(
+    ".rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`,
+  );
+  zip.folder("word")?.file(
+    "document.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body><w:p><w:r><w:t>${escaped}</w:t></w:r></w:p></w:body>
+</w:document>`,
+  );
+  return zip.generateAsync({ type: "nodebuffer" });
+}
 
 async function main(): Promise<void> {
   const workspacePath = await mkdtemp(join(tmpdir(), "pi-attach-ws-"));
@@ -195,7 +229,40 @@ async function main(): Promise<void> {
       );
     }
 
-    // ---- 3. Oversize file → 400 BEFORE prompt() invoked ----
+    // ---- 3. DOCX file is converted and prepended as text ----
+    {
+      calls.length = 0;
+      const docx = await makeMinimalDocx("Hello from DOCX attachment");
+      const fd = new FormData();
+      fd.append("text", "summarize this");
+      fd.append(
+        "attachments",
+        new Blob([new Uint8Array(docx)], {
+          type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        }),
+        "sample.docx",
+      );
+      const res = await fetch(`${base}/api/v1/sessions/${live.sessionId}/prompt`, {
+        method: "POST",
+        body: fd,
+      });
+      assert("DOCX multipart → 202", res.status === 202, `status=${res.status}`);
+      await new Promise((r) => setTimeout(r, 50));
+      assert("session.prompt was called once for DOCX", calls.length === 1);
+      const call = calls[0];
+      assert(
+        "DOCX text is included in composed prompt",
+        call?.text.includes("Hello from DOCX attachment") === true,
+        `got: ${JSON.stringify(call?.text ?? "")}`,
+      );
+      assert(
+        "DOCX prompt keeps filename in fence header",
+        call?.text.startsWith("``` file: sample.docx\n") === true,
+        `got: ${JSON.stringify(call?.text?.slice(0, 64) ?? "")}`,
+      );
+    }
+
+    // ---- 4. Oversize file → 400 BEFORE prompt() invoked ----
     {
       calls.length = 0;
       // MAX_FILE_BYTES is 20 MB (routes/prompt.ts); send 21 MB to trip
@@ -220,7 +287,7 @@ async function main(): Promise<void> {
       assert("prompt() not called for oversize", calls.length === 0);
     }
 
-    // ---- 4. >4 images → 400 BEFORE prompt() invoked ----
+    // ---- 5. >4 images → 400 BEFORE prompt() invoked ----
     {
       calls.length = 0;
       const fd = new FormData();
@@ -243,7 +310,7 @@ async function main(): Promise<void> {
       assert("prompt() not called for too-many-images", calls.length === 0);
     }
 
-    // ---- 5. JSON path still works (backward compat) ----
+    // ---- 6. JSON path still works (backward compat) ----
     {
       calls.length = 0;
       const res = await fetch(`${base}/api/v1/sessions/${live.sessionId}/prompt`, {
